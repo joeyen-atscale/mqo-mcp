@@ -12,10 +12,14 @@ fn catalog_disjoint() -> CatalogSnapshot {
             CatalogMeasure {
                 unique_name: "Sales Amount".to_string(),
                 subject_area: Some("Sales".to_string()),
+                label: None,
+                is_calc: None,
             },
             CatalogMeasure {
                 unique_name: "Inventory Count".to_string(),
                 subject_area: Some("Inventory".to_string()),
+                label: None,
+                is_calc: None,
             },
         ],
         dimensions: vec![
@@ -125,6 +129,8 @@ fn ac5_measure_without_subject_area_no_rejection() {
         measures: vec![CatalogMeasure {
             unique_name: "Sales Amount".to_string(),
             subject_area: None, // unknown
+            label: None,
+            is_calc: None,
         }],
         dimensions: vec![CatalogDimension {
             unique_name: "Warehouse".to_string(),

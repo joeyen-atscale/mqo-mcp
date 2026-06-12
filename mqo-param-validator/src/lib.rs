@@ -26,12 +26,30 @@ pub struct CatalogSnapshot {
     pub date_roles: Vec<CatalogDateRole>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct CatalogMeasure {
     pub unique_name: String,
     /// Optional subject area / fact name for cross-fact detection
     #[serde(default)]
     pub subject_area: Option<String>,
+    /// Optional human-readable label (catalog `label` field). When present this
+    /// is the preferred surface for calc detection/triggers; falls back to
+    /// `unique_name`.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// Optional explicit "this is a packaged calculated measure" flag from the
+    /// catalog. When absent (or false) calc-detection falls back to name
+    /// heuristics over the label/unique_name.
+    #[serde(default)]
+    pub is_calc: Option<bool>,
+}
+
+impl CatalogMeasure {
+    /// The best display surface for this measure: `label` when set, else
+    /// `unique_name`.
+    pub fn display_name(&self) -> &str {
+        self.label.as_deref().unwrap_or(&self.unique_name)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -121,6 +139,10 @@ pub enum RejectReason {
     AmbiguousDateRole,
     /// The measure and dimension come from clearly disjoint fact subject areas.
     CrossFactPath,
+    /// The MQO hand-derives a measure that already exists as a packaged calc
+    /// (e.g. lag/period-over-period arithmetic over a base measure that a
+    /// packaged `* Increase`/`* Growth` calc already provides).
+    ManualCalcRederivation,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -136,6 +158,29 @@ pub struct ParamRejection {
     pub class: FieldClass,
     pub reason: RejectReason,
     pub suggestions: Vec<Suggestion>,
+    /// For `ManualCalcRederivation`: the unique_name (or label) of the packaged
+    /// calc the caller should use instead. `None` for every other reason.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_calc: Option<String>,
+}
+
+impl ParamRejection {
+    /// Convenience constructor for the common case where there is no
+    /// `suggested_calc` (every reason except `ManualCalcRederivation`).
+    fn new(
+        field: String,
+        class: FieldClass,
+        reason: RejectReason,
+        suggestions: Vec<Suggestion>,
+    ) -> Self {
+        ParamRejection {
+            field,
+            class,
+            reason,
+            suggestions,
+            suggested_calc: None,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -212,12 +257,12 @@ pub fn validate(mqo: &BoundMqoInput, catalog: &CatalogSnapshot) -> Vec<ParamReje
                 .chain(dimension_names.iter().copied())
                 .collect();
             let suggestions = nearest_matches(&mref.unique_name, &all_names, 5);
-            rejections.push(ParamRejection {
-                field: mref.unique_name.clone(),
-                class: FieldClass::Measure,
-                reason: RejectReason::Unmapped,
+            rejections.push(ParamRejection::new(
+                mref.unique_name.clone(),
+                FieldClass::Measure,
+                RejectReason::Unmapped,
                 suggestions,
-            });
+            ));
         }
     }
 
@@ -236,12 +281,12 @@ pub fn validate(mqo: &BoundMqoInput, catalog: &CatalogSnapshot) -> Vec<ParamReje
                 .chain(measure_names.iter().copied())
                 .collect();
             let suggestions = nearest_matches(&dref.unique_name, &all_names, 5);
-            rejections.push(ParamRejection {
-                field: dref.unique_name.clone(),
-                class: FieldClass::Dimension,
-                reason: RejectReason::Unmapped,
+            rejections.push(ParamRejection::new(
+                dref.unique_name.clone(),
+                FieldClass::Dimension,
+                RejectReason::Unmapped,
                 suggestions,
-            });
+            ));
             continue; // can't meaningfully check level/date-role if dim itself is unknown
         }
 
@@ -283,12 +328,12 @@ pub fn validate(mqo: &BoundMqoInput, catalog: &CatalogSnapshot) -> Vec<ParamReje
                                 )),
                             })
                             .collect();
-                        rejections.push(ParamRejection {
-                            field: level.clone(),
-                            class: FieldClass::HierarchyLevel,
-                            reason: RejectReason::WrongHierarchyLevel,
+                        rejections.push(ParamRejection::new(
+                            level.clone(),
+                            FieldClass::HierarchyLevel,
+                            RejectReason::WrongHierarchyLevel,
                             suggestions,
-                        });
+                        ));
                     }
                 }
             }
@@ -316,17 +361,20 @@ pub fn validate(mqo: &BoundMqoInput, catalog: &CatalogSnapshot) -> Vec<ParamReje
                 .chain(measure_names.iter().copied())
                 .collect();
             let suggestions = nearest_matches(&fref.unique_name, &all_names, 5);
-            rejections.push(ParamRejection {
-                field: fref.unique_name.clone(),
-                class: FieldClass::Filter,
-                reason: RejectReason::Unmapped,
+            rejections.push(ParamRejection::new(
+                fref.unique_name.clone(),
+                FieldClass::Filter,
+                RejectReason::Unmapped,
                 suggestions,
-            });
+            ));
         }
     }
 
     // AC5: cross-fact path detection
     check_cross_fact_paths(mqo, catalog, &mut rejections);
+
+    // FR-2/FR-3: reject hand-rederivation of a packaged calc (pre-execution).
+    check_manual_calc_rederivation(mqo, catalog, &mut rejections);
 
     rejections
 }
@@ -362,12 +410,12 @@ fn check_date_role_ambiguity(
                 )),
             })
             .collect();
-        rejections.push(ParamRejection {
-            field: dref.unique_name.clone(),
-            class: FieldClass::DateRole,
-            reason: RejectReason::AmbiguousDateRole,
+        rejections.push(ParamRejection::new(
+            dref.unique_name.clone(),
+            FieldClass::DateRole,
+            RejectReason::AmbiguousDateRole,
             suggestions,
-        });
+        ));
     }
 }
 
@@ -419,11 +467,11 @@ fn check_cross_fact_paths(
                     .iter()
                     .any(|r| r.field == field_key && r.reason == RejectReason::CrossFactPath);
                 if !already {
-                    rejections.push(ParamRejection {
-                        field: field_key,
-                        class: FieldClass::Dimension,
-                        reason: RejectReason::CrossFactPath,
-                        suggestions: vec![Suggestion {
+                    rejections.push(ParamRejection::new(
+                        field_key,
+                        FieldClass::Dimension,
+                        RejectReason::CrossFactPath,
+                        vec![Suggestion {
                             name: measure_sa.clone(),
                             similarity: 0.0,
                             note: Some(format!(
@@ -432,9 +480,321 @@ fn check_cross_fact_paths(
                                 mref.unique_name, measure_sa, dref.unique_name
                             )),
                         }],
-                    });
+                    ));
                 }
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// FR-1: packaged-calc surfacing (is_calc + triggers)
+// ---------------------------------------------------------------------------
+
+/// The calc "kind" suffixes we recognize in a packaged-calc measure name.
+/// Order matters: longer / more specific phrases first so they win the strip.
+/// Each entry is `(suffix_phrase, extra_trigger_phrases)`.
+const CALC_SUFFIXES: &[(&str, &[&str])] = &[
+    (
+        "price growth",
+        &[
+            "price growth",
+            "growth",
+            "trending",
+            "vs prior period",
+            "period over period",
+            "yoy",
+            "year over year",
+        ],
+    ),
+    (
+        "increase",
+        &[
+            "increase",
+            "trending",
+            "vs prior period",
+            "period over period",
+            "growth",
+            "change",
+            "prior period change",
+        ],
+    ),
+    (
+        "growth",
+        &[
+            "growth",
+            "trending",
+            "vs prior period",
+            "period over period",
+            "yoy",
+            "year over year",
+            "increase",
+        ],
+    ),
+    (
+        "change",
+        &[
+            "change",
+            "vs prior period",
+            "period over period",
+            "prior period change",
+            "trending",
+        ],
+    ),
+    ("yoy", &["yoy", "year over year", "vs prior year", "growth"]),
+    (
+        "vs prior",
+        &["vs prior", "vs prior period", "period over period", "prior"],
+    ),
+    ("prior", &["prior", "vs prior period", "period over period"]),
+];
+
+/// Surfacing output for one measure: whether it is a packaged calc and, if so,
+/// the natural-language phrases that should steer the model toward it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CalcSurfacing {
+    pub unique_name: String,
+    pub label: String,
+    pub is_calc: bool,
+    pub triggers: Vec<String>,
+}
+
+/// Return `Some((calc_base, extra_triggers))` if `name` matches a packaged-calc
+/// name pattern (e.g. "Store Sales Increase"), where `calc_base` is the name
+/// with the calc suffix stripped ("Store Sales"). `None` for an ordinary
+/// measure. Pure string heuristic — no catalog state.
+fn detect_calc_pattern(name: &str) -> Option<(String, &'static [&'static str])> {
+    let norm = normalize(name);
+    for (suffix, triggers) in CALC_SUFFIXES {
+        // Match "<base> <suffix>" — the suffix as the tail of the name.
+        if let Some(stripped) = norm.strip_suffix(suffix) {
+            let base = stripped.trim();
+            // Require a non-empty base so we don't treat the bare word
+            // "Increase" as a calc.
+            if !base.is_empty() {
+                return Some((base.to_string(), triggers));
+            }
+        }
+    }
+    None
+}
+
+/// Is this catalog measure a packaged calc? Honors an explicit `is_calc: true`
+/// flag first; otherwise falls back to the name heuristic.
+pub fn is_packaged_calc(measure: &CatalogMeasure) -> bool {
+    if measure.is_calc == Some(true) {
+        return true;
+    }
+    detect_calc_pattern(measure.display_name()).is_some()
+}
+
+/// Derive the trigger-phrase list for a calc measure from its name.
+/// Always includes the lower-cased full display name plus the calc-kind
+/// synonym phrases. Deduplicated, order-stable.
+pub fn calc_triggers(measure: &CatalogMeasure) -> Vec<String> {
+    let display = measure.display_name();
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |s: String| {
+        if !s.is_empty() && !out.contains(&s) {
+            out.push(s);
+        }
+    };
+    push(normalize(display));
+    if let Some((base, triggers)) = detect_calc_pattern(display) {
+        for t in triggers {
+            push((*t).to_string());
+        }
+        // base phrase too, e.g. "store sales"
+        push(base);
+    }
+    out
+}
+
+/// FR-1: inspect a catalog and surface packaged calcs with `is_calc` + triggers.
+/// Non-calc measures are returned with `is_calc:false` and an empty trigger list,
+/// so the caller has a complete map.
+pub fn inspect_calcs(catalog: &CatalogSnapshot) -> Vec<CalcSurfacing> {
+    catalog
+        .measures
+        .iter()
+        .map(|m| {
+            let is_calc = is_packaged_calc(m);
+            CalcSurfacing {
+                unique_name: m.unique_name.clone(),
+                label: m.display_name().to_string(),
+                is_calc,
+                triggers: if is_calc { calc_triggers(m) } else { Vec::new() },
+            }
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// FR-2 / FR-3: reject manual re-derivation of a packaged calc
+// ---------------------------------------------------------------------------
+
+/// Date-concept tokens used to detect that a date-level dimension is present.
+const DATE_TOKENS: &[&str] = &[
+    "date", "year", "quarter", "month", "week", "day", "calendar", "fiscal",
+];
+
+/// Does this dimension/filter name reference a date concept?
+fn references_date(name: &str) -> bool {
+    let norm = normalize(name);
+    norm.split_whitespace().any(|w| DATE_TOKENS.contains(&w))
+}
+
+/// Lag / period-offset markers that, when present in a measure name, are a
+/// direct signal the caller is hand-rolling a period-over-period delta.
+const LAG_MARKERS: &[&str] = &[
+    "lag",
+    "lagged",
+    "prior",
+    "previous",
+    "prev",
+    "parallelperiod",
+    "prevmember",
+    "preceding",
+];
+
+fn has_lag_marker(name: &str) -> bool {
+    let norm = normalize(name);
+    LAG_MARKERS.iter().any(|m| norm.contains(m))
+}
+
+/// True if every word of `calc_base` appears in `measure_norm` — i.e. the MQO
+/// measure is plausibly the base series the calc is built on.
+/// Example: calc_base "store sales" ⊂ "total store sales".
+fn measure_is_base_for(measure_norm: &str, calc_base: &str) -> bool {
+    let base_words: Vec<&str> = calc_base.split_whitespace().collect();
+    if base_words.is_empty() {
+        return false;
+    }
+    base_words
+        .iter()
+        .all(|bw| measure_norm.split_whitespace().any(|mw| mw == *bw))
+}
+
+/// FR-2/FR-3: detect an MQO that hand-derives a packaged calc.
+///
+/// Conservative — fires only when ALL hold:
+///
+/// 1. The catalog contains a packaged `* Increase`/`* Growth`/… calc.
+/// 2. The MQO re-derives the calc's base series over a period axis. The MQO
+///    grammar carries no DAX, so we require a *positive* re-derivation signal
+///    in the measure shape (otherwise a plain "Total Store Sales by Quarter"
+///    would be falsely rejected). The signal is either (a) the calc's base
+///    series measure appears 2+ times (the hand-rolled "current vs lagged
+///    base" pattern), or (b) a measure references the base series AND carries
+///    a lag/offset marker in its name ("Prior", "lagged", "ParallelPeriod",
+///    …). The matched base measure must NOT itself be a calc.
+/// 3. A date-level dimension (or filter) is present — the period axis the calc
+///    derives over.
+/// 4. The packaged calc is NOT already among the MQO's measures.
+///
+/// If any condition is unmet, it does NOT reject (FR-5: zero false positives).
+fn check_manual_calc_rederivation(
+    mqo: &BoundMqoInput,
+    catalog: &CatalogSnapshot,
+    rejections: &mut Vec<ParamRejection>,
+) {
+    // A date axis must be present for a period-over-period re-derivation.
+    let has_date_axis = mqo.dimensions.iter().any(|d| {
+        references_date(&d.unique_name)
+            || d.level.as_deref().map(references_date).unwrap_or(false)
+            || d.role_qualifier
+                .as_deref()
+                .map(references_date)
+                .unwrap_or(false)
+    }) || mqo.filters.iter().any(|f| {
+        references_date(&f.unique_name) || f.level.as_deref().map(references_date).unwrap_or(false)
+    });
+    if !has_date_axis {
+        return;
+    }
+
+    // Normalized names of the measures the caller actually requested.
+    let requested_norms: Vec<String> = mqo
+        .measures
+        .iter()
+        .map(|m| normalize(&m.unique_name))
+        .collect();
+
+    for calc in &catalog.measures {
+        if !is_packaged_calc(calc) {
+            continue;
+        }
+        // Only the period-over-period kinds (Increase/Growth/Change/…) re-derive
+        // over a date axis. Require a detectable suffix to extract a base series.
+        let calc_base = match detect_calc_pattern(calc.display_name()) {
+            Some((base, _)) => base,
+            None => continue,
+        };
+        let calc_norm = normalize(calc.display_name());
+
+        // Condition 4: already using the calc → nothing to reject.
+        if requested_norms.contains(&calc_norm) {
+            continue;
+        }
+
+        // Condition 2: MQO measures that are the calc's base series and not
+        // themselves a calc.
+        let base_refs: Vec<&MqoMeasureRef> = mqo
+            .measures
+            .iter()
+            .filter(|mref| {
+                let mnorm = normalize(&mref.unique_name);
+                if mnorm == calc_norm {
+                    return false; // the calc itself
+                }
+                if !measure_is_base_for(&mnorm, &calc_base) {
+                    return false;
+                }
+                // Don't treat another packaged calc as a base series.
+                detect_calc_pattern(&mref.unique_name).is_none()
+            })
+            .collect();
+
+        if base_refs.is_empty() {
+            continue;
+        }
+
+        // Positive signal: duplicate base series (current + lagged), OR an
+        // explicit lag/offset marker on a base-series measure.
+        let duplicate_base = base_refs.len() >= 2;
+        let lagged_base = base_refs.iter().any(|r| has_lag_marker(&r.unique_name));
+        if !duplicate_base && !lagged_base {
+            continue;
+        }
+
+        let base_ref = base_refs[0];
+        let field_key = format!(
+            "{} (re-derives {})",
+            base_ref.unique_name,
+            calc.display_name()
+        );
+        let already = rejections.iter().any(|r| {
+            r.reason == RejectReason::ManualCalcRederivation
+                && r.suggested_calc.as_deref() == Some(calc.display_name())
+        });
+        if already {
+            continue;
+        }
+
+        rejections.push(ParamRejection {
+            field: field_key,
+            class: FieldClass::Measure,
+            reason: RejectReason::ManualCalcRederivation,
+            suggestions: vec![Suggestion {
+                name: calc.unique_name.clone(),
+                similarity: 1.0,
+                note: Some(format!(
+                    "use packaged calc [{}] instead of re-deriving [{}] over a date axis",
+                    calc.display_name(),
+                    base_ref.unique_name
+                )),
+            }],
+            suggested_calc: Some(calc.display_name().to_string()),
+        });
     }
 }
