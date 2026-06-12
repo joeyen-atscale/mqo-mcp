@@ -19,13 +19,13 @@ fn full_catalog() -> CatalogSnapshot {
                 subject_area: Some("Sales".to_string()),
                 label: None,
                 is_calc: None,
-            },
+            ..Default::default()            },
             CatalogMeasure {
                 unique_name: "Inventory Count".to_string(),
                 subject_area: Some("Inventory".to_string()),
                 label: None,
                 is_calc: None,
-            },
+            ..Default::default()            },
         ],
         dimensions: vec![
             CatalogDimension {
@@ -49,6 +49,7 @@ fn full_catalog() -> CatalogSnapshot {
                 "State".to_string(),
                 "City".to_string(),
             ],
+            ..Default::default()
         }],
         date_roles: vec![
             CatalogDateRole {
@@ -68,6 +69,7 @@ fn ac7_valid_full_mqo_no_rejections() {
     let mqo = BoundMqoInput {
         measures: vec![MqoMeasureRef {
             unique_name: "Sales Amount".to_string(),
+            ..Default::default()
         }],
         dimensions: vec![
             MqoDimensionRef {
@@ -94,9 +96,9 @@ fn ac7_multiple_violations_all_reported() {
     let mqo = BoundMqoInput {
         measures: vec![
             // AC2: unmapped measure
-            MqoMeasureRef { unique_name: "Revenue Total".to_string() },
+            MqoMeasureRef { unique_name: "Revenue Total".to_string(), ..Default::default() },
             // Valid
-            MqoMeasureRef { unique_name: "Sales Amount".to_string() },
+            MqoMeasureRef { unique_name: "Sales Amount".to_string(), ..Default::default() },
         ],
         dimensions: vec![
             // AC4: ambiguous date role
@@ -116,7 +118,7 @@ fn ac7_multiple_violations_all_reported() {
         ],
         filters: vec![
             // unmapped filter
-            MqoFilterRef { unique_name: "NonExistent".to_string(), level: None },
+            MqoFilterRef { unique_name: "NonExistent".to_string(), level: None, ..Default::default() },
         ],
     };
     let result = validate(&mqo, &full_catalog());

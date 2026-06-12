@@ -17,11 +17,13 @@ fn catalog_with_geography() -> CatalogSnapshot {
                 dimension_unique_name: "Geography".to_string(),
                 hierarchy_unique_name: "Country-State-City".to_string(),
                 levels: vec!["Country".to_string(), "State".to_string(), "City".to_string()],
+                ..Default::default()
             },
             CatalogHierarchy {
                 dimension_unique_name: "Geography".to_string(),
                 hierarchy_unique_name: "Country-Region".to_string(),
                 levels: vec!["Country".to_string(), "Region".to_string()],
+                ..Default::default()
             },
         ],
         ..Default::default()

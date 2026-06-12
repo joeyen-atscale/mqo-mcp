@@ -9,8 +9,8 @@ use mqo_param_validator::{
 fn catalog() -> CatalogSnapshot {
     CatalogSnapshot {
         measures: vec![
-            CatalogMeasure { unique_name: "Sales Amount".to_string(), subject_area: None, label: None, is_calc: None },
-            CatalogMeasure { unique_name: "Order Count".to_string(), subject_area: None, label: None, is_calc: None },
+            CatalogMeasure { unique_name: "Sales Amount".to_string(), ..Default::default() },
+            CatalogMeasure { unique_name: "Order Count".to_string(), ..Default::default() },
         ],
         dimensions: vec![
             CatalogDimension { unique_name: "Customer".to_string(), subject_areas: vec![] },
@@ -25,7 +25,7 @@ fn catalog() -> CatalogSnapshot {
 fn ac1_all_resolved_returns_empty() {
     let mqo = BoundMqoInput {
         measures: vec![
-            MqoMeasureRef { unique_name: "Sales Amount".to_string() },
+            MqoMeasureRef { unique_name: "Sales Amount".to_string(), ..Default::default() },
         ],
         dimensions: vec![
             MqoDimensionRef {
@@ -48,7 +48,7 @@ fn ac1_all_resolved_returns_empty() {
 fn ac1_normalization_case_insensitive() {
     // Catalog has "Sales Amount" but MQO sends "sales amount" — should still resolve
     let mqo = BoundMqoInput {
-        measures: vec![MqoMeasureRef { unique_name: "sales amount".to_string() }],
+        measures: vec![MqoMeasureRef { unique_name: "sales amount".to_string(), ..Default::default() }],
         dimensions: vec![],
         filters: vec![],
     };
