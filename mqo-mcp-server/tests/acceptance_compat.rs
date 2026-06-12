@@ -446,3 +446,166 @@ fn ac10_cross_fact_incompatible_variant_report_shape() {
         other => panic!("unexpected variant: {other:?}"),
     }
 }
+
+// ── Disambiguation pack (PRD-mqo-describe-disambiguation-pack) ───────────────
+
+/// Helper: describe_model over the full tpcds catalog. No `model` filter — in
+/// the tpcds fixture only measures carry the `tpcds_benchmark_model.` prefix;
+/// dimension levels use hierarchy-prefixed unique_names, so the unfiltered call
+/// is the realistic shape that includes both measures and levels.
+fn tpcds_describe() -> Value {
+    let srv = enriched_server();
+    call_tool(&srv, "describe_model", json!({}))
+}
+
+/// AC-1: every dimension level carries `hierarchy` + `level`.
+#[test]
+fn disambig_ac1_levels_have_hierarchy_and_level() {
+    let result = tpcds_describe();
+    let columns = result["structuredContent"]["columns"]
+        .as_array()
+        .expect("columns");
+    let levels: Vec<&Value> = columns
+        .iter()
+        .filter(|c| c.get("kind").and_then(Value::as_str) == Some("level"))
+        .collect();
+    assert!(!levels.is_empty(), "tpcds has dimension levels");
+    for l in &levels {
+        let un = l["unique_name"].as_str().unwrap_or("?");
+        assert!(
+            l.get("hierarchy").and_then(Value::as_str).is_some(),
+            "level {un} missing hierarchy"
+        );
+        assert!(
+            l.get("level").and_then(Value::as_str).is_some(),
+            "level {un} missing level"
+        );
+    }
+}
+
+/// AC-2: describe_model emits a top-level `near_twins` block for the known
+/// TPC-DS conflicts (Brand Name across 3 product hierarchies, State Name
+/// across 6 address/store/warehouse hierarchies).
+#[test]
+fn disambig_ac2_near_twins_present_for_known_conflicts() {
+    let result = tpcds_describe();
+    let groups = result["structuredContent"]["near_twins"]
+        .as_array()
+        .expect("near_twins block present");
+    assert!(!groups.is_empty(), "tpcds has near-twin groups");
+
+    // Find "brand name" and "state name" groups.
+    let find = |core: &str| -> Option<&Value> {
+        groups
+            .iter()
+            .find(|g| g.get("core_label").and_then(Value::as_str) == Some(core))
+    };
+
+    let brand = find("brand name").expect("brand name near-twin group");
+    let brand_twins = brand["near_twins"].as_array().unwrap();
+    let brand_uns: Vec<&str> = brand_twins
+        .iter()
+        .map(|t| t["unique_name"].as_str().unwrap())
+        .collect();
+    assert!(
+        brand_uns.contains(&"product_dimension.[Product Brand Name]"),
+        "canonical Product Brand Name present: {brand_uns:?}"
+    );
+    assert!(
+        brand_uns.contains(&"store_item_product_dimension.[Store Item Product Brand Name]"),
+        "Store Item variant present: {brand_uns:?}"
+    );
+
+    // AC-3 surrogate: the canonical_for hint points to Product Brand Name
+    // (fm2-002 wanted Product Brand Name, not the Store Item near-twin).
+    let canonical = brand_twins
+        .iter()
+        .find(|t| t.get("canonical_for").is_some())
+        .expect("a canonical twin");
+    assert_eq!(
+        canonical["unique_name"].as_str().unwrap(),
+        "product_dimension.[Product Brand Name]",
+        "Product Brand Name is canonical for generic 'brand' questions"
+    );
+
+    let state = find("state name").expect("state name near-twin group");
+    assert!(
+        state["near_twins"].as_array().unwrap().len() >= 2,
+        "state name spans multiple hierarchies"
+    );
+}
+
+/// AC: each measure carries a `date_roles` array (may be empty, never absent).
+#[test]
+fn disambig_measures_carry_date_roles() {
+    let result = tpcds_describe();
+    let columns = result["structuredContent"]["columns"]
+        .as_array()
+        .expect("columns");
+    let measures: Vec<&Value> = columns
+        .iter()
+        .filter(|c| c.get("kind").and_then(Value::as_str) == Some("measure"))
+        .collect();
+    assert!(!measures.is_empty(), "tpcds has measures");
+    for m in &measures {
+        let un = m["unique_name"].as_str().unwrap_or("?");
+        let roles = m.get("date_roles");
+        assert!(roles.is_some(), "measure {un} missing date_roles");
+        assert!(
+            roles.unwrap().is_array(),
+            "measure {un} date_roles must be an array"
+        );
+    }
+    // TPC-DS has date hierarchies, so the array should be non-empty.
+    let first = &measures[0];
+    assert!(
+        !first["date_roles"].as_array().unwrap().is_empty(),
+        "tpcds measures should carry derived date_roles"
+    );
+}
+
+/// AC-5: the enriched describe_model adds ≤15% byte footprint vs the
+/// pre-disambiguation response (columns + compatible_hierarchies, no new keys).
+#[test]
+fn disambig_ac5_footprint_within_15pct() {
+    let result = tpcds_describe();
+    let columns = result["structuredContent"]["columns"]
+        .as_array()
+        .expect("columns")
+        .clone();
+    let near_twins = result["structuredContent"]["near_twins"].clone();
+
+    // Original = columns WITHOUT the disambiguation-added fields, and without
+    // the near_twins block. We strip the additive fields to reconstruct the
+    // pre-feature baseline.
+    let stripped: Vec<Value> = columns
+        .iter()
+        .map(|c| {
+            let mut c = c.clone();
+            if let Some(obj) = c.as_object_mut() {
+                obj.remove("date_roles");
+                // hierarchy/level are pre-existing in the snapshot; near_twins
+                // is the only structurally-new top-level block. We count the
+                // new top-level block + date_roles as the added bytes.
+            }
+            c
+        })
+        .collect();
+
+    let baseline = serde_json::to_string(&json!({ "columns": stripped }))
+        .unwrap()
+        .len();
+    let enriched = serde_json::to_string(&json!({
+        "columns": columns,
+        "near_twins": near_twins,
+    }))
+    .unwrap()
+    .len();
+
+    let overhead = (enriched as f64 - baseline as f64) / baseline as f64;
+    assert!(
+        overhead <= 0.15,
+        "describe_model footprint grew {:.1}% (> 15%): baseline={baseline} enriched={enriched}",
+        overhead * 100.0
+    );
+}
