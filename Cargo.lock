@@ -2555,7 +2555,7 @@ dependencies = [
 
 [[package]]
 name = "mqo-mcp-server"
-version = "0.14.0"
+version = "0.15.0"
 dependencies = [
  "clap",
  "dh-export",
@@ -2571,6 +2571,7 @@ dependencies = [
  "mqo-chart-recommender",
  "mqo-dashboard-composer",
  "mqo-duckdb-handle-store 0.1.0",
+ "mqo-param-validator 0.2.0",
  "mqo-result-profiler",
  "mqo-spec",
  "mqo-vega-emitter",
@@ -2600,6 +2601,7 @@ dependencies = [
 [[package]]
 name = "mqo-param-validator"
 version = "0.1.0"
+source = "git+https://github.com/joeyen-atscale/mqo-param-validator#45a3a74b54745216235376ed8d93bf740556318e"
 dependencies = [
  "serde",
  "serde_json",
@@ -2608,8 +2610,7 @@ dependencies = [
 
 [[package]]
 name = "mqo-param-validator"
-version = "0.1.0"
-source = "git+https://github.com/joeyen-atscale/mqo-param-validator#45a3a74b54745216235376ed8d93bf740556318e"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2621,7 +2622,7 @@ name = "mqo-paramq-bench"
 version = "0.1.0"
 dependencies = [
  "clap",
- "mqo-param-validator 0.1.0 (git+https://github.com/joeyen-atscale/mqo-param-validator)",
+ "mqo-param-validator 0.1.0",
  "serde",
  "serde_json",
  "tempfile",

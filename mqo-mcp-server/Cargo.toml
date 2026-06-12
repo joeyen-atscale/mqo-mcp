@@ -1,6 +1,6 @@
 [package]
 name = "mqo-mcp-server"
-version = "0.14.0"
+version = "0.15.0"
 edition = "2021"
 rust-version = "1.88.0"
 description = "MQO MCP server — exposes query_multidimensional (bind→route→compile→execute) plus read-only catalog tools over JSON-RPC stdio"
@@ -43,6 +43,7 @@ reqwest = { version = "0.12", features = ["json", "native-tls"] }
 mqoguard-column-group-enrichment = { path = "../mqoguard-column-group-enrichment" }
 mqoguard-compatibility-matrix = { path = "../mqoguard-compatibility-matrix" }
 mqoguard-filter-bind-report = { path = "../mqoguard-filter-bind-report" }
+mqo-param-validator = { path = "../mqo-param-validator" }
 mqo-bi-asset-bundle = { path = "../mqo-bi-asset-bundle" }
 mqo-dashboard-composer = { path = "../mqo-dashboard-composer" }
 

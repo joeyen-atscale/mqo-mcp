@@ -276,6 +276,82 @@ fn build_near_twins(columns: &[Value]) -> Vec<Value> {
 
         groups.push(json!({
             "core_label": core,
+            "twin_kind": "level",
+            "near_twins": twins,
+        }));
+    }
+    groups
+}
+
+/// The "measure group" prefix of a measure label: the leading token(s) that
+/// distinguish lookalike measures across fact groups (e.g. "Catalog" / "Store" /
+/// "Web" / "Total" in "Catalog Ext Sales Price" vs "Store Ext Sales Price").
+/// Returns the first whitespace-delimited token of the label, lowercased.
+fn measure_group_prefix(label: &str) -> Option<String> {
+    normalize_label(label)
+        .split(' ')
+        .find(|t| !t.is_empty())
+        .map(str::to_string)
+}
+
+/// Build the *measure-side* `near_twins` groups.
+///
+/// Buckets `kind=="measure"` columns by their core label (trailing concept
+/// words, e.g. "sales price", "wholesale cost") and emits one group per bucket
+/// whose members span ≥2 distinct measure-group prefixes (the leading
+/// "Catalog"/"Store"/"Web"/"Total" qualifier). This surfaces the
+/// `lookalike_measure` problem: many measures share the same concept tail but
+/// belong to different fact groups, and the model must pick the right one.
+///
+/// No canonical hint is emitted for measures: unlike dimension hierarchies,
+/// there is no primacy heuristic — the caller must choose the fact group that
+/// matches intent. Deterministic: buckets and members are sorted.
+fn build_measure_twins(columns: &[Value]) -> Vec<Value> {
+    use std::collections::BTreeMap;
+
+    // core_label -> Vec<(unique_name, group_prefix, label)>
+    let mut buckets: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
+    for c in columns {
+        if c.get("kind").and_then(Value::as_str) != Some("measure") {
+            continue;
+        }
+        let (Some(un), Some(label)) = (
+            c.get("unique_name").and_then(Value::as_str),
+            c.get("label").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        let prefix = measure_group_prefix(label).unwrap_or_default();
+        if let Some(core) = core_label(label) {
+            buckets
+                .entry(core)
+                .or_default()
+                .push((un.to_string(), prefix, label.to_string()));
+        }
+    }
+
+    let mut groups: Vec<Value> = Vec::new();
+    for (core, mut members) in buckets {
+        // Only a near-twin group if it spans more than one measure-group prefix.
+        let distinct_prefixes: std::collections::BTreeSet<&str> =
+            members.iter().map(|(_, p, _)| p.as_str()).collect();
+        if distinct_prefixes.len() < 2 {
+            continue;
+        }
+        members.sort_by(|a, b| a.0.cmp(&b.0));
+        let twins: Vec<Value> = members
+            .iter()
+            .map(|(un, prefix, label)| {
+                json!({
+                    "unique_name": un,
+                    "measure_group": prefix,
+                    "label": label,
+                })
+            })
+            .collect();
+        groups.push(json!({
+            "core_label": core,
+            "twin_kind": "measure",
             "near_twins": twins,
         }));
     }
@@ -791,7 +867,24 @@ impl Server {
         }
 
         // FR-2/FR-3: near-twin grouping with canonical_for hint.
-        let near_twins = build_near_twins(&columns);
+        //
+        // The dimension *levels* live under dimension-prefixed unique_names
+        // (e.g. `store_dimension.[State Name]`) while the requested `model` is
+        // the fact cube (e.g. `tpcds_benchmark_model`). Filtering `columns` by
+        // the model prefix therefore drops every level — so the level-twin pass
+        // must read levels from the *full* catalog, not the model-filtered
+        // `columns` view. Measures, in contrast, are correctly present in
+        // `columns`, but we likewise source them from the full catalog so the
+        // measure-twin pass is independent of the model filter.
+        let all_columns: &[Value] = self
+            .catalog
+            .get("columns")
+            .and_then(Value::as_array)
+            .map_or(&columns[..], Vec::as_slice);
+        let mut near_twins = build_near_twins(all_columns);
+        // Measure-side near-twins (lookalike_measure): same concept tail across
+        // different fact-group prefixes.
+        near_twins.extend(build_measure_twins(all_columns));
 
         // NFR-2: footprint guard. The original response is columns (with
         // compatible_hierarchies + FR-1/FR-4 tags) without the near_twins block.
@@ -1312,6 +1405,7 @@ fn structured_err(e: &PipelineError) -> Value {
         PipelineError::CrossFactIncompatible { report } => {
             ("cross_fact_incompatible", report.clone())
         }
+        PipelineError::ParamRejected { report, .. } => ("param_rejected", report.clone()),
         PipelineError::Subprocess { tool, detail } => (
             "subprocess_error",
             json!({ "tool": tool, "detail": detail }),
