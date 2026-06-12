@@ -215,6 +215,15 @@ fn label_is_name(label: &str) -> bool {
         .is_some_and(|w| w == "name")
 }
 
+/// True for date-role hierarchies (sold/ship/return/inventory date dimensions,
+/// week hierarchies). These are distinct date roles, NOT near-twins — excluding
+/// them from grouping prevents suggesting a path-incompatible `Ship Calendar
+/// Year` for a `Sold Calendar Year`. Date-role correctness is owned by binding.
+fn is_date_role_hierarchy(hier: &str) -> bool {
+    let h = hier.to_lowercase();
+    h.contains("date") || h.contains("calendar") || h.contains("time")
+}
+
 /// Build the `near_twins` block for a set of `describe_model` columns.
 ///
 /// Buckets dimension *levels* by their core label and emits one group per
@@ -247,6 +256,12 @@ fn build_near_twins(columns: &[Value]) -> Vec<Value> {
             .map(str::to_string)
             .or_else(|| un.split_once('.').map(|(h, _)| h.to_string()))
             .unwrap_or_default();
+        // Date-role hierarchies (sold/ship/return/inventory date dimensions, week
+        // hierarchies) are DISTINCT date roles, not near-twins — never group across
+        // them (would suggest a path-incompatible Ship Calendar Year for a Sold one).
+        if is_date_role_hierarchy(&hier) {
+            continue;
+        }
         if let Some(core) = core_label(label) {
             buckets
                 .entry(core)

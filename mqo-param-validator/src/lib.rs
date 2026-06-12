@@ -1026,6 +1026,16 @@ struct TwinMember {
     label: String,
 }
 
+/// True for date-role hierarchies (sold/ship/return/inventory date dimensions,
+/// week hierarchies, etc.). These are DISTINCT date roles, NOT near-twins to
+/// canonicalize — excluding them prevents wrongly rejecting `Sold Calendar Year`
+/// in favor of a path-incompatible `Ship Calendar Year`. Mirrors the server's
+/// `is_date_role_hierarchy`; date-role correctness is owned by cross-fact binding.
+fn nt_is_date_role_hierarchy(hier: &str) -> bool {
+    let h = hier.to_lowercase();
+    h.contains("date") || h.contains("calendar") || h.contains("time")
+}
+
 /// A near-twin dimension group: a core label shared across ≥2 hierarchies, with
 /// a clear canonical member (Name-preferring, shortest-hierarchy tiebreak).
 struct TwinGroup {
@@ -1046,6 +1056,11 @@ fn build_twin_groups(catalog: &CatalogSnapshot) -> Vec<TwinGroup> {
     // core -> Vec<(hierarchy, label)>
     let mut buckets: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     for hier in &catalog.hierarchies {
+        // Date-role hierarchies are distinct semantic roles, not near-twins —
+        // never canonicalize across them (would reject Sold→Ship Calendar Year).
+        if nt_is_date_role_hierarchy(&hier.hierarchy_unique_name) {
+            continue;
+        }
         for level in &hier.levels {
             if let Some(core) = nt_core_label(level) {
                 buckets
