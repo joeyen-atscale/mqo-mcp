@@ -1,0 +1,29 @@
+{
+  "target": "Total Store Sales",
+  "hypotheses": [
+    {
+      "rank": 1,
+      "explanation": "Total Store Sales fell because component Store Sales Amount fell",
+      "probe_mqo": {
+        "measures": [{"unique_name": "Store Sales Amount"}],
+        "dimensions": [],
+        "filters": []
+      },
+      "predicted_direction": "down",
+      "component_delta_fraction": -0.075,
+      "probe_key": "store-sales-amount"
+    },
+    {
+      "rank": 2,
+      "explanation": "Total Store Sales fell because component Store Cost fell",
+      "probe_mqo": {
+        "measures": [{"unique_name": "Store Cost"}],
+        "dimensions": [],
+        "filters": []
+      },
+      "predicted_direction": "down",
+      "component_delta_fraction": -0.060,
+      "probe_key": "store-cost"
+    }
+  ]
+}

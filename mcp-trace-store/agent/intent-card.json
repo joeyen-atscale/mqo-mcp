@@ -1,0 +1,122 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "intent_slug": "mcp-trace-store",
+  "prd_source": "/Users/jsy/Documents/PRDs/visions/mcp-self-improvement.md",
+  "created_at": "2026-06-11T00:00:00Z",
+  "root_motivation": "Production MQO interactions evaporate today — no durable record means the semantic model can never learn from real usage. The trace store is the foundational artifact that makes every downstream improvement tool (gap miner, quality scorer, fine-tune exporter) possible. Without it, the model gets worse over time relative to evolving question patterns rather than better.",
+  "user_persona": "AtScale MCP server running in an enterprise deployment; downstream Rust CLIs (coverage-gap-miner, interaction-quality-scorer, fine-tune-exporter) that read the store; AtScale engineers who inspect raw JSONL for debugging.",
+  "unfakeable_metric": {
+    "name": "tests_pass_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --lib 2>&1 | grep -E '^test result' | awk '{print $4}'",
+    "target": null
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why do we need a durable trace store instead of relying on the session journal from Gen-5?",
+      "a": "The session journal is ephemeral per-session; it does not persist across process restarts, is not shared across clusters (Gen-6), and has no defined schema for downstream consumers to query."
+    },
+    {
+      "why": 2,
+      "q": "Why must it persist across sessions and clusters?",
+      "a": "Coverage gaps and quality regressions are only visible in aggregate over many interactions; a single session's data is statistically insufficient to surface systematic model blind spots."
+    },
+    {
+      "why": 3,
+      "q": "Why is surfacing systematic blind spots the load-bearing goal, not just logging?",
+      "a": "The gap miner, quality scorer, and fine-tune exporter all ingest the trace store — if the store's schema or append guarantees are wrong, every downstream tool produces corrupt output. The store must be correct and complete before any analysis is possible."
+    },
+    {
+      "why": 4,
+      "q": "Why is correctness and completeness of the store more important than performance at this stage?",
+      "a": "Incomplete or dropped records silently bias the gap report (e.g. missing ungroundable interactions understates coverage holes). A missed append is worse than a slow one."
+    }
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "Append a TraceRecord to a JSONL file; each record is a single valid JSON line followed by LF. File is created if absent.",
+      "test": "tests/acceptance_ac1.rs: append two records, read file lines, assert each parses as valid JSON with expected fields."
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "TraceRecord schema includes: session_id (String), timestamp (RFC3339), mq_expression (String), bind_result (enum: Bound|Unbound|Error), grounding_score (f32 0.0–1.0), result_row_count (Option<u64>), retry_count (u32), first_attempt_success (bool), result_empty (bool).",
+      "test": "tests/acceptance_ac2.rs: serialize a fully populated TraceRecord to JSON, deserialize it, assert round-trip identity for all fields."
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "Append is atomic at the record level: a process crash mid-write must not leave a partial line that corrupts subsequent reads. Verified by truncating a partial write and asserting the reader skips or errors only on the truncated line.",
+      "test": "tests/acceptance_ac3.rs: write a partial line (no LF) to the JSONL file, then call the reader iterator, assert it returns an Err for the partial line and does not panic or skip earlier valid records."
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "A sequential iterator over the trace store yields TraceRecords in append order with no duplicates.",
+      "test": "tests/acceptance_ac4.rs: append N records with distinct timestamps, collect iterator output, assert order matches insertion order and count equals N."
+    },
+    {
+      "id": "AC5",
+      "level": "SHOULD",
+      "description": "An optional index file (JSONL.idx) is maintained alongside the data file, mapping byte offsets to record numbers, enabling O(1) seek to any record by index.",
+      "test": "tests/acceptance_ac5.rs: append 1000 records, seek to record 500 by index, assert returned record matches the 500th appended record."
+    },
+    {
+      "id": "AC6",
+      "level": "SHOULD",
+      "description": "TraceRecord schema is forward-compatible: deserializing a record with unknown fields succeeds (fields are ignored, not rejected).",
+      "test": "tests/acceptance_ac6.rs: deserialize a JSON line containing an extra unknown field; assert Ok result with all known fields intact."
+    },
+    {
+      "id": "AC7",
+      "level": "MAY",
+      "description": "Concurrent appends from multiple threads to the same store are safe: no records are lost or interleaved.",
+      "test": "tests/acceptance_ac7.rs: spawn 4 threads each appending 250 records; assert final record count == 1000 and each line parses independently."
+    }
+  ],
+  "scope": [
+    "Append-only JSONL trace store for MQO interaction records",
+    "TraceRecord struct with all fields specified in the vision (session_id, timestamp, mq_expression, bind_result, grounding_score, result_row_count, retry_count, first_attempt_success, result_empty)",
+    "Sequential reader/iterator over the JSONL store",
+    "Optional byte-offset index for O(1) record seeks",
+    "Rust library crate (no binary) exposing a public API for appending and reading TraceRecords",
+    "Extends / is schema-compatible with tiger_runlog::RunLogRecord field conventions"
+  ],
+  "non_goals": [
+    "Gap mining, clustering, or analysis of trace data — that is mcp-coverage-gap-miner",
+    "Quality scoring or per-entity distributions — that is mcp-interaction-quality-scorer",
+    "Fine-tuning export or OpenAI chat format output — that is mcp-fine-tune-exporter",
+    "SML YAML generation — that is mcp-sml-gap-patcher",
+    "Network transport or remote replication of the trace store across clusters",
+    "Field-level redaction or PII scrubbing of question strings (deferred to a future privacy pass)",
+    "Embedding-based semantic indexing of stored questions",
+    "Any binary executable — this is a lib crate only"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2024",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 8,
+    "msrv": "1.82.0",
+    "additional": {
+      "append_only": "The store must never mutate or delete existing records; only append operations are exposed in the public API."
+    }
+  },
+  "ambiguities_resolved": [
+    {
+      "question": "Should the index be mandatory or optional?",
+      "resolution": "Optional (SHOULD-level AC5). The data file is the source of truth; the index is a performance optimization that may be absent without breaking correctness."
+    },
+    {
+      "question": "What is the unfakeable metric for a library with no user-facing latency?",
+      "resolution": "tests_pass_count — the count of passing cargo tests. Every AC maps to an acceptance test file; a regression is unambiguous when this number drops."
+    },
+    {
+      "question": "Does bind_result need to carry error detail strings?",
+      "resolution": "V1 uses a three-variant enum (Bound|Unbound|Error) without a payload. Error detail is out of scope to keep the schema minimal and forward-compatible."
+    }
+  ]
+}

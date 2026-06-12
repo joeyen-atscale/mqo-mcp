@@ -1,0 +1,129 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "intent_slug": "mcp-probe-executor",
+  "prd_source": "/Users/jsy/Documents/PRDs/visions/mcp-autonomous-investigation.md",
+  "created_at": "2026-06-11T00:00:00Z",
+
+  "root_motivation": "The Gen-9 hypothesis engine produces a ranked HypothesisSet with a concrete probe MQO per hypothesis but deliberately stops at proposing — no code consumes those MQOs because the budget governor didn't exist yet. Now that mcp-query-budget-governor ships a check()/ingest_audit_log() verdict, the single missing piece is an executor that calls check() before each probe, fires the MQO via the proven replayer stdio JSON-RPC client on Proceed/CheckIn, decides confirm/refute from the observed component delta vs. predicted direction, halts cleanly on Halt, and returns a ResolvedHypothesisSet. Without this, the budget governor is a leash no one holds and every WatchEvent stays permanently unresolved.",
+
+  "user_persona": "An automated investigation pipeline (mcp-investigation-loop) running on a developer's macOS laptop as part of the Gen-10 closed-loop; may also be invoked directly in CI with --summaries flag. No human in the hot path during normal execution.",
+
+  "unfakeable_metric": {
+    "name": "acceptance_tests_passing",
+    "lower_is_better": false,
+    "harness_command": "cargo test --test acceptance 2>&1 | grep -c 'test .* ok'",
+    "target": null
+  },
+
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why does mcp-probe-executor need to exist at all?",
+      "a": "The hypothesis engine emits probe MQOs but nothing executes them — the loop is open and every WatchEvent stays unresolved forever."
+    },
+    {
+      "why": 2,
+      "q": "Why can't mcp-investigation-loop just call the MQO client directly?",
+      "a": "Budget gating must happen per-probe, not once up front; the executor is the only place that interleaves check() before each MQO and folds latency_ms back into ingest_audit_log() — collapsing it into the orchestrator would make that contract untestable in isolation."
+    },
+    {
+      "why": 3,
+      "q": "Why must budget gating be testable in isolation?",
+      "a": "A Halt verdict mid-flight must record partial results correctly (some hypotheses resolved, some not), and that invariant is impossible to assert if the executor and orchestrator are the same binary."
+    }
+  ],
+
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "Reads a HypothesisSet JSON from --input (or stdin), calls mcp-query-budget-governor::check() before each probe, and emits a ResolvedHypothesisSet JSON to --output (or stdout) with every hypothesis marked confirm or refute.",
+      "test": "tests/acceptance_ac1.rs — feeds a 3-hypothesis set with a stub governor returning Proceed for all; asserts all three hypotheses appear in output with confirm/refute set."
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "Stops execution on a Halt verdict, writes a partial ResolvedHypothesisSet containing results for already-executed probes, exits with code 2.",
+      "test": "tests/acceptance_ac2.rs — stub governor returns Proceed, Proceed, Halt; asserts output contains exactly 2 resolved hypotheses and exit code is 2."
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "Calls ingest_audit_log() with actual latency_ms after each successful probe execution so the governor's spend tracking is updated.",
+      "test": "tests/acceptance_ac3.rs — spy stub governor records ingest_audit_log calls; asserts one call per executed probe with latency_ms > 0."
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "In --summaries mode (no live MCP server), executes against pre-baked DatasetSummary JSON fixtures and produces deterministic confirm/refute decisions.",
+      "test": "tests/acceptance_ac4.rs — runs executor with --summaries pointing to fixture dir; asserts output is byte-stable across two runs."
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "Confirm/refute decision compares the probe's observed component delta to the hypothesis's predicted direction; a delta in the predicted direction is confirm, opposite or negligible is refute.",
+      "test": "tests/acceptance_ac5.rs — two hypotheses with opposing predicted directions, probe returns same delta for both; asserts one confirm and one refute."
+    },
+    {
+      "id": "AC6",
+      "level": "SHOULD",
+      "description": "On a CheckIn verdict, logs a structured warning (to stderr) before continuing, so the orchestrator can detect budget pressure without stopping the probe loop.",
+      "test": "tests/acceptance_ac6.rs — stub governor returns CheckIn; asserts stderr contains 'budget_check_in' JSON key and execution continues."
+    },
+    {
+      "id": "AC7",
+      "level": "SHOULD",
+      "description": "Handles malformed or missing probe_mqo fields in a hypothesis gracefully — skips the probe, marks the hypothesis as refute with reason 'malformed_probe', and continues.",
+      "test": "tests/acceptance_ac7.rs — input has one hypothesis with null probe_mqo; asserts it appears in output as refute with reason 'malformed_probe' and remaining hypotheses are unaffected."
+    },
+    {
+      "id": "AC8",
+      "level": "MAY",
+      "description": "Accepts --concurrency N to execute up to N probes in parallel (each still individually gated by check() before launch).",
+      "test": "tests/acceptance_ac8.rs — 5 hypotheses with --concurrency 2; asserts all 5 resolved and total wall-time < sequential lower bound (stub governor latency * 5)."
+    }
+  ],
+
+  "scope": [
+    "Accept a HypothesisSet JSON (from mcp-hypothesis-engine) and BudgetLimits on the command line or via pipe.",
+    "For each hypothesis in ranked order: call mcp-query-budget-governor::check(); on Proceed or CheckIn execute the hypothesis's probe_mqo via the replayer stdio JSON-RPC client; fold latency_ms into ingest_audit_log(); decide confirm or refute by comparing observed component delta to predicted direction.",
+    "On Halt verdict: stop the loop, record partial results for already-executed probes, exit with code 2.",
+    "Emit a ResolvedHypothesisSet JSON (same hypotheses with confirm/refute + observed delta attached).",
+    "Support --summaries mode for CI: load DatasetSummary fixtures from disk instead of making live MQO calls.",
+    "Reuse the replayer stdio JSON-RPC client shape already proven in mcp-investigation-replayer and mcp-watch-daemon."
+  ],
+
+  "non_goals": [
+    "Does not generate or rank hypotheses — that is mcp-hypothesis-engine's responsibility.",
+    "Does not persist findings to any store — that is mcp-finding-store's responsibility; this crate returns a ResolvedHypothesisSet and the caller decides what to do with it.",
+    "Does not orchestrate the full WatchEvent → hypothesis → probe → finding pipeline — that is mcp-investigation-loop.",
+    "Does not implement the budget governor logic itself — only consumes mcp-query-budget-governor::check() and ingest_audit_log() as a path dependency.",
+    "Does not serve an HTTP or MCP endpoint — pure library + thin CLI binary only.",
+    "Does not auto-apply any tuning or threshold changes — read-only with respect to all standing-query and model stores.",
+    "Does not support streaming re-evaluation against a live change-feed — batch probe execution only."
+  ],
+
+  "hard_constraints": {
+    "rust_edition": "2024",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 12,
+    "msrv": "1.82.0",
+    "additional": {
+      "intra_gen_path_dep": "mcp-query-budget-governor as a path dependency (intra-Gen-10); compose-by-JSON at gen boundary with mcp-hypothesis-engine",
+      "pure_now_ms": "no SystemTime::now() calls inside library functions; caller supplies now_ms for all budget check invocations",
+      "no_serving_substrate": "no tokio-based server, no axum, no tonic; the binary is a thin CLI wrapper over the lib"
+    }
+  },
+
+  "ambiguities_resolved": [
+    {
+      "question": "Vision lists mcp-probe-executor as 'rust-cli' but the task specifies target=lib. Which wins?",
+      "resolution": "Task context wins: target_kind=lib with a thin CLI binary in src/main.rs that calls into the library. The vision's 'rust-cli' label describes the final artifact shape; the autobuilder target_kind describes the primary crate type, which is lib so the executor logic is importable by mcp-investigation-loop as a path dep."
+    },
+    {
+      "question": "Should confirm/refute use a numeric threshold on delta magnitude or purely sign-comparison?",
+      "resolution": "Sign-comparison by default (predicted direction matches observed direction = confirm); a negligible delta (|delta| < epsilon, default 0.0) is refute. Epsilon is a BudgetLimits-adjacent config field, not hard-coded, so callers can tune it without recompiling."
+    }
+  ]
+}

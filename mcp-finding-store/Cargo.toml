@@ -1,0 +1,45 @@
+[package]
+name = "mcp-finding-store"
+version = "0.1.0"
+edition = "2021"
+description = "Gen-10 investigation memory: JSONL finding store with supersede-on-recur"
+
+[lib]
+name = "mcp_finding_store"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[[test]]
+name = "ac1_first_sight"
+path = "tests/ac1_first_sight.rs"
+
+[[test]]
+name = "ac2_supersede"
+path = "tests/ac2_supersede.rs"
+
+[[test]]
+name = "ac3_status_closes_open"
+path = "tests/ac3_status_closes_open.rs"
+
+[[test]]
+name = "ac4_append_only"
+path = "tests/ac4_append_only.rs"
+
+[[test]]
+name = "ac5_fold"
+path = "tests/ac5_fold.rs"
+
+[[test]]
+name = "ac6_corrupt"
+path = "tests/ac6_corrupt.rs"
+
+[[test]]
+name = "ac7_deterministic"
+path = "tests/ac7_deterministic.rs"

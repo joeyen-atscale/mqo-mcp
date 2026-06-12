@@ -1,0 +1,38 @@
+[package]
+name = "mcp-query-budget-governor"
+version = "0.1.0"
+edition = "2021"
+description = "Budget governor for autonomous MCP queries — Proceed/CheckIn/Halt verdict"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[test]]
+name = "ac1_query_bands"
+path = "tests/ac1_query_bands.rs"
+
+[[test]]
+name = "ac2_halt_precedence"
+path = "tests/ac2_halt_precedence.rs"
+
+[[test]]
+name = "ac3_none_unbounded"
+path = "tests/ac3_none_unbounded.rs"
+
+[[test]]
+name = "ac4_ingest_audit"
+path = "tests/ac4_ingest_audit.rs"
+
+[[test]]
+name = "ac5_wall_clock"
+path = "tests/ac5_wall_clock.rs"
+
+[[test]]
+name = "ac6_pure_check"
+path = "tests/ac6_pure_check.rs"
+
+[[test]]
+name = "ac7_agentns_fallback"
+path = "tests/ac7_agentns_fallback.rs"

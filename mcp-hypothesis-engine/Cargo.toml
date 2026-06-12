@@ -1,0 +1,22 @@
+[package]
+name = "mcp-hypothesis-engine"
+version = "0.1.0"
+edition = "2021"
+description = "Autonomous hypothesis generator for metric movements using the concept graph (Gen-9)"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "mcp_hypothesis_engine"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mcp-hypothesis-engine"
+path = "src/main.rs"
+
+[dependencies]
+mcp-concept-graph = { path = "../mcp-concept-graph" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]

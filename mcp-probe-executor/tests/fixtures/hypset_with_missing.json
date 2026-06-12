@@ -1,0 +1,29 @@
+{
+  "target": "Total Store Sales",
+  "hypotheses": [
+    {
+      "rank": 1,
+      "explanation": "Missing probe key hypothesis",
+      "probe_mqo": {
+        "measures": [{"unique_name": "Missing Measure"}],
+        "dimensions": [],
+        "filters": []
+      },
+      "predicted_direction": "down",
+      "component_delta_fraction": -0.05,
+      "probe_key": "missing-probe-key-xyz"
+    },
+    {
+      "rank": 2,
+      "explanation": "Total Store Sales fell because component Store Sales Amount fell",
+      "probe_mqo": {
+        "measures": [{"unique_name": "Store Sales Amount"}],
+        "dimensions": [],
+        "filters": []
+      },
+      "predicted_direction": "down",
+      "component_delta_fraction": -0.075,
+      "probe_key": "store-sales-amount"
+    }
+  ]
+}

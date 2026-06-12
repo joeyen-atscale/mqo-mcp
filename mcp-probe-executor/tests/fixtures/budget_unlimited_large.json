@@ -1,0 +1,6 @@
+{
+  "max_queries": 1000,
+  "checkin_fraction": 0.9,
+  "max_tokens": 1000000,
+  "window_ms": 3600000
+}

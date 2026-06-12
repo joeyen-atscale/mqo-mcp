@@ -1,0 +1,44 @@
+[package]
+name = "mcp-probe-executor"
+version = "0.1.0"
+edition = "2021"
+description = "Gen-10 probe executor: runs hypothesis probes under budget, confirm/refute by directional delta"
+license = "MIT"
+
+[[bin]]
+name = "mcp-probe-executor"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+mcp-query-budget-governor = { path = "../mcp-query-budget-governor" }
+
+[[test]]
+name = "ac1_confirm_refute"
+path = "tests/ac1_confirm_refute.rs"
+
+[[test]]
+name = "ac2_budget_halt"
+path = "tests/ac2_budget_halt.rs"
+
+[[test]]
+name = "ac3_checkin"
+path = "tests/ac3_checkin.rs"
+
+[[test]]
+name = "ac4_schema"
+path = "tests/ac4_schema.rs"
+
+[[test]]
+name = "ac5_inconclusive_isolation"
+path = "tests/ac5_inconclusive_isolation.rs"
+
+[[test]]
+name = "ac6_budget_accounting"
+path = "tests/ac6_budget_accounting.rs"
+
+[[test]]
+name = "bench_resolve"
+path = "tests/bench_resolve.rs"

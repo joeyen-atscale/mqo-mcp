@@ -1,0 +1,44 @@
+[package]
+name = "mcp-trace-store"
+version = "0.1.0"
+edition = "2021"
+description = "Durable, append-only interaction trace store for MQO queries"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/joeyen-atscale/mcp-trace-store"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[[test]]
+name = "ac1_append"
+path = "tests/ac1_append.rs"
+
+[[test]]
+name = "ac2_scan_filter"
+path = "tests/ac2_scan_filter.rs"
+
+[[test]]
+name = "ac3_first_attempt"
+path = "tests/ac3_first_attempt.rs"
+
+[[test]]
+name = "ac4_atomic"
+path = "tests/ac4_atomic.rs"
+
+[[test]]
+name = "ac5_rotation"
+path = "tests/ac5_rotation.rs"
+
+[[test]]
+name = "ac6_schema_compat"
+path = "tests/ac6_schema_compat.rs"
+
+[[test]]
+name = "bench_perf"
+path = "tests/bench_perf.rs"
