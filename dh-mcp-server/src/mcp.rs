@@ -614,6 +614,7 @@ fn pipeline_err(e: &PipelineError) -> Value {
         PipelineError::NotAnMqo(d) => ("not_an_mqo", json!(d)),
         PipelineError::Invalid(d) => ("invalid_mqo", json!(d)),
         PipelineError::NotGround { report } => ("not_ground", report.clone()),
+        PipelineError::ParamRejected { report, .. } => ("param_rejected", report.clone()),
         PipelineError::Subprocess { tool, detail } => {
             ("subprocess_error", json!({ "tool": tool, "detail": detail }))
         }

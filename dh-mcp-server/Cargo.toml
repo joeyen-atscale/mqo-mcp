@@ -1,6 +1,6 @@
 [package]
 name = "dh-mcp-server"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.75.0"
 description = "Dataset-handle MCP server — query_multidimensional runs the MQO pipeline, stores the result in dh-store, and returns {summary, handle, capabilities}; a dataset_* tool family works the data in place. Read-only by construction."
