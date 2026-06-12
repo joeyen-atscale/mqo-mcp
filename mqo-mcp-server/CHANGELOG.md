@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.16.0 — 2026-06-12
+
+- **describe_model grounding fixes (k=1 residual gaps).** Two focused fixes to
+  the disambiguation pack, closing the residual failure causes from the k=1
+  grounding eval (after `near_twins` lifted wrong_hierarchy_level 35%→60% and
+  lookalike 85%→90%):
+  - **FIX 1 — packaged calcs surfaced on measures.** Each `describe_model`
+    measure column now carries `is_calc: bool` and `triggers: [String]`,
+    reusing `mqo-param-validator`'s `is_packaged_calc()` / `calc_triggers()`.
+    Packaged calc measures (e.g. `Web and Catalog Sales Price Growth`,
+    `Store Sales Increase`) are flagged `is_calc:true` with their NL trigger
+    phrases (`growth`, `year over year`, `yoy`, `vs prior period`, …) so the
+    model picks the calc instead of a plain base measure. Non-calc measures get
+    `is_calc:false` + `triggers:[]`. (Failing tasks fm2-001, fm2-015.)
+  - **FIX 2 — `canonical_for` prefers the human-readable `*Name*` attribute.**
+    The near-twin core-label key now drops a trailing `name` token, so a
+    code-like attribute (`Customer State`) and its display sibling
+    (`Customer State Name`) land in one group; within a group the member whose
+    label ends in `Name` wins `canonical_for`, with the prior
+    shortest-hierarchy primacy as the tiebreak. The "Customer State" group now
+    resolves to `Customer State Name`, while the Brand Name group still resolves
+    to `product_dimension.[Product Brand Name]`. The measure-twin pass gains the
+    same conservative `*Name*` preference (inert on the TPC-DS fixture).
+    (Failing tasks fm2-008, fm2-010, fm2-020.)
+
 ## v0.15.0 — 2026-06-11
 
 - **wire grounding: describe_model surfaces level+measure near-twins,
