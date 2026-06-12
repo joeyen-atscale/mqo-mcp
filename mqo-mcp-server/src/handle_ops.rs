@@ -146,8 +146,6 @@ pub fn json_rows_to_dataset(rows: &[Value]) -> Dataset {
 /// differs.  Columns not present in the bound fall back to the dtype heuristic.
 #[must_use]
 pub fn json_rows_to_dataset_with_bound(rows: &[Value], bound: &Value) -> Dataset {
-    let role_map = bound_role_map(bound);
-
     let mut col_names: Vec<String> = Vec::new();
     for row in rows {
         if let Some(obj) = row.as_object() {
@@ -158,6 +156,10 @@ pub fn json_rows_to_dataset_with_bound(rows: &[Value], bound: &Value) -> Dataset
             }
         }
     }
+
+    // Friendly-label classifier: tolerates XMLA name-mangled row keys that do
+    // NOT equal the bound's `unique_name`.  See [`bound_role_map`].
+    let role_map = bound_role_map(bound, &col_names, rows);
 
     let mut columns: Vec<ColumnSchema> = Vec::with_capacity(col_names.len());
     let mut data: Vec<ColumnData> = Vec::with_capacity(col_names.len());
@@ -182,32 +184,178 @@ pub fn json_rows_to_dataset_with_bound(rows: &[Value], bound: &Value) -> Dataset
     })
 }
 
-/// Build a `column-name → ColumnRole` map from the MQO `bound`.
-///
-/// Mirrors `mqo_result_profiler::projection_order` (`measures[] → Measure`,
-/// `dimensions[] → Dimension`) but matches the way **row keys** are produced:
-/// the fixture/XMLA executors emit one row key per bound entry's
-/// `unique_name`, so we key the map on `unique_name`.  For the simplified
-/// string-array bound shape used in some tests
-/// (`{measures:["m"],dimensions:["d"]}`) we fall back to the bare string,
-/// keeping the map robust across both shapes.
-fn bound_role_map(bound: &Value) -> BTreeMap<String, ColumnRole> {
-    let mut map: BTreeMap<String, ColumnRole> = BTreeMap::new();
-    let mut ingest = |key: &str, role: ColumnRole| {
-        if let Some(arr) = bound.get(key).and_then(Value::as_array) {
-            for entry in arr {
-                let name = entry
-                    .get("unique_name")
-                    .and_then(Value::as_str)
-                    .or_else(|| entry.as_str());
-                if let Some(name) = name {
-                    map.insert(name.to_owned(), role);
+/// Undo SSAS/XMLA name-mangling: every `_xHHHH_` (4 hex digits) becomes the
+/// corresponding Unicode character.  Mirrors the demo bridge's
+/// `_decode_xml_name`.
+fn decode_xml_name(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < s.len() {
+        // Look for the pattern `_xHHHH_` starting at byte i.
+        if bytes[i] == b'_'
+            && i + 6 < s.len()
+            && (bytes[i + 1] == b'x' || bytes[i + 1] == b'X')
+            && bytes[i + 6] == b'_'
+            && bytes[i + 2..i + 6].iter().all(u8::is_ascii_hexdigit)
+        {
+            let hex = &s[i + 2..i + 6];
+            if let Ok(code) = u32::from_str_radix(hex, 16) {
+                if let Some(ch) = char::from_u32(code) {
+                    out.push(ch);
+                    i += 7;
+                    continue;
                 }
             }
         }
+        // Not a mangled escape: copy this byte's char.  `s[i..]` always starts
+        // on a char boundary here because escapes are pure ASCII.
+        let ch = s[i..].chars().next().unwrap_or('\u{FFFD}');
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
+/// Contents of the last `[...]` segment in `s`, trimmed, if any.
+fn last_bracket_contents(s: &str) -> Option<String> {
+    let mut last: Option<String> = None;
+    let mut depth_start: Option<usize> = None;
+    for (idx, ch) in s.char_indices() {
+        match ch {
+            '[' => depth_start = Some(idx + 1),
+            ']' => {
+                if let Some(start) = depth_start.take() {
+                    last = Some(s[start..idx].trim().to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    last
+}
+
+/// Friendly label for a (possibly XML-mangled) **row column key**.  Prefers the
+/// contents of the last `[...]` segment (the level/measure name); else the
+/// decoded string trimmed of `._ `.  Mirrors the bridge's `_clean_label`.
+fn clean_label(raw_key: &str) -> String {
+    let decoded = decode_xml_name(raw_key);
+    if let Some(b) = last_bracket_contents(&decoded) {
+        return b;
+    }
+    decoded.trim_matches(|c| c == '.' || c == '_' || c == ' ').to_string()
+}
+
+/// Friendly label for a bound `unique_name` (`hier.[Level]` or `model.measure`).
+/// Mirrors the bridge's `_label_from_unique_name`.
+fn label_from_unique_name(unique_name: &str) -> String {
+    if let Some(b) = last_bracket_contents(unique_name) {
+        return b;
+    }
+    let tail = unique_name.rsplit('.').next().unwrap_or(unique_name);
+    tail.replace('_', " ").trim().to_string()
+}
+
+/// Build a `row-column-key → ColumnRole` map from the MQO `bound`.
+///
+/// **Why not exact `unique_name` matching?**  For LIVE XMLA results the row
+/// keys are name-mangled (e.g. `atscale_catalogs_x005b_Sold_x0020_Calendar...`)
+/// and do NOT equal the bound's `unique_name`
+/// (`sold_date_dimensions.[Sold Calendar Year]`), so an exact match finds
+/// nothing and the numeric year falls through to the dtype heuristic → wrongly
+/// `Measure`.  Instead we match on **friendly labels**, replicating the demo
+/// bridge's `_normalize_response`:
+///
+/// 1. `clean_label` each row key (decode `_xHHHH_`, prefer last `[...]`).
+/// 2. `label_from_unique_name` each bound dim/measure entry.
+/// 3. Keep only bound labels that appear among the row labels (`known`); then
+///    any column whose label is in neither set is a "straggler" assigned by
+///    dtype (numeric → Measure, else Dimension).
+/// 4. A column's role is Dimension if its `clean_label` ∈ dim_labels, Measure
+///    if ∈ meas_labels.
+///
+/// When the bound carries no usable dim/measure labels the caller falls back to
+/// the dtype heuristic for every column (this map is then empty).  The
+/// simplified string-array bound shape (`{measures:["m"],dimensions:["d"]}`)
+/// and the fixture shape (row keys == `unique_name`) both flow through the same
+/// friendly-label path.
+fn bound_role_map(
+    bound: &Value,
+    col_names: &[String],
+    rows: &[Value],
+) -> BTreeMap<String, ColumnRole> {
+    // label_for[col_key] = friendly label of that row column.
+    let label_for: BTreeMap<&str, String> = col_names
+        .iter()
+        .map(|k| (k.as_str(), clean_label(k)))
+        .collect();
+    let known: std::collections::BTreeSet<&str> =
+        label_for.values().map(String::as_str).collect();
+
+    // Each bound entry contributes its raw `unique_name` (for the fixture path,
+    // where row keys == unique_name) and its friendly label (for the live XMLA
+    // path, where row keys are name-mangled).  A bound label is "usable" only if
+    // it appears among the row labels (`known`); the raw unique_name match is
+    // always tried.
+    let bound_entries = |key: &str| -> Vec<(String, String)> {
+        bound
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|entry| {
+                        entry
+                            .get("unique_name")
+                            .and_then(Value::as_str)
+                            .or_else(|| entry.as_str())
+                    })
+                    .map(|un| (un.to_string(), label_from_unique_name(un)))
+                    .collect()
+            })
+            .unwrap_or_default()
     };
-    ingest("measures", ColumnRole::Measure);
-    ingest("dimensions", ColumnRole::Dimension);
+
+    let dim_entries = bound_entries("dimensions");
+    let meas_entries = bound_entries("measures");
+
+    let mut map: BTreeMap<String, ColumnRole> = BTreeMap::new();
+
+    // No usable bound entries at all → leave the map empty so the caller uses
+    // the dtype heuristic for every column.
+    if dim_entries.is_empty() && meas_entries.is_empty() {
+        return map;
+    }
+
+    // Usable friendly labels: only those that appear among the row labels.
+    let dim_set: std::collections::BTreeSet<&str> = dim_entries
+        .iter()
+        .filter(|(_, lbl)| known.contains(lbl.as_str()))
+        .map(|(_, lbl)| lbl.as_str())
+        .collect();
+    let meas_set: std::collections::BTreeSet<&str> = meas_entries
+        .iter()
+        .filter(|(_, lbl)| known.contains(lbl.as_str()))
+        .map(|(_, lbl)| lbl.as_str())
+        .collect();
+    // Raw unique_name match (fixture path where row key == unique_name).
+    let dim_un: std::collections::BTreeSet<&str> =
+        dim_entries.iter().map(|(un, _)| un.as_str()).collect();
+    let meas_un: std::collections::BTreeSet<&str> =
+        meas_entries.iter().map(|(un, _)| un.as_str()).collect();
+
+    for name in col_names {
+        let lbl = label_for.get(name.as_str()).map_or("", String::as_str);
+        let role = if dim_un.contains(name.as_str()) || dim_set.contains(lbl) {
+            ColumnRole::Dimension
+        } else if meas_un.contains(name.as_str()) || meas_set.contains(lbl) {
+            ColumnRole::Measure
+        } else {
+            // Straggler: classify by dtype (numeric → Measure, else Dimension).
+            let (_dtype, heuristic_role, _col) = build_column(name, rows);
+            heuristic_role
+        };
+        map.insert(name.clone(), role);
+    }
     map
 }
 
@@ -1012,6 +1160,47 @@ mod tests {
         assert_eq!(role("m"), ColumnRole::Measure);
         // Not in bound → dtype heuristic → numeric → Measure.
         assert_eq!(role("extra_num"), ColumnRole::Measure);
+    }
+
+    /// LIVE XMLA regression: row keys are SSAS name-mangled (`_xHHHH_`) and do
+    /// NOT equal the bound's `unique_name`.  Both columns arrive as `Float`, so
+    /// the dtype heuristic alone would mislabel the numeric **year** dimension
+    /// as a Measure.  The friendly-label classifier must recover:
+    ///   - `[Sold Calendar Year]` (bracket, case-preserved) matches the bound
+    ///     dimension's label → Dimension.
+    ///   - the measure's dotted `unique_name` lowercases to "total store sales"
+    ///     ≠ the row label "Total Store Sales", so it is dropped, then re-added
+    ///     as a numeric straggler → Measure.
+    ///
+    /// Real shapes captured from a live mcp-aws run.
+    #[test]
+    fn live_xmla_mangled_keys_role_from_bound() {
+        let sales_key = "_x005b_Total_x0020_Store_x0020_Sales_x005d_";
+        let year_key = "atscale_catalogs_x005b_Sold_x0020_Calendar_x0020_Year_x005d_";
+        let bound = json!({
+            "measures": [{ "unique_name": "tpcds_benchmark_model.total_store_sales" }],
+            "dimensions": [{
+                "unique_name": "sold_date_dimensions.[Sold Calendar Year]",
+                "hierarchy": "sold_date_dimensions"
+            }],
+        });
+        // Both values are numeric (Float) — only the role should differ.
+        let rows = vec![
+            json!({ year_key: 2021.0, sales_key: 100.5 }),
+            json!({ year_key: 2022.0, sales_key: 200.5 }),
+        ];
+
+        let ds = json_rows_to_dataset_with_bound(&rows, &bound);
+        let col = |n: &str| ds.columns.iter().find(|c| c.name == n).unwrap();
+
+        // Columns are NOT renamed — the raw mangled key is preserved.
+        assert_eq!(col(year_key).dtype, DType::Float);
+        assert_eq!(col(sales_key).dtype, DType::Float);
+
+        // The mangled measure key → Measure (numeric straggler re-add).
+        assert_eq!(col(sales_key).role, ColumnRole::Measure);
+        // The mangled year key → Dimension (bracket-label match), despite Float.
+        assert_eq!(col(year_key).role, ColumnRole::Dimension);
     }
 
     /// The simplified string-array bound shape (used by some tests) still maps.

@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.13.2 — 2026-06-11
+
+- **fix: friendly-label role matching for XMLA-mangled live column keys.** For
+  LIVE results the XMLA row keys are SSAS name-mangled (e.g.
+  `atscale_catalogs_x005b_Sold_x0020_Calendar_x0020_Year_x005d_`) and do NOT
+  equal the bound's `unique_name`
+  (`sold_date_dimensions.[Sold Calendar Year]`), so the prior exact-`unique_name`
+  matching found nothing and a numeric year fell through to the dtype heuristic →
+  wrongly `Measure`. `bound_role_map` now classifies by **friendly label**
+  (mirroring the demo bridge's `_normalize_response`): decode `_xHHHH_`, prefer
+  the last `[...]` segment for both row keys and bound `unique_name`s, keep only
+  bound labels present among the columns, and assign any unmatched column by
+  dtype (numeric → Measure, else Dimension). The raw `unique_name` match is still
+  tried first so fixture-mode rows (keys == `unique_name`) keep working. Columns
+  are not renamed — only `ColumnRole` is fixed. New test
+  `live_xmla_mangled_keys_role_from_bound` asserts year → Dimension, sales →
+  Measure on the real mangled shapes.
+
 ## v0.13.1 — 2026-06-11
 
 - **fix: bound-authoritative column roles — numeric dimensions no longer
