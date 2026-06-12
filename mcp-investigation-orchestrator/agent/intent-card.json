@@ -1,0 +1,70 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "intent_slug": "mcp-investigation-orchestrator",
+  "prd_source": "/Users/jsy/Documents/projects/mcp-investigation-orchestrator/agent/intent-card.json",
+  "root_motivation": "The four Gen-9/10 investigation crates are disconnected CLIs; without an orchestrator a human must manually pipe WatchEvent→hypotheses→probes→findings, making autonomous investigation impossible.",
+  "user_persona": "AtScale platform operator running automated anomaly investigation",
+  "unfakeable_metric": {
+    "name": "tests_pass_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --manifest-path /Users/jsy/Documents/projects/mcp-investigation-orchestrator/Cargo.toml 2>&1 | grep 'test result' | awk '{print $6}' | tr -d ';'"
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "Happy path: given a fixture WatchEvent and describe_model, the orchestrator produces at least one Finding with status Confirmed or Refuted.",
+      "test": "cargo test --manifest-path /Users/jsy/Documents/projects/mcp-investigation-orchestrator/Cargo.toml ac1_happy_path"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "Budget halt: with max_queries=1 and at least two hypotheses, exactly one probe runs and output notes the budget halt.",
+      "test": "cargo test --manifest-path /Users/jsy/Documents/projects/mcp-investigation-orchestrator/Cargo.toml ac2_budget_halt"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "Idempotent upsert: running the same WatchEvent twice against the same store increments recurrence_count without duplicating the finding_id.",
+      "test": "cargo test --manifest-path /Users/jsy/Documents/projects/mcp-investigation-orchestrator/Cargo.toml ac3_idempotent_upsert"
+    }
+  ],
+  "scope": [
+    "Rust CLI binary that handles one WatchEvent per invocation",
+    "Builds a ConceptGraph from describe_model JSON and calls mcp-hypothesis-engine run_engine",
+    "Calls BudgetLedger::check() before each probe subprocess call",
+    "Invokes mcp-probe-executor as a subprocess with temporary hypothesis and budget JSON files",
+    "Persists the resolved investigation through FindingStore::record()",
+    "Emits a JSON array of Finding records to stdout"
+  ],
+  "non_goals": ["no LLM calls", "no live XMLA", "fixtures only in tests"],
+  "hard_constraints": { "target_kind": "cli", "deny_unsafe": true, "rust_edition": "2021" },
+  "created_at": "2026-06-11T00:00:00Z",
+  "five_whys_trace": [
+    {
+      "why": "Why is investigation slow?",
+      "q": "Why is investigation slow?",
+      "a": "Manual piping between CLIs."
+    },
+    {
+      "why": "Why manual?",
+      "q": "Why manual?",
+      "a": "No orchestrator."
+    },
+    {
+      "why": "Why no orchestrator?",
+      "q": "Why no orchestrator?",
+      "a": "Crates built independently."
+    },
+    {
+      "why": "Why built independently?",
+      "q": "Why built independently?",
+      "a": "Gen-9 scope was per-crate."
+    },
+    {
+      "why": "Why per-crate?",
+      "q": "Why per-crate?",
+      "a": "No cross-crate wiring task existed until now."
+    }
+  ]
+}

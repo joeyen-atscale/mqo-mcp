@@ -1,0 +1,22 @@
+[package]
+name = "mcp-investigation-orchestrator"
+version = "0.1.0"
+edition = "2021"
+description = "Gen-10: wire WatchEvent → hypotheses → probe-executor → finding-store"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "mcp-investigation-orchestrator"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+mcp-concept-graph = { path = "../mcp-concept-graph" }
+mcp-hypothesis-engine = { path = "../mcp-hypothesis-engine" }
+mcp-query-budget-governor = { path = "../mcp-query-budget-governor" }
+mcp-finding-store = { path = "../mcp-finding-store" }
+
+[dev-dependencies]
+tempfile = "3"

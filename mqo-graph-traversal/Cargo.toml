@@ -1,0 +1,18 @@
+[package]
+name = "mqo-graph-traversal"
+version = "0.1.0"
+edition = "2021"
+description = "Shared attributed property graph traversal engine for Gen-8 downstream tools (grounding-eval, hallucination-guard, gap-miner, causal-tracer) — built deterministically from describe_model JSON, no LLM calls."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "mqo_graph_traversal"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+mqo-concept-graph = { path = "../mqo-concept-graph" }
+petgraph = { version = "0.6", features = ["serde-1"] }
+
+[dev-dependencies]

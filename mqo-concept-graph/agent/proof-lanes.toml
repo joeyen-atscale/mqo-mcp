@@ -1,0 +1,46 @@
+# proof-lanes.toml — path-to-lane routing for mqo-concept-graph autobuilder loop
+# Every changed path in src/ must resolve to >= 1 lane; all lanes must be green.
+
+[[lane]]
+id = "rust-source"
+description = "Behavior changes in src/"
+globs = ["mqo-concept-graph/src/**/*.rs", "src/**/*.rs"]
+required_commands = [
+  "cargo check",
+  "cargo clippy -- -D warnings",
+  "cargo test --lib --tests",
+]
+
+[[lane]]
+id = "rust-tests"
+description = "Test-only changes in tests/"
+globs = ["mqo-concept-graph/tests/**/*.rs", "tests/**/*.rs"]
+required_commands = [
+  "cargo test --tests",
+]
+
+[[lane]]
+id = "deps"
+description = "Cargo.toml / Cargo.lock changes"
+globs = ["mqo-concept-graph/Cargo.toml", "mqo-concept-graph/Cargo.lock", "Cargo.toml", "Cargo.lock"]
+required_commands = [
+  "cargo check",
+]
+
+[[lane]]
+id = "agent"
+description = "Agent metadata (intent-card, proof-lanes)"
+globs = ["mqo-concept-graph/agent/**", "agent/**"]
+required_commands = []
+
+[[lane]]
+id = "scripts"
+description = "Build / metric scripts"
+globs = ["mqo-concept-graph/scripts/**", "scripts/**"]
+required_commands = []
+
+[[lane]]
+id = "autobuilder-artifacts"
+description = "Generated autobuilder artifacts (target/autobuilder/)"
+globs = ["mqo-concept-graph/target/autobuilder/**", "target/autobuilder/**"]
+required_commands = []

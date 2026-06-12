@@ -1,0 +1,20 @@
+[package]
+name = "mcp-interaction-scorer"
+version = "0.1.0"
+edition = "2021"
+description = "Compute per-session and per-entity quality distributions from the durable trace store (retry histograms, first-attempt bind rate, result fill rate, grounding score distribution) so that downstream tools consume structured quality signals rather than re-scanning raw JSONL records."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "mcp_interaction_scorer"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+mcp-trace-store = { path = "../mcp-trace-store" }
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"
+uuid = { version = "1", features = ["v4"] }

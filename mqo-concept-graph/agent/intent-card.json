@@ -1,0 +1,117 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "intent_slug": "mqo-concept-graph",
+  "prd_source": "/Users/jsy/Documents/PRDs/visions/mcp-knowledge-graph.md",
+  "root_motivation": "Make the AtScale semantic model's graph topology an explicit, shared, single-source-of-truth artifact — derived from describe_model JSON in-process without LLM calls — so that all Gen-8 downstream tools (causal-tracer, narrative-builder, nl-model-extender) consume a consistent attributed property graph rather than each re-extracting topology ad hoc.",
+  "user_persona": "Rust library consumer (another AtScale crate, e.g. mcp-causal-tracer or mcp-nl-model-extender) that calls ConceptGraph::from_describe_model(json) and traverses nodes and typed edges programmatically in-process.",
+  "unfakeable_metric": {
+    "name": "tests_pass_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --lib --tests 2>&1 | grep -E '^test result' | awk '{print $4}'",
+    "target": null
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "ConceptGraph::from_describe_model(json: &str) parses a describe_model JSON fixture and returns a graph where node count matches the number of measures + dimension levels + calcs + hierarchies in the fixture.",
+      "test": "tests/acceptance_ac1.rs: assert_eq!(graph.node_count(), expected_node_count)"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "Edges typed aggregates_via, time_shifts, filters_by, and derives_from are present in the graph for fixtures that contain the corresponding semantic relationships; each edge carries a typed enum variant, not a raw string.",
+      "test": "tests/acceptance_ac2.rs: assert edge set contains each EdgeKind variant present in fixture"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "from_describe_model returns Err (not panic) when given invalid or empty JSON.",
+      "test": "tests/acceptance_ac3.rs: assert!(ConceptGraph::from_describe_model(\"\").is_err())"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "Graph traversal: given a node id, neighbors(id, EdgeKind) returns only edges of the specified kind, with correct source and target node ids.",
+      "test": "tests/acceptance_ac4.rs: neighbors filtered by each EdgeKind variant match expected adjacency from fixture"
+    },
+    {
+      "id": "AC5",
+      "level": "SHOULD",
+      "description": "from_describe_model completes in under 50 ms for a describe_model fixture containing 500 measures and 2000 dimension levels on the harness machine.",
+      "test": "tests/acceptance_ac5.rs: elapsed < Duration::from_millis(50) on 500-measure fixture"
+    },
+    {
+      "id": "AC6",
+      "level": "SHOULD",
+      "description": "All public types implement Debug and have doc-comments explaining their semantics.",
+      "test": "cargo doc --no-deps --deny warnings exits 0; cargo test --doc passes"
+    },
+    {
+      "id": "AC7",
+      "level": "MAY",
+      "description": "ConceptGraph serializes to and deserializes from a stable JSON representation for future model-graph-diff use.",
+      "test": "tests/acceptance_ac7.rs: roundtrip serialize->deserialize produces identical node/edge sets"
+    }
+  ],
+  "scope": [
+    "Parse describe_model JSON into an in-memory attributed property graph (adjacency list).",
+    "Represent nodes as typed enum: Measure, DimensionLevel, Calc, Hierarchy.",
+    "Represent edges as typed enum: aggregates_via, time_shifts, filters_by, derives_from, related_to.",
+    "Expose graph traversal API: node lookup by id, neighbor iteration filtered by EdgeKind.",
+    "Return structured errors (not panics) for malformed input.",
+    "No external database or file I/O — pure in-process construction from a JSON string."
+  ],
+  "non_goals": [
+    "No persistence to disk or external graph database (v1 is in-memory only).",
+    "No LLM calls — the graph is derived entirely from the structural JSON, deterministically.",
+    "No causal inference or statistical reasoning — this lib only materializes the structural topology; interpretation belongs to mcp-causal-tracer.",
+    "No query execution against AtScale clusters — this is a pure data-structure crate.",
+    "No SML YAML generation or model extension — that belongs to mcp-nl-model-extender.",
+    "No binary / CLI entry point — target_kind is lib; callers link against it."
+  ],
+  "hard_constraints": {
+    "rust_edition": "2024",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 8,
+    "msrv": "1.82.0",
+    "additional": {
+      "no_external_db": "graph is in-memory; no rocksdb/sled/sqlite dependency allowed",
+      "no_llm_calls": "all graph construction must be deterministic from JSON structure alone"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why build a concept graph library from describe_model output?",
+      "a": "Because every downstream Gen-8 tool (causal-tracer, hallucination-guard, gap-miner, nl-model-extender) re-extracts its own subset of the semantic model topology ad hoc from the same JSON, causing duplication and divergence."
+    },
+    {
+      "why": 2,
+      "q": "Why is ad-hoc per-tool extraction a problem?",
+      "a": "Because the graph topology is the structural truth of the semantic model — if two tools extract it differently they will reason inconsistently about the same model, undermining the governance guarantees AtScale provides."
+    },
+    {
+      "why": 3,
+      "q": "Why do governance guarantees depend on consistent graph topology?",
+      "a": "Because the causal tracer must traverse exactly the same derivation paths the query planner would follow; any missing or mis-typed edge (e.g. aggregates_via vs derives_from) produces a causal explanation that contradicts the actual query result — a compliance risk in regulated industries."
+    },
+    {
+      "why": 4,
+      "q": "Why not fix each downstream tool's extraction individually instead of building a shared lib?",
+      "a": "There are already 4 downstream consumers identified in the Gen-8 vision and the count will grow; fixing each in isolation is O(n) rework with no shared contract, and any future model schema change would require fixing every consumer again. A single lib gives one change point."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Vision lists 5 edge types including 'related_to' but the Gen-8 context names only 4: aggregates_via, time_shifts, filters_by, derives_from. Which are in scope?",
+      "resolution": "All 5 are in scope for the EdgeKind enum (related_to is a catch-all for future edges); AC2 tests only the 4 primary typed edges that carry specific semantic meaning, as those are the ones downstream consumers depend on."
+    },
+    {
+      "question": "Should the lib expose a mutable graph (add/remove nodes post-construction) or immutable (build-once, read-many)?",
+      "resolution": "Immutable for v1 — from_describe_model returns a fully-built read-only graph. Mutation is not required by any Gen-8 consumer and complicates the borrow model unnecessarily."
+    }
+  ],
+  "created_at": "2026-06-11T00:00:00Z"
+}

@@ -1,0 +1,125 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "intent_slug": "mqo-graph-traversal",
+  "prd_source": "/Users/jsy/Documents/PRDs/visions/mcp-knowledge-graph.md",
+  "created_at": "2026-06-11T00:00:00Z",
+  "root_motivation": "Every Gen-8 downstream tool (grounding-eval, hallucination-guard, gap-miner, causal-tracer) re-extracts its own slice of the AtScale semantic model topology ad hoc, producing inconsistent traversal semantics and preventing any tool from reasoning structurally about why a metric changed. The root need is a single, shared attributed property graph — buildable deterministically from any describe_model JSON, no LLM calls, no external DB — so that graph traversal (find related measures, trace derivation paths, suggest next questions) is done once with consistent edge semantics and every Gen-8 consumer delegates to this crate.",
+  "user_persona": "An MCP server crate author (Rust, AtScale mqo-mcp-server) who needs to wire concept-graph traversal into MCP tool responses. The crate is invoked in-process inside the MCP server on every tool call that requires structural reasoning about the semantic model.",
+  "unfakeable_metric": {
+    "name": "tests_pass_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --lib 2>&1 | grep -E '^test result' | awk '{print $4}'",
+    "target": null
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "Given a describe_model JSON fixture, build_graph() returns a ConceptGraph with correct node count (one node per measure, dimension level, calc, and hierarchy) and correct edge count for a known fixture. Panics on malformed JSON.",
+      "test": "tests/acceptance_ac1.rs::build_graph_node_edge_count"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "related_measures(graph, measure_name, depth) returns all measures reachable within `depth` hops via any edge type, in ranked order by graph distance. Returns an empty vec (not an error) when the start node is not found.",
+      "test": "tests/acceptance_ac2.rs::related_measures_depth_and_missing"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "causal_paths(graph, target_measure) returns ranked Vec<CausalPath> where each path carries the ordered list of edges and nodes from a root column/calc to the target measure, with evidence_type: Structural on every result. At least one path must be returned for any measure that has derivation edges.",
+      "test": "tests/acceptance_ac3.rs::causal_paths_structural_evidence"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "suggest_next_questions(graph, context_measures) returns at least one NextQuestion (a measure node adjacent to context_measures but not in context_measures) when the graph contains unexplored neighbors. Returns empty vec when the context already covers all reachable nodes.",
+      "test": "tests/acceptance_ac4.rs::suggest_next_questions_neighbors"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "All public API types implement serde Serialize/Deserialize. A round-trip (serialize ConceptGraph to JSON, deserialize back) produces a graph with identical node and edge counts.",
+      "test": "tests/acceptance_ac5.rs::serde_roundtrip"
+    },
+    {
+      "id": "AC6",
+      "level": "SHOULD",
+      "description": "build_graph() completes in <50 ms for a describe_model JSON with 500 measures and 2000 edges on a developer laptop (M-series Apple Silicon). Measured via criterion bench.",
+      "test": "benches/build_graph_bench.rs::build_500_measures_2000_edges < 50ms p99"
+    },
+    {
+      "id": "AC7",
+      "level": "SHOULD",
+      "description": "Edge types cover the full Gen-8 vocabulary: aggregates_via, time_shifts, filters_by, derives_from, related_to. Each variant is exercised by at least one unit test.",
+      "test": "tests/acceptance_ac7.rs::edge_type_coverage"
+    },
+    {
+      "id": "AC8",
+      "level": "MAY",
+      "description": "ConceptGraph can be serialized to a stable JSON file and deserialized back without loss (model-graph-diff foundation). Tested via snapshot comparison in unit tests.",
+      "test": "tests/acceptance_ac8.rs::stable_json_snapshot"
+    }
+  ],
+  "scope": [
+    "Build an attributed property graph (ConceptGraph) from describe_model JSON in-process with no external DB or LLM calls.",
+    "Expose related_measures(graph, start, depth) — find all measures reachable within depth hops.",
+    "Expose causal_paths(graph, target) — return ranked derivation paths with evidence_type: Structural.",
+    "Expose suggest_next_questions(graph, context) — return unexplored adjacent measure nodes as candidate next questions.",
+    "Define the edge-type vocabulary: aggregates_via, time_shifts, filters_by, derives_from, related_to.",
+    "Serialize/deserialize ConceptGraph and all public types via serde_json.",
+    "Provide a deterministic in-memory adjacency-list representation suitable for embedding in mqo-mcp-server."
+  ],
+  "non_goals": [
+    "No statistical causal inference — all causal paths are structural (derivation-edge traversal only); confidence is path-length-based, not data-driven.",
+    "No external graph database (no Neo4j, no RDF triple store, no persistent graph file in v1).",
+    "No LLM calls at any point — the graph is built deterministically from JSON; no embeddings, no semantic similarity.",
+    "No narrative composition — that is mcp-narrative-builder; this crate returns structured data only.",
+    "No NL query parsing — callers supply measure names and context programmatically; NLU is out of scope.",
+    "No audit chain functionality — that belongs to mcp-query-audit-chain.",
+    "No MCP tool registration — this is a lib crate; mqo-mcp-server wires it as a dependency."
+  ],
+  "hard_constraints": {
+    "rust_edition": "2024",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 8,
+    "msrv": "1.82.0",
+    "additional": {
+      "no_llm_calls": "Graph construction and traversal must be fully deterministic; no network I/O in the hot path.",
+      "no_external_db": "In-memory only for v1; no file-system persistence required by the crate itself."
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why build a dedicated graph-traversal crate instead of having each Gen-8 tool parse describe_model JSON itself?",
+      "a": "Every tool (grounding-eval, hallucination-guard, gap-miner, causal-tracer) currently re-extracts its own slice of the topology ad hoc, duplicating extraction logic and producing inconsistent edge semantics for the same structural relationships."
+    },
+    {
+      "why": 2,
+      "q": "Why does inconsistent edge semantics across tools matter — can't they just be kept in sync manually?",
+      "a": "No: the causal-tracer must return evidence_type: Structural on every path, which requires a shared, authoritative definition of what 'derives_from' means. If each tool defines it independently, the structural guarantee is meaningless — two tools can disagree on whether a given path is causal."
+    },
+    {
+      "why": 3,
+      "q": "Why is the structural guarantee on causal paths load-bearing for the overall Gen-8 vision?",
+      "a": "Enterprise compliance requires that AI-generated analytics explanations be auditable and structurally grounded — not statistical inference. The query audit chain proves what was asked and computed; the concept graph proves why the result is structurally valid. Without the graph, the causal claim is just an assertion."
+    },
+    {
+      "why": 4,
+      "q": "Why does structural grounding need to be in a shared lib rather than duplicated with tests in each consumer?",
+      "a": "Because the foundation crate is the unit of correctness: one test suite, one serde contract, one edge-type enum. If mcp-concept-graph (the broader PRD component) is correct, all consumers inherit correctness. Duplication means correctness diverges silently as the model schema evolves."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "The vision names 'mcp-concept-graph' as the PRD component but the requested crate slug is 'mqo-graph-traversal'. Are these the same scope?",
+      "resolution": "The Gen-8 context narrows scope to the traversal API surface (find related measures, trace causality chains, suggest next question) as stated in the Gen-8 description. The full mcp-concept-graph PRD also includes the NL model extender anchor — that is out of scope here. This crate is the traversal engine; mcp-concept-graph is the broader component PRD."
+    },
+    {
+      "question": "Should the unfakeable metric be tests_pass_count or build_graph latency?",
+      "resolution": "tests_pass_count is load-bearing because correctness of traversal semantics (AC1–AC5) is binary. Latency (AC6) is a SHOULD, not a MUST — it demotes to a criterion bench and does not gate advance/revert decisions."
+    }
+  ]
+}

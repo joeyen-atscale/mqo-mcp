@@ -1263,6 +1263,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
+name = "fixedbitset"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
+
+[[package]]
 name = "flatbuffers"
 version = "24.12.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2200,11 +2206,74 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcp-concept-graph"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "mcp-cross-cluster-diff"
 version = "0.1.0"
 dependencies = [
  "clap",
  "mcp-cluster-registry",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mcp-finding-store"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
+]
+
+[[package]]
+name = "mcp-hypothesis-engine"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "mcp-concept-graph",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mcp-interaction-scorer"
+version = "0.1.0"
+dependencies = [
+ "mcp-trace-store",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "uuid",
+]
+
+[[package]]
+name = "mcp-investigation-orchestrator"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "mcp-concept-graph",
+ "mcp-finding-store",
+ "mcp-hypothesis-engine",
+ "mcp-query-budget-governor",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "mcp-query-budget-governor"
+version = "0.1.0"
+dependencies = [
  "serde",
  "serde_json",
 ]
@@ -2217,6 +2286,17 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "mcp-trace-store"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "uuid",
 ]
 
 [[package]]
@@ -2357,6 +2437,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mqo-concept-graph"
+version = "0.1.0"
+dependencies = [
+ "petgraph",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "mqo-cross-backend-parity"
 version = "0.1.0"
 dependencies = [
@@ -2421,6 +2510,16 @@ dependencies = [
  "sqlparser",
  "tempfile",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "mqo-graph-traversal"
+version = "0.1.0"
+dependencies = [
+ "mqo-concept-graph",
+ "petgraph",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2889,6 +2988,18 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+
+[[package]]
+name = "petgraph"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4c5cc86750666a3ed20bdaf5ca2a0344f9c67674cae0515bec2da16fbaa47db"
+dependencies = [
+ "fixedbitset",
+ "indexmap",
+ "serde",
+ "serde_derive",
+]
 
 [[package]]
 name = "phf"
@@ -3383,9 +3494,9 @@ dependencies = [
 
 [[package]]
 name = "rust_decimal"
-version = "1.42.0"
+version = "1.42.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c5108e3d4d903e21aac27f12ba5377b6b34f9f44b325e4894c7924169d06995"
+checksum = "be2a24f50780bc85f09cc6ac299bdf1424302742d77221106859c9d8b102126a"
 dependencies = [
  "arrayvec",
  "borsh",

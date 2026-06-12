@@ -1,0 +1,113 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "intent_slug": "mcp-interaction-scorer",
+  "prd_source": "/Users/jsy/Documents/PRDs/visions/mcp-self-improvement.md",
+  "created_at": "2026-06-11T00:00:00Z",
+  "root_motivation": "Compute per-session and per-entity quality distributions from the durable trace store (retry histograms, first-attempt bind rate, result fill rate, grounding score distribution) so that downstream tools — the gap miner and fine-tune exporter — consume structured quality signals rather than re-scanning raw JSONL records on every invocation.",
+  "user_persona": "AtScale MCP server operator or platform engineer who feeds the scorer's output JSON into the coverage-gap-miner and fine-tune-exporter pipelines to decide where the semantic model needs patching and which interactions are clean enough to use for fine-tuning.",
+  "unfakeable_metric": {
+    "name": "tests_pass_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --lib 2>&1 | grep -E '^test result' | awk '{print $6}' | tr -d ';'",
+    "target": null
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "Given a JSONL trace store, compute per-session retry_rate (retried_mqos / total_mqos), empty_result_rate (empty_result_mqos / total_mqos), and bind_failure_rate (failed_binds / total_mqos); return a SessionQuality struct for each session_id present.",
+      "test": "tests/acceptance_ac1.rs — fixture trace with 3 sessions of known counts; assert computed rates match expected f64 within 1e-9."
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "Given a JSONL trace store, compute per-entity (model entity name) distributions: first_attempt_bind_rate, retry_histogram (vec of retry counts), result_fill_rate; return an EntityQuality map keyed by entity name.",
+      "test": "tests/acceptance_ac2.rs — fixture trace referencing 2 named entities; assert per-entity stats match expected values."
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "Reading from a file path that does not exist returns Err with a descriptive IoError variant; the library never panics.",
+      "test": "tests/acceptance_ac3.rs — call score_trace_store with a nonexistent path; assert Err and no panic via std::panic::catch_unwind."
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "A JSONL trace store containing a malformed (non-UTF-8 or non-JSON) line returns Err(ParseError) that identifies the offending line number; valid lines before the error are not returned.",
+      "test": "tests/acceptance_ac4.rs — fixture with a bad line at position 3; assert Err carrying line_number == 3."
+    },
+    {
+      "id": "AC5",
+      "level": "SHOULD",
+      "description": "An empty JSONL file (zero bytes) returns Ok with empty session and entity maps, not Err.",
+      "test": "tests/acceptance_ac5.rs — pass empty temp file; assert Ok with empty maps."
+    },
+    {
+      "id": "AC6",
+      "level": "SHOULD",
+      "description": "The public API is fully documented (every pub fn, struct, and enum carries a doc comment); `cargo doc --no-deps` emits zero warnings.",
+      "test": "cargo doc --no-deps 2>&1 | grep -c warning == 0"
+    },
+    {
+      "id": "AC7",
+      "level": "MAY",
+      "description": "Scorer accepts a BufRead trait object in addition to a file path, enabling callers to pass in-memory readers for testing or streaming use.",
+      "test": "tests/acceptance_ac7.rs — pass a Cursor<Vec<u8>> to the BufRead variant; assert same output as file-path variant on identical content."
+    }
+  ],
+  "scope": [
+    "Parse a JSONL trace store whose records conform to the mcp-trace-store schema (session_id, timestamp, MQO, bind_result, grounding_score, execute_result shape, quality_signals).",
+    "Compute per-session quality metrics: retry_rate, empty_result_rate, bind_failure_rate.",
+    "Compute per-entity quality distributions: first_attempt_bind_rate, retry_histogram, result_fill_rate, grounding_score distribution.",
+    "Return typed Rust structs (SessionQuality, EntityQuality) suitable for serialization to JSON by callers.",
+    "Return structured errors (not panics) for missing files, malformed JSONL, and schema-mismatch records."
+  ],
+  "non_goals": [
+    "Does not write or mutate the trace store — read-only consumer only.",
+    "Does not implement the gap miner, fine-tune exporter, or any downstream pipeline; those are separate crates.",
+    "Does not expose a CLI binary; this is a lib crate that CLI tools link against.",
+    "Does not do clustering, ranking, or gap report generation — that is mcp-coverage-gap-miner's responsibility.",
+    "Does not fetch traces from a remote endpoint or database — input is always a local JSONL file path or BufRead.",
+    "Does not filter or export interactions for fine-tuning — that is mcp-fine-tune-exporter's responsibility."
+  ],
+  "hard_constraints": {
+    "rust_edition": "2024",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 8,
+    "msrv": "1.80.0",
+    "additional": {}
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why score MCP interaction quality (retry rate, empty-result rate, bind failure rate)?",
+      "a": "Because these per-session and per-entity signals reveal where the constrained-output guarantee is fraying in real production sessions — something neither the tiger benchmark nor the grounding eval captures, since both operate on synthetic data."
+    },
+    {
+      "why": 2,
+      "q": "Why can't the trace store records alone be consumed directly by downstream tools?",
+      "a": "The trace store is a raw append-log; every consumer would have to re-implement the same aggregation pass (grouping by session_id, counting retries, computing rates), producing duplicated logic and divergent definitions of 'retry_rate'."
+    },
+    {
+      "why": 3,
+      "q": "Why does a shared definition of these rates matter?",
+      "a": "The gap miner uses retry_rate to weight which entity gaps are most disruptive; the fine-tune exporter uses first_attempt_bind_rate to filter clean interactions. If they compute the same concept differently, the two pipelines will disagree on which interactions are high-quality — corrupting both the gap report and the fine-tuning corpus."
+    },
+    {
+      "why": 4,
+      "q": "Why is a lib crate (rather than baking the scorer into each downstream CLI) the right boundary?",
+      "a": "Versioning: when the trace-store schema adds a field (e.g. latency_ms), fixing the scorer in one lib fixes all downstream crates at once. A duplicated inline scorer in each CLI would require coordinated changes across three separate binaries with no compile-time guarantee they stay in sync."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "The vision lists 'mcp-interaction-quality-scorer' as a rust-cli; the context overrides to lib. Which wins?",
+      "resolution": "Context wins: target is lib. The CLI surface is deferred to a thin wrapper crate that depends on this lib, consistent with the non-goal 'does not expose a CLI binary'."
+    },
+    {
+      "question": "Should grounding_score distribution be a histogram with fixed buckets or raw scores?",
+      "resolution": "V1: return a Vec<f64> of raw grounding_score values per entity, preserving full fidelity. Callers bin as needed. Histogram bucketing is a MAY-level future enhancement."
+    }
+  ]
+}

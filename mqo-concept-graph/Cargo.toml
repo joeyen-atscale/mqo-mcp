@@ -1,0 +1,19 @@
+[package]
+name = "mqo-concept-graph"
+version = "0.1.0"
+edition = "2021"
+description = "Make the AtScale semantic model's graph topology an explicit, shared, single-source-of-truth artifact — derived from describe_model JSON in-process without LLM calls — so that all Gen-8 downstream tools consume a consistent attributed property graph."
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "mqo_concept_graph"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# petgraph for the in-memory property graph
+petgraph = { version = "0.6", features = ["serde-1"] }
+
+[dev-dependencies]

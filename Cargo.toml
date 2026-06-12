@@ -72,6 +72,16 @@ members = [
     # ── Parity coverage tracker + brief ──────────────────────────────────
     "mqo-parity-coverage-tracker", # JSONL history store + coverage/delta CLI
     "mqo-parity-brief", "mqo-chart-caption", "mqo-chart-vocab",        # offline Markdown brief from parity-coverage-tracker JSONL history
+
+    # ── Self-improvement (Gen-7) ──────────────────────────────────────────
+    "mcp-interaction-scorer",      # per-session + per-entity quality distributions from trace store
+
+    # ── Knowledge graph (Gen-8) ───────────────────────────────────────────
+    "mqo-concept-graph",           # describe_model JSON → attributed property graph (in-memory, no LLM)
+    "mqo-graph-traversal",         # traversal engine: related_measures / causal_paths / suggest_next_questions
+
+    # ── Autonomous investigation (Gen-10/11) ──────────────────────────────
+    "mcp-investigation-orchestrator", # wire WatchEvent → hypotheses → probe-executor → finding-store
 ]
 
 # Shared dependency versions — member crates may opt in with `dep = { workspace = true }`.
