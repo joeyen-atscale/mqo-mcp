@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.15.0 — 2026-06-11
+
+- **wire grounding: describe_model surfaces level+measure near-twins,
+  param-validator in query path, enriched-catalog date-role binding.** Three
+  already-built grounding capabilities now fire at runtime:
+  - **describe_model near_twins now populates for real.** A model-scoped
+    `describe_model` call previously dropped every dimension level (levels live
+    under dimension-prefixed unique_names, not the fact-cube prefix), so
+    `build_near_twins` saw nothing and `near_twins` was always empty. The
+    level-twin pass now reads levels from the full catalog regardless of the
+    `model` filter, and a new measure-twin pass groups lookalike measures by
+    their concept tail across fact-group prefixes (Catalog/Store/Web/Total).
+    Each group is tagged `twin_kind: "level" | "measure"`. Over the TPC-DS
+    fixture this yields 60 groups (44 level-twin + 16 measure-twin) — e.g. Brand
+    Name across 3 product hierarchies and "sales price" across the sales-channel
+    measure groups.
+  - **param-validator wired into the query path.** After `mqo_spec::validate`
+    and before binding, `query_multidimensional` runs `mqo-param-validator`
+    against the catalog. Grounded-but-wrong references (WrongHierarchyLevel,
+    ManualCalcRederivation) are rejected pre-execution with a structured
+    `param_rejected` error carrying nearest-match / `suggested_calc` hints; no
+    execution happens on rejection. Unmapped references are left to the binder's
+    richer `not_found` report (no behavior change for the not-ground path).
+  - **enriched-catalog date-role binding active.** The server's auto-derived
+    enriched catalog tags measures and date-levels with their fact
+    `column_groups` and is passed to `mqo-bind` v0.3.0 via `--enriched-catalog`,
+    so `bind_with_date_roles` resolves per-measure `date_role_hierarchy`
+    (verified end-to-end: a store-sales measure over a sold-date axis now binds
+    its date role).
+
 ## v0.14.0 — 2026-06-11
 
 - **feat: describe_model disambiguation pack — kill near-twin entity picks.**

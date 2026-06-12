@@ -107,6 +107,19 @@ pub enum PipelineError {
     #[error("cross-fact incompatible path")]
     CrossFactIncompatible { report: Value },
 
+    /// The pre-execution param-validator rejected one or more MQO fields
+    /// (unmapped measure/dimension/filter, wrong hierarchy level, or a
+    /// hand-rederived packaged calc). Carries the structured
+    /// `{"param_rejections":[...]}` report so the model can retry with the
+    /// suggested entity. No execution happens when this fires.
+    #[error("param validation rejected {count} field(s) before execution")]
+    ParamRejected {
+        /// Number of rejected fields.
+        count: usize,
+        /// The structured rejection report (verbatim validator output).
+        report: Value,
+    },
+
     /// The XMLA coordinate map does not contain an entry for the requested model.
     /// The bare model name or `probe_model` placeholder cannot reach the executor.
     /// Populate `--xmla-catalog-map` or ensure XMLA discovery ran at startup.
@@ -156,6 +169,7 @@ pub fn error_class(e: &PipelineError) -> &'static str {
         // Model/path: query construction or binding failures.
         PipelineError::NotGround { .. }
         | PipelineError::CrossFactIncompatible { .. }
+        | PipelineError::ParamRejected { .. }
         | PipelineError::Invalid(_)
         | PipelineError::NotAnMqo(_)
         | PipelineError::Subprocess { .. } => MODEL_PATH,
@@ -291,6 +305,17 @@ pub fn run<S: std::hash::BuildHasher>(
             .collect::<Vec<_>>()
             .join("; ");
         return Err(PipelineError::Invalid(joined));
+    }
+
+    // ── Param validation (pre-execution grounding guard) ───────────────────
+    // After structural validation, before any subprocess: check that every
+    // referenced field resolves against the catalog (unmapped measure/dimension/
+    // filter, wrong hierarchy level, hand-rederived packaged calc). Conservative
+    // by construction — when the validator returns no rejections the query
+    // proceeds unchanged. When it rejects, we return a structured pre-execution
+    // error naming the suggested entity and do NOT execute.
+    if let Some(rejection) = param_validate(&mqo, catalog) {
+        return Err(rejection);
     }
 
     let scratch = Scratch::new()?;
@@ -464,6 +489,181 @@ fn apply_capability_downgrade(
             sql: capabilities.sql.to_string(),
         }),
     }
+}
+
+/// Run the pre-execution param-validator over the MQO and catalog snapshot.
+///
+/// Builds the validator's `CatalogSnapshot` from the server catalog columns and
+/// a `BoundMqoInput` from the submitted MQO, then calls
+/// [`mqo_param_validator::validate`]. Returns `Some(PipelineError::ParamRejected)`
+/// when the validator reports ≥1 rejection, `None` otherwise.
+///
+/// # Conservative construction (zero false positives on valid queries)
+///
+/// - **Measures**: each catalog measure is registered under both its
+///   `unique_name` and its `label` (callers commonly reference the label, e.g.
+///   `"Revenue"` for `sales.revenue`), so a label-based reference resolves.
+/// - **Dimensions**: registered by hierarchy name (the MQO `LevelSelection`
+///   uses `hierarchy` as its dimension key).
+/// - **Hierarchies**: one per hierarchy, with its level *labels* — so the
+///   wrong-hierarchy-level check matches the MQO's `level` (a label).
+/// - **`date_roles`** and measure `subject_area` are left empty/None, which
+///   disables the AmbiguousDateRole and CrossFactPath passes (the binder's
+///   `bind_with_date_roles` / cross-fact check own those concerns). This keeps
+///   the validator focused on unmapped fields, wrong levels, and packaged-calc
+///   re-derivation without duplicating the binder's job or risking false
+///   positives on conformed dims.
+fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError> {
+    use mqo_param_validator::{
+        validate, BoundMqoInput, CatalogHierarchy, CatalogMeasure, CatalogSnapshot,
+        MqoDimensionRef, MqoFilterRef, MqoMeasureRef,
+    };
+    use std::collections::BTreeMap;
+
+    let cols = catalog.get("columns").and_then(Value::as_array)?;
+
+    let mut measures: Vec<CatalogMeasure> = Vec::new();
+    // hierarchy -> set of level labels (preserve first-seen order via Vec + dedup)
+    let mut hier_levels: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+    for c in cols {
+        let kind = c.get("kind").and_then(Value::as_str).unwrap_or("");
+        match kind {
+            "measure" => {
+                let un = c.get("unique_name").and_then(Value::as_str).unwrap_or("");
+                if un.is_empty() {
+                    continue;
+                }
+                let label = c.get("label").and_then(Value::as_str).map(str::to_string);
+                let is_calc = c.get("is_calc").and_then(Value::as_bool);
+                // Primary entry under unique_name.
+                measures.push(CatalogMeasure {
+                    unique_name: un.to_string(),
+                    subject_area: None,
+                    label: label.clone(),
+                    is_calc,
+                });
+                // Alias entry under label when it differs (callers reference the
+                // display label, e.g. "Revenue" for "sales.revenue").
+                if let Some(ref l) = label {
+                    if l != un {
+                        measures.push(CatalogMeasure {
+                            unique_name: l.clone(),
+                            subject_area: None,
+                            label: Some(l.clone()),
+                            is_calc,
+                        });
+                    }
+                }
+            }
+            "level" => {
+                let hier = c
+                    .get("hierarchy")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .or_else(|| {
+                        c.get("unique_name")
+                            .and_then(Value::as_str)
+                            .and_then(|un| un.split_once('.').map(|(h, _)| h.to_string()))
+                    });
+                let level_label = c
+                    .get("level")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .or_else(|| c.get("label").and_then(Value::as_str).map(str::to_string));
+                if let (Some(h), Some(lvl)) = (hier, level_label) {
+                    let entry = hier_levels.entry(h).or_default();
+                    if !entry.contains(&lvl) {
+                        entry.push(lvl);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let dimensions = hier_levels
+        .keys()
+        .map(|h| mqo_param_validator::CatalogDimension {
+            unique_name: h.clone(),
+            subject_areas: Vec::new(),
+        })
+        .collect();
+    let hierarchies: Vec<CatalogHierarchy> = hier_levels
+        .iter()
+        .map(|(h, levels)| CatalogHierarchy {
+            dimension_unique_name: h.clone(),
+            hierarchy_unique_name: h.clone(),
+            levels: levels.clone(),
+        })
+        .collect();
+
+    let snapshot = CatalogSnapshot {
+        measures,
+        dimensions,
+        hierarchies,
+        date_roles: Vec::new(),
+    };
+
+    // Build the bound-MQO view the validator consumes.
+    let input = BoundMqoInput {
+        measures: mqo
+            .measures
+            .iter()
+            .map(|m| MqoMeasureRef {
+                unique_name: m.unique_name.clone(),
+            })
+            .collect(),
+        dimensions: mqo
+            .dimensions
+            .iter()
+            .map(|d| MqoDimensionRef {
+                unique_name: d.hierarchy.clone(),
+                level: Some(d.level.clone()),
+                hierarchy: Some(d.hierarchy.clone()),
+                role_qualifier: None,
+            })
+            .collect(),
+        filters: mqo
+            .filters
+            .iter()
+            .filter_map(|f| match f {
+                mqo_spec::Filter::Member { hierarchy, .. } => Some(MqoFilterRef {
+                    unique_name: hierarchy.clone(),
+                    level: None,
+                }),
+                // Range/CalcGroupMember don't carry a resolvable hierarchy key
+                // the validator can ground; skip (conservative).
+                _ => None,
+            })
+            .collect(),
+    };
+
+    let mut rejections = validate(&input, &snapshot);
+
+    // Drop `Unmapped` rejections: unknown measure/dimension/filter references are
+    // the *binder's* responsibility — it returns a richer `not_found` report
+    // (exit 4) that the pipeline already surfaces as `PipelineError::NotGround`.
+    // Letting the validator pre-empt that would change the error code for the
+    // not-found path (a regression) and duplicate work. The validator's unique
+    // value over the binder is the *grounded-but-wrong* checks:
+    // WrongHierarchyLevel (right concept, wrong hierarchy) and
+    // ManualCalcRederivation (hand-rolled period-over-period that a packaged calc
+    // already provides) — those carry `suggested_calc` / nearest-match hints the
+    // binder does not produce.
+    use mqo_param_validator::RejectReason;
+    rejections.retain(|r| r.reason != RejectReason::Unmapped);
+
+    if rejections.is_empty() {
+        return None;
+    }
+    let report = serde_json::to_value(&rejections)
+        .map(|r| serde_json::json!({ "param_rejections": r }))
+        .unwrap_or_else(|_| serde_json::json!({ "param_rejections": [] }));
+    Some(PipelineError::ParamRejected {
+        count: rejections.len(),
+        report,
+    })
 }
 
 /// Produce `filters_applied` and `filters_dropped` arrays from the MQO's Member filters.

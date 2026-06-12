@@ -300,6 +300,82 @@ fn ac4_query_response_always_has_filter_fields() {
     );
 }
 
+// ── Param-validator wiring (Item 2) ──────────────────────────────────────────
+
+/// The pre-execution param-validator fires on a grounded-but-wrong hierarchy
+/// level: `time.calendar` exists and has levels Year/Month, but `Quarter` is
+/// not one of them. The validator must reject with `param_rejected` BEFORE any
+/// subprocess runs — no compiled query, no execution.
+#[test]
+fn param_validator_rejects_wrong_hierarchy_level_pre_execution() {
+    if !fleet_present() {
+        eprintln!("param-validator wrong-level SKIPPED: fleet binaries not present");
+        return;
+    }
+    let srv = plain_server();
+    let mqo = json!({
+        "model": "sales",
+        "measures": [{ "unique_name": "Revenue" }],
+        // time.calendar is a real hierarchy, but "Quarter" is not one of its
+        // levels (Year, Month) — WrongHierarchyLevel, not Unmapped.
+        "dimensions": [{ "hierarchy": "time.calendar", "level": "Quarter" }],
+        "filters": [],
+        "time_intelligence": [],
+        "order": null,
+        "limit": 10,
+        "non_empty": true
+    });
+    let result = call_tool(&srv, "query_multidimensional", json!({ "mqo": mqo }));
+    assert_eq!(result["isError"], json!(true), "wrong level → error: {result}");
+    let err = &result["structuredContent"]["error"];
+    assert_eq!(
+        err["code"],
+        json!("param_rejected"),
+        "validator surfaces param_rejected before binding: {err}"
+    );
+    // No execution happened.
+    assert!(
+        result["structuredContent"].get("compiled_query").is_none(),
+        "no compiled query for a param-rejected MQO"
+    );
+    // The report names the offending level and carries a nearest-match suggestion.
+    let detail = err["detail"].to_string();
+    assert!(detail.contains("Quarter"), "report names the bad level: {detail}");
+}
+
+/// A fully-valid query against the sales catalog must NOT be rejected by the
+/// param-validator (zero false positives): the label-referenced measure
+/// "Revenue" (→ sales.revenue) and a real level resolve cleanly, so the query
+/// proceeds to execution and returns rows.
+#[test]
+fn param_validator_passes_valid_query_unchanged() {
+    if !fleet_present() {
+        eprintln!("param-validator happy-path SKIPPED: fleet binaries not present");
+        return;
+    }
+    let srv = plain_server();
+    let mqo = json!({
+        "model": "sales",
+        "measures": [{ "unique_name": "Revenue" }],
+        "dimensions": [{ "hierarchy": "time.calendar", "level": "Year" }],
+        "filters": [],
+        "time_intelligence": [],
+        "order": null,
+        "limit": 10,
+        "non_empty": true
+    });
+    let result = call_tool(&srv, "query_multidimensional", json!({ "mqo": mqo }));
+    assert_ne!(
+        result["isError"],
+        json!(true),
+        "valid query must not be param-rejected: {result}"
+    );
+    assert!(
+        result["structuredContent"].get("compiled_query").is_some(),
+        "valid query executes and produces a compiled query: {result}"
+    );
+}
+
 // ── AC5 ──────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -532,6 +608,75 @@ fn disambig_ac2_near_twins_present_for_known_conflicts() {
     assert!(
         state["near_twins"].as_array().unwrap().len() >= 2,
         "state name spans multiple hierarchies"
+    );
+}
+
+/// Wire-grounding gate: describe_model called WITH a `model` filter (the
+/// realistic shape — measures live under `tpcds_benchmark_model.`, so a
+/// model-scoped call previously dropped every dimension level and produced an
+/// empty `near_twins`). The level-twin pass must read levels from the full
+/// catalog, and the measure-twin pass must surface lookalike measures. Asserts
+/// `near_twins` is non-empty and contains BOTH a level-twin group (Brand Name
+/// across product hierarchies) AND a measure-twin group (e.g. "sales price"
+/// across Catalog/Store/Web fact-group prefixes).
+#[test]
+fn wire_grounding_model_filtered_describe_yields_level_and_measure_twins() {
+    let srv = enriched_server();
+    // Model-scoped call: only `tpcds_benchmark_model.*` measures pass the column
+    // filter — levels are dropped from `columns`, exactly the v0.14.0 blocker.
+    let result = call_tool(
+        &srv,
+        "describe_model",
+        json!({ "model": "tpcds_benchmark_model" }),
+    );
+    let groups = result["structuredContent"]["near_twins"]
+        .as_array()
+        .expect("near_twins block present")
+        .clone();
+    assert!(
+        !groups.is_empty(),
+        "model-filtered describe_model must still populate near_twins from the full catalog"
+    );
+
+    let level_groups: Vec<&Value> = groups
+        .iter()
+        .filter(|g| g.get("twin_kind").and_then(Value::as_str) == Some("level"))
+        .collect();
+    let measure_groups: Vec<&Value> = groups
+        .iter()
+        .filter(|g| g.get("twin_kind").and_then(Value::as_str) == Some("measure"))
+        .collect();
+
+    assert!(
+        !level_groups.is_empty(),
+        "near_twins must include at least one dimension-level twin group (wrong_hierarchy_level)"
+    );
+    assert!(
+        !measure_groups.is_empty(),
+        "near_twins must include at least one measure twin group (lookalike_measure)"
+    );
+
+    // A concrete level twin: Brand Name spans ≥2 product hierarchies.
+    let brand = level_groups
+        .iter()
+        .find(|g| g.get("core_label").and_then(Value::as_str) == Some("brand name"))
+        .expect("brand name level-twin group");
+    assert!(
+        brand["near_twins"].as_array().unwrap().len() >= 2,
+        "brand name level twin spans multiple hierarchies"
+    );
+
+    // A concrete measure twin: each member carries a `measure_group` prefix and
+    // the group spans ≥2 distinct prefixes.
+    let mt = &measure_groups[0];
+    let members = mt["near_twins"].as_array().unwrap();
+    let prefixes: std::collections::BTreeSet<&str> = members
+        .iter()
+        .filter_map(|m| m.get("measure_group").and_then(Value::as_str))
+        .collect();
+    assert!(
+        prefixes.len() >= 2,
+        "measure twin group must span ≥2 fact-group prefixes: {prefixes:?}"
     );
 }
 
