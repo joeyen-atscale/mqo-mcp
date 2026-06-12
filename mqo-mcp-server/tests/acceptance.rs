@@ -103,6 +103,7 @@ fn server() -> Server {
         handle_store: None,
         cursor_store: None,
         page_size: mqo_mcp_server::cursor::DEFAULT_PAGE_SIZE,
+        inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: HashMap::new(),
     }
@@ -191,7 +192,7 @@ fn ac1_server_advertises_tools_with_readonly_hints() {
 
     // Sanity: tool_descriptors() exposed publicly returns the same shape
     // (4 core + 3 federation + 4 chart + 1 next_page + 4 handle-ops = 16 total).
-    assert_eq!(tool_descriptors().as_array().unwrap().len(), 16);
+    assert_eq!(tool_descriptors().as_array().unwrap().len(), 23);
 }
 
 // ── AC2 ─────────────────────────────────────────────────────────────────────
@@ -311,6 +312,7 @@ fn ac4_drillthrough_mqo_routes_to_mdx() {
         handle_store: None,
         cursor_store: None,
         page_size: mqo_mcp_server::cursor::DEFAULT_PAGE_SIZE,
+        inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: HashMap::new(),
     };
@@ -592,6 +594,7 @@ fn new_ac2_live_mode_routes_through_live_executor() {
         handle_store: None,
         cursor_store: None,
         page_size: mqo_mcp_server::cursor::DEFAULT_PAGE_SIZE,
+        inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: test_coord_map(),
     };
@@ -716,6 +719,7 @@ fn new_ac4_engine_error_surfaces_as_structured_engine_error() {
         handle_store: None,
         cursor_store: None,
         page_size: mqo_mcp_server::cursor::DEFAULT_PAGE_SIZE,
+        inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: test_coord_map(),
     };
@@ -773,7 +777,7 @@ fn new_ac6_mcp_contract_unchanged() {
         .expect("tools/list response");
     let tools = listed["result"]["tools"].as_array().expect("tools array");
     // 4 core tools + 3 federation tools + 4 chart tools + 1 next_page + 4 handle-ops = 16 total.
-    assert_eq!(tools.len(), 16);
+    assert_eq!(tools.len(), 23);
     // query_multidimensional has readOnlyHint: true.
     let qmd = tools
         .iter()
@@ -923,6 +927,7 @@ fn ext5_list_models_with_empty_catalog_returns_empty_array() {
         handle_store: None,
         cursor_store: None,
         page_size: mqo_mcp_server::cursor::DEFAULT_PAGE_SIZE,
+        inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: HashMap::new(),
     };
@@ -1134,6 +1139,7 @@ fn ext13_diff_clusters_missing_cluster_a_returns_error() {
         handle_store: None,
         cursor_store: None,
         page_size: mqo_mcp_server::cursor::DEFAULT_PAGE_SIZE,
+        inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: HashMap::new(),
     };
@@ -1193,6 +1199,7 @@ fn ext14_diff_clusters_unknown_cluster_names_returns_error() {
         handle_store: None,
         cursor_store: None,
         page_size: mqo_mcp_server::cursor::DEFAULT_PAGE_SIZE,
+        inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: HashMap::new(),
     };
@@ -1267,6 +1274,7 @@ fn ext15_list_clusters_with_registry_returns_cluster_list() {
         handle_store: None,
         cursor_store: None,
         page_size: mqo_mcp_server::cursor::DEFAULT_PAGE_SIZE,
+        inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: HashMap::new(),
     };
@@ -1389,6 +1397,7 @@ fn ext20_backend_override_sql_forces_sql_for_small_query() {
         handle_store: None,
         cursor_store: None,
         page_size: mqo_mcp_server::cursor::DEFAULT_PAGE_SIZE,
+        inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: HashMap::new(),
     };
@@ -1498,7 +1507,7 @@ fn ext24_tools_list_advertises_chart_tools_total_nine() {
         .expect("tools/list response");
     let tools = listed["result"]["tools"].as_array().expect("tools array");
 
-    assert_eq!(tools.len(), 16, "must advertise 16 tools after adding chart tools + handle-ops + cursor: {tools:?}");
+    assert_eq!(tools.len(), 23, "must advertise 23 tools (12 core + 11 dataset ops): {tools:?}");
 
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     for expected in [

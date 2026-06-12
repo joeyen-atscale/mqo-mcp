@@ -22,6 +22,7 @@ use crate::handle_ops::{self, HandleStore};
 use crate::pipeline::{self, PipelineError, PipelineOutput, ToolPaths};
 use crate::probe::BackendCapabilities;
 use crate::routing;
+use dh_spec::DatasetHandle;
 use mcp_cluster_health_monitor::report::HealthReport;
 use mcp_cluster_registry::ClusterRegistry;
 use mqo_auth_bridge::LiveExecutor;
@@ -205,6 +206,11 @@ pub struct Server {
     pub cursor_store: Option<Arc<CursorStore>>,
     /// Page size for cursor mode (default [`crate::cursor::DEFAULT_PAGE_SIZE`]).
     pub page_size: usize,
+    /// Inline-row threshold (K): `query_multidimensional` and every `dataset_*`
+    /// op inline raw `rows` only when `row_count <= inline_threshold`.  Above K
+    /// the response carries `{summary, handle, capabilities, row_count}` and no
+    /// `rows`.  Default [`crate::handle_ops::INLINE_THRESHOLD`] (25).
+    pub inline_threshold: usize,
     /// Enrichment data derived from `enriched-catalog.v1`, or `None` when unavailable.
     ///
     /// When `Some`: `describe_model` annotates measures with `compatible_hierarchies`,
@@ -476,6 +482,13 @@ impl Server {
             }
             "compose_dashboard" => Ok(chart_tools::handle_compose_dashboard(&args)),
             "dataset_aggregate"
+            | "dataset_filter"
+            | "dataset_sort"
+            | "dataset_top_n"
+            | "dataset_pivot"
+            | "dataset_compare"
+            | "dataset_drill"
+            | "dataset_describe"
             | "dataset_slice"
             | "dataset_period_over_period"
             | "dataset_chart" => Ok(self.dispatch_handle_op(name, &args)),
@@ -498,10 +511,17 @@ impl Server {
                 })
             }
             Some(hs) => match tool {
-                "dataset_aggregate" => handle_ops::handle_dataset_aggregate(&hs.store, args),
-                "dataset_slice" => handle_ops::handle_dataset_slice(&hs.store, args),
-                "dataset_period_over_period" => handle_ops::handle_dataset_period_over_period(&hs.store, args),
-                "dataset_chart" => handle_ops::handle_dataset_chart(&hs.store, args),
+                "dataset_aggregate" => handle_ops::handle_dataset_aggregate(&hs.store, args, self.inline_threshold),
+                "dataset_filter" => handle_ops::handle_dataset_filter(&hs.store, args, self.inline_threshold),
+                "dataset_sort" => handle_ops::handle_dataset_sort(&hs.store, args, self.inline_threshold),
+                "dataset_top_n" => handle_ops::handle_dataset_top_n(&hs.store, args, self.inline_threshold),
+                "dataset_pivot" => handle_ops::handle_dataset_pivot(&hs.store, args, self.inline_threshold),
+                "dataset_compare" => handle_ops::handle_dataset_compare(&hs.store, args, self.inline_threshold),
+                "dataset_drill" => handle_ops::handle_dataset_drill(&hs.store, args, self.inline_threshold),
+                "dataset_describe" => handle_ops::handle_dataset_describe(&hs.store, args, self.inline_threshold),
+                "dataset_slice" => handle_ops::handle_dataset_slice(&hs.store, args, self.inline_threshold),
+                "dataset_period_over_period" => handle_ops::handle_dataset_period_over_period(&hs.store, args, self.inline_threshold),
+                "dataset_chart" => handle_ops::handle_dataset_chart(&hs.store, args, self.inline_threshold),
                 other => {
                     let payload = json!({ "error": { "code": "unknown_handle_op", "detail": format!("unknown handle-op tool '{other}'") } });
                     json!({
@@ -801,6 +821,15 @@ impl Server {
 
         match result {
             Ok(out) => {
+                // Store the result in the typed handle store (size-gating: the
+                // LLM gets a handle + bounded summary, raw rows only when small).
+                // The LIVE execution path above is unchanged — only what happens
+                // to the result changes.
+                let handle = self
+                    .handle_store
+                    .as_ref()
+                    .and_then(|hs| hs.put_rows_with_bound(&out.rows, &out.bound).ok());
+
                 // Cursor mode: persist and return first page when rows > page_size.
                 if out.rows.len() > self.page_size {
                     if let Some(ref store) = self.cursor_store {
@@ -811,6 +840,7 @@ impl Server {
                                     &first_page,
                                     cluster_used.as_deref(),
                                     latency_ms,
+                                    handle.as_ref(),
                                 );
                             }
                             Err(e) => {
@@ -820,7 +850,13 @@ impl Server {
                         }
                     }
                 }
-                structured_ok(&out, cluster_used.as_deref(), latency_ms)
+                structured_ok(
+                    &out,
+                    cluster_used.as_deref(),
+                    latency_ms,
+                    handle.as_ref(),
+                    self.inline_threshold,
+                )
             }
             Err(PipelineError::CrossFactIncompatible { report }) => {
                 let text = self.format_cross_fact_text(&report);
@@ -938,18 +974,38 @@ impl Server {
 ///
 /// When `cluster_used` is `Some`, the federation metadata block is included
 /// in the response (AC8).
-fn structured_ok(out: &PipelineOutput, cluster_used: Option<&str>, latency_ms: u64) -> Value {
+fn structured_ok(
+    out: &PipelineOutput,
+    cluster_used: Option<&str>,
+    latency_ms: u64,
+    handle: Option<&DatasetHandle>,
+    inline_threshold: usize,
+) -> Value {
+    let row_count = out.rows.len();
     let mut payload = json!({
         "backend": out.backend,
         "estimated_rows": out.estimated_rows,
         "routing_reason": out.routing_reason,
         "compiled_query": out.compiled_query,
-        "row_count": out.rows.len(),
-        "rows": out.rows,
+        "row_count": row_count,
         "bound": out.bound,
         "filters_applied": out.filters_applied,
         "filters_dropped": out.filters_dropped,
     });
+
+    // Size gate (AC-2 / AC-3): inline rows only when row_count ≤ K.
+    if handle_ops::should_inline(row_count, inline_threshold) {
+        payload["rows"] = json!(out.rows);
+    } else {
+        payload["notes"] = json!([format!(
+            "{row_count} rows exceed inline_threshold ({inline_threshold}); rows omitted. \
+             Use the returned handle with dataset_* ops or next_page."
+        )]);
+    }
+
+    // Always attach the handle, bounded summary, and advertised capabilities so
+    // the LLM can operate on the result without ever receiving all rows.
+    attach_handle_summary(&mut payload, handle, out);
 
     // AC8: include federation metadata when active.
     if let Some(cluster) = cluster_used {
@@ -964,6 +1020,19 @@ fn structured_ok(out: &PipelineOutput, cluster_used: Option<&str>, latency_ms: u
     })
 }
 
+/// Attach `handle`, `summary`, and `capabilities` to a query response payload,
+/// derived from the stored typed dataset.  No-op when the result was not stored.
+fn attach_handle_summary(payload: &mut Value, handle: Option<&DatasetHandle>, out: &PipelineOutput) {
+    let Some(h) = handle else { return };
+    payload["handle"] = serde_json::to_value(h).unwrap_or(Value::Null);
+    // Bound-authoritative roles so the summary's measure/dimension split matches
+    // the stored dataset (numeric dimensions are not mislabelled as measures).
+    let ds = crate::handle_ops::json_rows_to_dataset_with_bound(&out.rows, &out.bound);
+    let summary = dh_summary::summarize(&ds, &dh_summary::SummaryCfg::default());
+    payload["summary"] = serde_json::to_value(&summary).unwrap_or(Value::Null);
+    payload["capabilities"] = serde_json::to_value(dh_summary::capabilities(&ds)).unwrap_or(Value::Null);
+}
+
 /// Build a cursor first-page response.  The inline `rows` field is replaced by
 /// `{cursor_id, page_size, total_rows, page, page_token, has_more}`.
 fn structured_cursor_ok(
@@ -971,6 +1040,7 @@ fn structured_cursor_ok(
     first_page: &crate::cursor::CursorFirstPage,
     cluster_used: Option<&str>,
     latency_ms: u64,
+    handle: Option<&DatasetHandle>,
 ) -> Value {
     let mut payload = json!({
         "backend": out.backend,
@@ -988,6 +1058,9 @@ fn structured_cursor_ok(
         "filters_applied": out.filters_applied,
         "filters_dropped": out.filters_dropped,
     });
+
+    // Attach the typed-store handle + bounded summary alongside the cursor.
+    attach_handle_summary(&mut payload, handle, out);
 
     if let Some(cluster) = cluster_used {
         payload["cluster_used"] = json!(cluster);
@@ -1245,5 +1318,86 @@ impl JsonRpcError {
     }
     fn to_value(&self) -> Value {
         json!({ "code": self.code, "message": self.message })
+    }
+}
+
+// ── Size-gate unit tests (AC-2 / AC-3 on the query path) ───────────────────────
+
+#[cfg(test)]
+mod size_gate_tests {
+    use super::*;
+
+    fn synth_output(n: usize) -> PipelineOutput {
+        let rows: Vec<Value> = (0..n)
+            .map(|i| json!({ "year": 2000 + i as i64, "revenue": (i as f64) * 10.0 }))
+            .collect();
+        PipelineOutput {
+            backend: "dax".to_string(),
+            estimated_rows: n as u64,
+            routing_reason: "test".to_string(),
+            compiled_query: "EVALUATE".to_string(),
+            rows,
+            bound: json!({}),
+            filters_applied: vec![],
+            filters_dropped: vec![],
+        }
+    }
+
+    fn store_handle(out: &PipelineOutput) -> (HandleStore, DatasetHandle) {
+        let hs = HandleStore::new();
+        let h = hs.put_rows(&out.rows).expect("put_rows");
+        (hs, h)
+    }
+
+    /// AC-2: a ≤K result inlines `rows` (plus handle + summary).
+    #[test]
+    fn ac2_query_small_result_inlines_rows() {
+        let out = synth_output(10); // ≤ K=25
+        let (_hs, h) = store_handle(&out);
+        let resp = structured_ok(&out, None, 1, Some(&h), 25);
+        let sc = &resp["structuredContent"];
+        assert_eq!(sc["row_count"], json!(10));
+        assert!(sc.get("rows").is_some(), "≤K must inline rows: {sc}");
+        assert_eq!(sc["rows"].as_array().unwrap().len(), 10);
+        assert!(sc.get("handle").is_some(), "handle always present");
+        assert!(sc.get("summary").is_some(), "summary always present");
+        assert!(sc.get("capabilities").is_some(), "capabilities advertised");
+    }
+
+    /// Edge case: exactly K rows still inlines (≤K is inclusive).
+    #[test]
+    fn ac2_query_at_threshold_inlines() {
+        let out = synth_output(25);
+        let (_hs, h) = store_handle(&out);
+        let resp = structured_ok(&out, None, 1, Some(&h), 25);
+        let sc = &resp["structuredContent"];
+        assert!(sc.get("rows").is_some(), "exactly K inlines: {sc}");
+    }
+
+    /// AC-3: a >K result carries handle + summary + row_count and NO `rows`.
+    #[test]
+    fn ac3_query_large_result_is_gated_no_rows() {
+        let out = synth_output(26); // K+1
+        let (_hs, h) = store_handle(&out);
+        let resp = structured_ok(&out, None, 1, Some(&h), 25);
+        let sc = &resp["structuredContent"];
+        assert_eq!(sc["row_count"], json!(26));
+        assert!(
+            !sc.as_object().unwrap().contains_key("rows"),
+            "above K must NOT carry rows: {sc}"
+        );
+        assert!(sc.get("handle").is_some(), "handle present for handoff");
+        assert!(sc.get("summary").is_some(), "summary present");
+        assert!(sc["notes"].as_array().is_some(), "migration note present");
+    }
+
+    /// AC-4: a configurable threshold (100) inlines a 60-row result.
+    #[test]
+    fn ac4_threshold_override_inlines_60_rows() {
+        let out = synth_output(60);
+        let (_hs, h) = store_handle(&out);
+        let resp = structured_ok(&out, None, 1, Some(&h), 100);
+        let sc = &resp["structuredContent"];
+        assert!(sc.get("rows").is_some(), "60 ≤ 100 inlines: {sc}");
     }
 }

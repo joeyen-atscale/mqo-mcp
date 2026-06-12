@@ -2555,9 +2555,14 @@ dependencies = [
 
 [[package]]
 name = "mqo-mcp-server"
-version = "0.12.0"
+version = "0.13.2"
 dependencies = [
  "clap",
+ "dh-export",
+ "dh-ops",
+ "dh-spec",
+ "dh-store",
+ "dh-summary",
  "mcp-cluster-health-monitor",
  "mcp-cluster-registry",
  "mcp-cross-cluster-diff",

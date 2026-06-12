@@ -85,6 +85,7 @@ fn plain_server() -> Server {
         handle_store: None,
         cursor_store: None,
         page_size: mqo_mcp_server::cursor::DEFAULT_PAGE_SIZE,
+        inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: HashMap::new(),
     }
