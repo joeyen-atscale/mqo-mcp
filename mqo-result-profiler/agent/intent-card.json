@@ -1,0 +1,113 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "intent_slug": "mqo-result-profiler",
+  "prd_source": "/Users/jsy/Documents/PRDs/PRD-mqo-result-profiler.md",
+  "root_motivation": "Downstream chart-emitters (chart recommender, Vega emitter, asset bundler) need typed column facts — role, data type, cardinality, range, semantic flags — extracted once from a query_multidimensional response+catalog so no downstream tool re-derives them from raw rows or re-reads the catalog.",
+  "user_persona": "A Rust library consumer in the bi-toolkit pipeline (chart recommender, Vega emitter) that receives a query_multidimensional response payload and a catalog JSON, and needs a serialisable ResultProfile to drive chart selection and Vega-Lite spec generation — without network or async overhead.",
+  "unfakeable_metric": {
+    "name": "acceptance_tests_passing_count",
+    "lower_is_better": false,
+    "harness_command": "bash scripts/run-metrics.sh",
+    "target": 7
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "A response with bound measures [revenue] and dimension [year] over rows yields a profile with revenue role=Measure type=Quantitative and year role=Dimension.",
+      "test": "tests/ac1_basic_roles.rs"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "A dimension belonging to a time.* catalog hierarchy is typed Temporal even when its row values are integers (e.g. year = 2021).",
+      "test": "tests/ac2_temporal_from_hierarchy.rs"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "A non-temporal dimension (e.g. region) whose values are strings is typed Nominal; cardinality equals the distinct non-null value count.",
+      "test": "tests/ac3_nominal_cardinality.rs"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "A quantitative measure column reports measure_range = (min, max) over non-null rows, and null_rate reflects the nulls present.",
+      "test": "tests/ac4_measure_range_nulls.rs"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "A catalog measure with a semi_additive block is flagged semi_additive = true; an is_calc measure (margin_pct) is flagged is_calc = true.",
+      "test": "tests/ac5_semantics_flags.rs"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "An empty rows array yields row_count = 0 with columns still typed from bound/catalog and no panic.",
+      "test": "tests/ac6_empty_rows.rs"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "Output is deterministic — columns ordered by bound projection order, serialization stable across runs.",
+      "test": "tests/ac7_deterministic.rs"
+    }
+  ],
+  "scope": [
+    "Parse a query_multidimensional structured response (rows + bound JSON)",
+    "Read a catalog JSON to resolve column kinds, hierarchies, is_calc, semi_additive",
+    "Produce a ResultProfile with ColumnProfile per projected field",
+    "Compute cardinality, null_rate, measure_range by scanning rows",
+    "Detect Temporal type from catalog hierarchy (time.*) with fallback to ISO-date value inspection",
+    "Serialize ResultProfile as result-profile.v1 JSON",
+    "Thin binary: mqo-result-profiler --response <f> --catalog <f> [--format json|human]"
+  ],
+  "non_goals": [
+    "No chart rendering or Vega-Lite spec generation (that is mqo-vega-emitter)",
+    "No chart type recommendation (that is mqo-chart-recommender)",
+    "No network calls or async runtime",
+    "No heavy date-parsing library (chrono/time) — hand-rolled ISO-prefix check only",
+    "No support for nested or multi-level response envelopes beyond the structuredContent object",
+    "No Ordinal DataType in v1 — reserved, always emits Nominal for non-temporal dimensions"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 4,
+    "msrv": "1.70.0",
+    "additional": {
+      "no_network": "true",
+      "no_async": "true"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why build a result profiler instead of letting each downstream tool inspect the response directly?",
+      "a": "Because every downstream tool (chart recommender, Vega emitter, asset bundler) would independently re-derive the same column roles, types, and stats — creating duplicated logic and inconsistent decisions."
+    },
+    {
+      "why": 2,
+      "q": "Why does duplicated derivation matter?",
+      "a": "The bound object classifies columns as measures or dimensions — if the chart recommender and Vega emitter independently infer roles from row values instead of bound, they can disagree, and the semantic layer's knowledge is wasted."
+    },
+    {
+      "why": 3,
+      "q": "Why not use the catalog directly in each downstream?",
+      "a": "The catalog adds semi_additive and is_calc semantics that must be cross-referenced against bound projections — that join logic is non-trivial and must happen once at a single extraction point, not N times across N consumers."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Does the profiler accept the outer MCP structuredContent envelope or the inner rows+bound payload?",
+      "resolution": "The profile() function accepts either: it looks for a top-level 'rows' key first; if absent, it descends into structuredContent[0].json or content[0].text to find the inner payload."
+    },
+    {
+      "question": "What edition to use — 2024 or 2021?",
+      "resolution": "2021 to match the rest of the mqo-* fleet and keep MSRV at 1.70.0."
+    }
+  ],
+  "created_at": "2026-06-09T00:00:00Z"
+}

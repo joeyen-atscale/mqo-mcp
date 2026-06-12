@@ -1,0 +1,48 @@
+--- src/lib.rs
++++ replace stats_str -> ColStats with Default::default()
+@@ -291,44 +291,17 @@
+         mean: Some(mean),
+         distinct: Some(distinct),
+         top_k: None,
+     }
+ }
+ 
+ #[allow(clippy::cast_precision_loss)]
+ fn stats_str(data: &ColumnData, topk: usize) -> ColStats {
+-    let (values, null_count) = match data {
+-        ColumnData::Str(v) => {
+-            let non_null: Vec<&str> = v.iter().filter_map(|o| o.as_deref()).collect();
+-            let nulls = v.iter().filter(|o| o.is_none()).count() as u64;
+-            (non_null, nulls)
+-        }
+-        _ => (vec![], 0),
+-    };
+-    let mut freq: HashMap<&str, u64> = HashMap::new();
+-    for s in &values {
+-        *freq.entry(s).or_insert(0) += 1;
+-    }
+-    let distinct = freq.len() as u64 + null_count.min(1);
+-    let mut freq_vec: Vec<(&str, u64)> = freq.into_iter().collect();
+-    freq_vec.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
+-    freq_vec.truncate(topk);
+-    let entries: Vec<Value> = freq_vec
+-        .into_iter()
+-        .map(|(s, c)| serde_json::json!({"value": s, "count": c}))
+-        .collect();
+-    ColStats {
+-        min: None,
+-        max: None,
+-        sum: None,
+-        mean: None,
+-        distinct: Some(distinct),
+-        top_k: if entries.is_empty() { None } else { Some(entries) },
+-    }
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn stats_bool(data: &ColumnData) -> ColStats {
+     let (trues, falses, nulls) = match data {
+         ColumnData::Bool(v) => {
+             let t = v.iter().filter(|o| matches!(o, Some(true))).count() as u64;
+             let f = v.iter().filter(|o| matches!(o, Some(false))).count() as u64;
+             let n = v.iter().filter(|o| o.is_none()).count() as u64;

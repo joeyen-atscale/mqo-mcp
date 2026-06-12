@@ -1,0 +1,113 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "intent_slug": "mqoguard-regression-harness",
+  "prd_source": "/Users/jsy/Documents/PRDs/PRD-mqoguard-regression-harness.md",
+  "root_motivation": "Regressions in the MQO arm's weak failure modes (path_incompatible, wrong_date_role) are invisible — there is no stored baseline and no CI gate. Any change that quietly drops a mode's pass rate goes undetected until a human re-runs the scorer. This harness pins those numbers and makes regressions a build failure.",
+  "user_persona": "Joe Yen (benchmark owner) and engineers shipping Components 1–4 of the MQO guardrail work, who run the harness locally and in CI to verify their changes improve — or at least don't worsen — the weak modes.",
+  "unfakeable_metric": {
+    "name": "acceptance_tests_passing",
+    "lower_is_better": false,
+    "harness_command": "cargo test --workspace",
+    "target": 20
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "All modes meet floor → exit 0, 'OK:' line in human output.",
+      "test": "tests/acceptance_AC1.rs::ac1_all_modes_pass_exit_zero"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "path_incompatible below floor → exit 1, report names failing mode.",
+      "test": "tests/acceptance_AC2.rs::ac2_path_incompatible_below_floor_exit_one"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "Scoring semantics match score_path_correctness.py — PI keyword/fabrication/error+no-rows rules, dim check, calc check all match Python.",
+      "test": "tests/acceptance_AC3.rs (10 unit tests)"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "Mode absent from baseline is reported but not gated; present modes still gated.",
+      "test": "tests/acceptance_AC4.rs (2 tests)"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "--format json emits modes[], overall{any_below_floor, failing_modes}, tolerance.",
+      "test": "tests/acceptance_AC5.rs (2 tests)"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "Malformed input (bad JSON, nonexistent file) → exit 2 with stderr diagnostic.",
+      "test": "tests/acceptance_AC6.rs (4 tests)"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "cargo test passes; cargo clippy --all-targets -- -D warnings clean; zero unsafe.",
+      "test": "CI: cargo test + cargo clippy -D warnings"
+    }
+  ],
+  "scope": [
+    "CLI binary mqoguard-regress: --tasks / --records / --baseline / --format / --tolerance",
+    "Score trajectories.jsonl against corpus, joining on task_id to get failure_mode",
+    "Per-mode path-mean and pass@k (k-rollout aware)",
+    "Baseline comparison with configurable tolerance; exit 0/1/2 contract",
+    "Human-readable table output and --format json machine-readable report",
+    "Failure-reason histogram per failing mode in human output",
+    "Seeded baseline.json file for 2026-06-09 MQO numbers"
+  ],
+  "non_goals": [
+    "Dispatching benchmark agents (orchestration stays in mcp-tuner)",
+    "Replacing score_path_correctness.py — this gates around it, not replaces it",
+    "Authoring numeric ground truth (separate effort)",
+    "Consuming path_verdict / filter_bind_report fields from Components 3–4 (v1 trajectory-only)",
+    "Storing historical run results or time-series tracking"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2024",
+    "target_kind": "cli",
+    "deny_unsafe": true,
+    "max_deps": 5,
+    "msrv": "1.85.0",
+    "additional": {
+      "allowed_deps": "serde, serde_json, clap (prod); tempfile (dev)",
+      "zero_network": "true",
+      "deterministic": "true"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why do we need this CLI?",
+      "a": "The mcp-tuner scorer produces per-mode numbers but there is no stored baseline and no exit-code contract CI can consume."
+    },
+    {
+      "why": 2,
+      "q": "Why does the absence of a stored baseline matter?",
+      "a": "A change that drops path_incompatible from 22.5% to 10% would pass unnoticed — the only signal is a human re-running the scorer and remembering the old number."
+    },
+    {
+      "why": 3,
+      "q": "Why is path_incompatible the critical mode?",
+      "a": "At 22.5% it is the weakest mode and the direct target of Components 1–2 of the guardrail work; if those components regress it, the POC-readiness claim is invalidated."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "OQ1: Tolerance band — exact floor or floor-minus-epsilon?",
+      "resolution": "--tolerance flag defaults to 0.0 (exact floor) but caller can set e.g. 0.05 to absorb k=4 variance. No default epsilon baked in."
+    },
+    {
+      "question": "OQ2: Consume path_verdict / filter_bind_report fields?",
+      "resolution": "v1 trajectory-only: only fields from the established schema. Richer attribution deferred to v2 once Components 3–4 output schema exists."
+    }
+  ],
+  "created_at": "2026-06-10T00:00:00Z"
+}

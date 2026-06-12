@@ -1,0 +1,112 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "prd_source": "/Users/jsy/Documents/PRDs/PRD-mqo-dashboard-composer.md",
+  "root_motivation": "Composition of multiple bi-asset.v1 bundles into a dashboard layout is a deterministic fold over existing data — not a generative step — so it should be a standalone pure-Rust tool that LLMs and embedded apps can invoke without network or render dependencies.",
+  "user_persona": "An LLM orchestrator or embedded BI app that holds N bi-asset.v1 bundles from the mqo bi-toolkit chain and needs to assemble them into a renderable dashboard spec or a grid-positioned manifest for a self-rendering client.",
+  "unfakeable_metric": {
+    "name": "all_must_acs_passing",
+    "lower_is_better": false,
+    "harness_command": "cargo test --workspace",
+    "target": 7
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "Two bi-asset.v1 bundles compose into a dashboard.v1 with two panels, each panel's title preserved from its source bundle.",
+      "test": "tests/ac1_two_panels.rs::ac1_two_panels_titles_preserved"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "Grid layout with columns=2 places panel 0 at (row 0, col 0), panel 1 at (row 0, col 1), panel 2 at (row 1, col 0).",
+      "test": "tests/ac2_grid_placement.rs::ac2_grid_placement_columns_2"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "Vertical layout emits a vega_concat_spec whose vconcat array holds the panel vega_specs in input order.",
+      "test": "tests/ac3_vconcat.rs::ac3_vconcat_order_preserved"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "Each panel caption incorporates the source bundle's description and any caveats.",
+      "test": "tests/ac4_caption_from_caveats.rs"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "Zero panels → a structured error with a nonzero exit code and no panic.",
+      "test": "tests/ac5_empty_error.rs"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "One panel → a valid single-panel dashboard.v1 with one entry in panels and a one-element concat array.",
+      "test": "tests/ac6_single_panel.rs"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "Panel ordering and grid placement are deterministic across repeated runs on identical input.",
+      "test": "tests/ac7_deterministic.rs"
+    }
+  ],
+  "scope": [
+    "Read N bi-asset.v1 JSON bundles from --assets (array file) and/or --asset (individual files)",
+    "Compute row/col grid positions for each panel (grid/vertical/horizontal layouts)",
+    "Compose panel captions from bundle description + caveats",
+    "Emit dashboard.v1 JSON manifest with panels array and vega_concat_spec",
+    "Support --format json (default) and --format human",
+    "Nonzero exit on zero panels (structured error, no panic)"
+  ],
+  "non_goals": [
+    "Rendering the concat spec to PNG/SVG",
+    "Cross-panel interaction (linked brushing, shared selection)",
+    "Profiling, recommending, or emitting charts",
+    "Network access of any kind",
+    "Optional --render feature flag (follow-on PRD)"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "cli",
+    "deny_unsafe": true,
+    "max_deps": 3,
+    "msrv": "1.75",
+    "additional": {
+      "no_network": true,
+      "no_render_dep": true,
+      "deps_allowed": "serde serde_json clap"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why does this CLI need to exist when an LLM could hand-assemble a concat spec?",
+      "a": "Because the bundles already carry title/description/vega_spec/caveats — a generative step would re-derive what's already encoded, adding noise."
+    },
+    {
+      "why": 2,
+      "q": "Why emit both dashboard.v1 and vega_concat_spec rather than one form?",
+      "a": "Two kinds of client: a Vega-Lite engine wants one renderable spec; a grid-owning client wants panel positions as data."
+    },
+    {
+      "why": 3,
+      "q": "Why make this a separate crate rather than a function in mqo-bi-asset-bundle?",
+      "a": "Composition is a different concern from bundling a single asset; keeping it separate keeps both crates focused and independently testable."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Caption format when caveats present: separator?",
+      "resolution": "'. Note: ' separator, caveats joined with '; '"
+    },
+    {
+      "question": "bi-asset.v1 schema definition — use inline vs crate dep?",
+      "resolution": "Inline — mqo-bi-asset-bundle may not be published yet; PRD explicitly allows inline definition."
+    }
+  ],
+  "created_at": "2026-06-10T00:00:00Z",
+  "intent_slug": "mqo-dashboard-composer"
+}

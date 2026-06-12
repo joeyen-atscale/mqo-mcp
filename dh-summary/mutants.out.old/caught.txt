@@ -1,0 +1,43 @@
+src/lib.rs:109:28: replace == with != in capabilities
+src/lib.rs:117:15: replace >= with < in capabilities
+src/lib.rs:131:5: replace build_sample -> Vec<Row> with vec![]
+src/lib.rs:131:5: replace build_sample -> Vec<Row> with vec![Default::default()]
+src/lib.rs:132:10: replace == with != in build_sample
+src/lib.rs:132:29: replace == with != in build_sample
+src/lib.rs:106:5: replace capabilities -> Vec<Capability> with vec![]
+src/lib.rs:156:5: replace row_to_map -> Row with Default::default()
+src/lib.rs:166:5: replace extract_value -> Value with Default::default()
+src/lib.rs:176:9: delete match arm ColumnData::Decimal(v) | ColumnData::Str(v) | ColumnData::Date(v) | ColumnData::Time(v) in extract_value
+src/lib.rs:191:5: replace compute_stats -> HashMap<String, ColStats> with HashMap::new()
+src/lib.rs:212:9: delete match arm ColumnData::Int(v) in stats_int
+src/lib.rs:234:32: replace - with / in stats_int
+src/lib.rs:235:20: replace / with % in stats_int
+src/lib.rs:235:20: replace / with * in stats_int
+src/lib.rs:241:33: replace + with * in stats_int
+src/lib.rs:249:9: delete match arm ColumnData::Float(v) in stats_float
+src/lib.rs:267:32: replace - with / in stats_float
+src/lib.rs:309:37: replace += with -= in stats_str
+src/lib.rs:309:37: replace += with *= in stats_str
+src/lib.rs:359:9: delete match arm ColumnData::Date(v) | ColumnData::Time(v) in stats_date
+src/lib.rs:377:9: delete match arm (Some(min), Some(max)) in stats_date
+src/lib.rs:394:5: replace count_distinct_int -> u64 with 0
+src/lib.rs:394:5: replace count_distinct_int -> u64 with 1
+src/lib.rs:403:5: replace generate_notes -> Vec<String> with vec![]
+src/lib.rs:403:5: replace generate_notes -> Vec<String> with vec![String::new()]
+src/lib.rs:403:5: replace generate_notes -> Vec<String> with vec!["xyzzy".into()]
+src/lib.rs:405:19: replace == with != in generate_notes
+src/lib.rs:413:23: replace > with == in generate_notes
+src/lib.rs:413:23: replace > with < in generate_notes
+src/lib.rs:421:22: replace == with != in generate_notes
+src/lib.rs:426:72: replace * with / in generate_notes
+src/lib.rs:427:36: replace >= with < in generate_notes
+src/lib.rs:469:5: replace count_nulls -> u64 with 0
+src/lib.rs:471:9: delete match arm ColumnData::Float(v) in count_nulls
+src/lib.rs:492:33: replace <= with > in enforce_max_bytes
+src/lib.rs:498:11: delete ! in enforce_max_bytes
+src/lib.rs:498:66: replace > with == in enforce_max_bytes
+src/lib.rs:498:66: replace > with < in enforce_max_bytes
+src/lib.rs:504:23: replace < with == in enforce_max_bytes
+src/lib.rs:504:23: replace < with > in enforce_max_bytes
+src/lib.rs:523:5: replace serialized_len -> usize with 0
+src/lib.rs:523:5: replace serialized_len -> usize with 1

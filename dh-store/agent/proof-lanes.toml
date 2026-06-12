@@ -1,0 +1,38 @@
+# proof-lanes.toml — path-to-lane routing for dh-store autobuilder loop
+# Every changed path in src/ must resolve to >= 1 lane; all lanes must be green.
+
+[[lane]]
+name = "unit-tests"
+trigger_glob = "src/**/*.rs"
+commands = [
+  "cargo test --workspace --release",
+]
+confidence = 0.90
+description = "All unit tests in src/store.rs (AC1-AC7 + extras)"
+
+[[lane]]
+name = "clippy-strict"
+trigger_glob = "src/**/*.rs"
+commands = [
+  "cargo clippy --workspace --release -- -D warnings",
+]
+confidence = 0.90
+description = "Zero clippy warnings under -D warnings"
+
+[[lane]]
+name = "check-compile"
+trigger_glob = "**/*.rs"
+commands = [
+  "cargo check --workspace",
+]
+confidence = 0.95
+description = "Type-checks all crates in the workspace"
+
+[[lane]]
+name = "dep-audit"
+trigger_glob = "Cargo.toml"
+commands = [
+  "cargo deny check",
+]
+confidence = 0.80
+description = "Dependency license + advisory check"

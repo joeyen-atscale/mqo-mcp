@@ -1,0 +1,113 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "prd_source": "/Users/jsy/Documents/PRDs/ARCHIVE/PRD-mqo-mdx-compiler.md",
+  "intent_slug": "mqo-mdx-compiler",
+  "root_motivation": "Make MDX a first-class output path for the MQO fleet so that cellset/drill-through workloads and Excel/pivot clients can be served without burdening every downstream prompt with MDX structural rules (R6/R7/R10/R11/R13). The compiler encodes these rules as compile-time invariants instead of leaving them to prompt discipline.",
+  "user_persona": "AtScale platform engineer wiring the backend router (PRD-mqo-backend-router) to the cellset path; also integration tests and CI pipelines that verify the MDX output shape before it reaches an OLAP engine.",
+  "unfakeable_metric": {
+    "name": "acceptance_tests_passing",
+    "lower_is_better": false,
+    "harness_command": "cargo test --release --workspace 2>&1 | grep -E '^test result' | awk '{print $4}' | paste -sd+ | bc",
+    "target": 28
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "≥6 golden BoundMqo → MDX pairs compile exactly (normalized string-equal). Covers: measure-only, measure+dim, multi-dim CROSSJOIN, three-part cube name, Member filter in WHERE, two measures on COLUMNS, full query with WITH+WHERE.",
+      "test": "tests::ac1_minimal_measure_only, tests::ac1_measure_with_one_dimension, tests::ac1_measure_with_two_dimensions_crossjoin, tests::ac1_three_part_cube_name, tests::ac1_member_filter_in_where, tests::ac1_two_measures_on_columns, tests::ac1_full_query_golden"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "Every emitted MDX includes NON EMPTY on the row axis and a fully-qualified cube name (R10/R13).",
+      "test": "tests::ac2_non_empty_on_rows, tests::ac2_fully_qualified_cube_two_part, tests::ac2_non_empty_only_on_rows_not_columns"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "A calculated measure pulls its MDX-dependency hierarchies onto the axes (R6); dep-hierarchies covered by bound dimensions are not duplicated.",
+      "test": "tests::ac3_calc_measure_adds_dependency_hierarchy, tests::ac3_dependency_hierarchy_deduped_with_bound_dims, tests::ac3_non_calc_measure_no_dep_hierarchies"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "A calc-group member literal is emitted verbatim from bound metadata into a WITH MEMBER clause (R7); CalcGroupMember filter appears in WHERE slicer.",
+      "test": "tests::ac4_calc_group_member_emitted_verbatim, tests::ac4_no_calc_group_member_no_with_clause, tests::ac4_calc_group_filter_in_where"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "A semi-additive measure without a trigger level produces MdxCompileError::SemiAdditiveMissingTrigger (exit non-zero); error message names the measure (R11).",
+      "test": "tests::ac5_semi_additive_missing_trigger_is_error, tests::ac5_semi_additive_with_trigger_compiles, tests::ac5_error_contains_measure_name, tests::ac5_empty_measures_error"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "cargo test --release passes; cargo clippy --workspace -- -D warnings passes (clippy clean).",
+      "test": "cargo test --release --workspace exits 0; cargo clippy --workspace -- -D warnings exits 0"
+    },
+    {
+      "id": "AC7",
+      "level": "SHOULD",
+      "description": "Integration CLI test: mqo-mdx binary invoked via std::process::Command compiles a golden BoundMqo JSON file and asserts on stdout/exit-code.",
+      "test": "tests/integration_cli.rs (acceptance_cli_golden_compile, acceptance_cli_semi_additive_exit_nonzero)"
+    },
+    {
+      "id": "AC8",
+      "level": "MAY",
+      "description": "Range filters in MQO.filters are handled gracefully (not silently dropped without documentation).",
+      "test": "test::range_filter_handled_in_codegen or doc comment on build_where_clause"
+    }
+  ],
+  "scope": [
+    "Accept BoundMqo JSON (from --bound flag or stdin) and emit MDX SELECT to stdout.",
+    "Enforce R6, R7, R10, R11, R13 as compile-time invariants.",
+    "Library crate (mqo_mdx_compiler) + CLI binary (mqo-mdx).",
+    "Depends on mqo-spec git dep and serde_json, clap, thiserror."
+  ],
+  "non_goals": [
+    "MDX parsing or round-trip: this is a codegen-only path.",
+    "SQL codegen: that is the responsibility of the SQL backend crate.",
+    "Execution or sending MDX to an OLAP engine.",
+    "Optimization of the MDX (e.g. subselects, named sets for degenerate single-member axes).",
+    "Support for MDX functions beyond what the bound metadata supplies.",
+    "Range-filter-to-MDX translation (deliberately omitted with documented rationale)."
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "cli",
+    "deny_unsafe": true,
+    "max_deps": 6,
+    "msrv": "1.85.0",
+    "additional": {}
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why does the MQO fleet need an MDX backend at all?",
+      "a": "Some request shapes — asymmetric axes, ragged hierarchies, drill-through, pivot cellsets — are natively expressed in MDX and cannot be served by flat SQL without lossy translation."
+    },
+    {
+      "why": 2,
+      "q": "Why compile at the MQO layer rather than letting the router emit ad-hoc MDX?",
+      "a": "R6/R7/R10/R11/R13 are structural rules that, if scattered across prompt text, will be violated in proportion to context-window pressure. Making them compile-time invariants enforces correctness regardless of the LLM."
+    },
+    {
+      "why": 3,
+      "q": "Why does this ship as a separate crate rather than a module inside mqo-backend-router?",
+      "a": "The router decides WHICH backend; this crate decides HOW to emit MDX. Separation means the MDX compiler can be tested, fuzz-targeted, and replaced independently — and keeps the router's dependency graph narrow."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Should Range filters in MQO.filters be converted to MDX slicer members?",
+      "resolution": "No. Range filters don't map cleanly to MDX slicer members; they're documented as intentionally omitted with a comment in build_where_clause. NON EMPTY on the row axis serves as the structural guard. This is a non-goal."
+    },
+    {
+      "question": "Should the binary accept stdin as well as --bound <file>?",
+      "resolution": "v0.1 only supports --bound <file>. Stdin is a MAY for a follow-on PR."
+    }
+  ],
+  "created_at": "2026-06-08T21:03:00Z"
+}

@@ -1,0 +1,25 @@
+[package]
+name = "mqo-vs-sql-bench"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85.0"
+description = "MQO vs text-to-SQL benchmark CLI — arm A (SQL/run_query) vs arm B (MQO/query_multidimensional), graded by external grader"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "mqo-bench"
+path = "src/main.rs"
+
+[lib]
+name = "mqo_vs_sql_bench"
+path = "src/lib.rs"
+
+[dependencies]
+mqo-spec = { path = "../mqo-spec" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+thiserror = "1"
+
+[dev-dependencies]
+tempfile = "3"

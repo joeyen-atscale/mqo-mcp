@@ -1,0 +1,2 @@
+# clippy.toml — project-level clippy configuration
+msrv = "1.85.0"

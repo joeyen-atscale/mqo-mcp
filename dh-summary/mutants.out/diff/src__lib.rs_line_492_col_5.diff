@@ -1,0 +1,48 @@
+--- src/lib.rs
++++ replace enforce_max_bytes -> DatasetSummary with Default::default()
+@@ -484,44 +484,17 @@
+ /// `max_bytes`, this function panics (the caller's `max_bytes` is too small).
+ fn enforce_max_bytes(
+     mut summary: DatasetSummary,
+     row_count: u64,
+     cfg: &SummaryCfg,
+     notes: &mut Vec<String>,
+ ) -> DatasetSummary {
+     // Fast path: already within budget.
+-    if serialized_len(&summary) <= cfg.max_bytes {
+-        return summary;
+-    }
+-
+-    // Progressive truncation: remove tail rows one at a time.
+-    let original_sample_len = summary.sample.len();
+-    while !summary.sample.is_empty() && serialized_len(&summary) > cfg.max_bytes {
+-        summary.sample.pop();
+-    }
+-
+-    // Add a truncation note if we removed anything.
+-    let new_sample_len = summary.sample.len();
+-    if new_sample_len < original_sample_len {
+-        let note = format!(
+-            "sample truncated from {} to {} rows to fit max_bytes={} (full result: {} rows)",
+-            original_sample_len, new_sample_len, cfg.max_bytes, row_count
+-        );
+-        notes.push(note.clone());
+-        summary.notes.push(note);
+-    }
+-
+-    assert!(
+-        serialized_len(&summary) <= cfg.max_bytes,
+-        "even the zero-sample summary exceeds max_bytes={} — increase max_bytes",
+-        cfg.max_bytes
+-    );
+-
+-    summary
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn serialized_len(summary: &DatasetSummary) -> usize {
+     serde_json::to_vec(summary)
+         .expect("DatasetSummary is always serializable")
+         .len()
+ }
+ 

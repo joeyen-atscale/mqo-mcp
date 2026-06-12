@@ -1,0 +1,32 @@
+{
+  "description": "Seeded from 2026-06-09 MQO benchmark run.",
+  "seeded_from": "runs/agentic_tpcds_100_mqo_nonprod_k4_20260609",
+  "modes": {
+    "path_incompatible": {
+      "path_mean_floor": 0.225,
+      "pass_at_k_floor": 0.40,
+      "note": "22.5% path-mean from 2026-06-09 run"
+    },
+    "wrong_hierarchy_level": {
+      "path_mean_floor": 0.60,
+      "pass_at_k_floor": 0.75,
+      "note": "60.0% from 2026-06-09 run"
+    },
+    "wrong_date_role": {
+      "path_mean_floor": 0.50,
+      "pass_at_k_floor": 0.65,
+      "note": "50.0% from 2026-06-09 run"
+    },
+    "lookalike_measure": {
+      "path_mean_floor": 0.625,
+      "pass_at_k_floor": 0.75,
+      "note": "62.5% from 2026-06-09 run"
+    },
+    "prefer_existing_calc": {
+      "path_mean_floor": 0.70,
+      "pass_at_k_floor": 0.85,
+      "note": "70.0% from 2026-06-09 run"
+    }
+  },
+  "overall_path_mean_floor": 0.53
+}

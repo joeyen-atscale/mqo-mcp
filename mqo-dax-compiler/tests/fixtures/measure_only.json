@@ -1,0 +1,23 @@
+{
+  "mqo": {
+    "model": "sales",
+    "measures": [{"unique_name": "sales.revenue"}],
+    "dimensions": [],
+    "filters": [],
+    "time_intelligence": [],
+    "order": null,
+    "limit": null,
+    "non_empty": false
+  },
+  "measures": [
+    {
+      "unique_name": "sales.revenue",
+      "is_calc": false,
+      "semi_additive": false,
+      "required_dimension": null,
+      "trigger_hierarchies": []
+    }
+  ],
+  "dimensions": [],
+  "calc_group_members": []
+}

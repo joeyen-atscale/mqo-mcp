@@ -1,0 +1,13 @@
+{
+  "schema": "autobuilder.owner_map.v1",
+  "default_owner": "joe.yen@atscale.com",
+  "paths": [
+    { "glob": "src/**/*.rs",        "owner": "joe.yen@atscale.com", "note": "All library source — single-owner leaf crate" },
+    { "glob": "tests/**/*.rs",      "owner": "joe.yen@atscale.com", "note": "Acceptance tests — co-owned with source" },
+    { "glob": "schema/**/*.json",   "owner": "joe.yen@atscale.com", "note": "Generated JSON Schema — updated by cargo test" },
+    { "glob": "agent/**/*.json",    "owner": "joe.yen@atscale.com", "note": "Autobuilder agent artifacts" },
+    { "glob": "Cargo.toml",         "owner": "joe.yen@atscale.com", "note": "Dependency manifest — requires review on dep changes" },
+    { "glob": "deny.toml",          "owner": "joe.yen@atscale.com", "note": "Supply-chain policy" },
+    { "glob": ".github/**",         "owner": "joe.yen@atscale.com", "note": "CI configuration" }
+  ]
+}

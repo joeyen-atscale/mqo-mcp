@@ -1,0 +1,21 @@
+--- src/binder.rs
++++ replace match guard candidates.is_empty() with false in bind
+@@ -183,17 +183,17 @@
+                 bound_dimensions.push(BoundDimensionExt {
+                     unique_name: entry.unique_name.clone(),
+                     hierarchy: entry
+                         .hierarchy
+                         .clone()
+                         .unwrap_or_else(|| sel.hierarchy.clone()),
+                 });
+             }
+-            Err(candidates) if candidates.is_empty() => {
++            Err(candidates) if false /* ~ changed by cargo-mutants ~ */ => {
+                 not_found.push(format!("dimension {}:{}", sel.hierarchy, sel.level));
+             }
+             Err(candidates) => {
+                 ambiguous.push(serde_json::json!({
+                     "ref": format!("dimension {}:{}", sel.hierarchy, sel.level),
+                     "candidates": candidates.iter().map(|c| &c.unique_name).collect::<Vec<_>>(),
+                 }));
+             }

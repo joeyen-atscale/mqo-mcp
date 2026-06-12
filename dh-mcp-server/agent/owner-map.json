@@ -1,0 +1,9 @@
+{
+  "src/lib.rs": "dh-mcp-server core library: re-exports, summarize_with_cap",
+  "src/mcp.rs": "MCP protocol layer: Server struct, tool dispatch, JSON-RPC 2.0",
+  "src/main.rs": "Binary entry point: argument parsing, stdio loop",
+  "src/convert.rs": "Row-to-Dataset conversion: rows_to_dataset, leaf_name, ColPlan",
+  "tests/acceptance.rs": "Acceptance tests for all 7 ACs",
+  "fixtures/catalog.json": "Fixture catalog snapshot for acceptance tests",
+  "fixtures/stats.json": "Fixture router stats for acceptance tests"
+}

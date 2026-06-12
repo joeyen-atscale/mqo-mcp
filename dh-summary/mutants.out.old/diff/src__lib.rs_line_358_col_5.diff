@@ -1,0 +1,53 @@
+--- src/lib.rs
++++ replace stats_date -> ColStats with Default::default()
+@@ -350,49 +350,17 @@
+         sum: None,
+         mean: None,
+         distinct: Some(distinct),
+         top_k: if entries.is_empty() { None } else { Some(entries) },
+     }
+ }
+ 
+ fn stats_date(data: &ColumnData) -> ColStats {
+-    let (values, null_count) = match data {
+-        ColumnData::Date(v) | ColumnData::Time(v) => {
+-            let non_null: Vec<&str> = v.iter().filter_map(|o| o.as_deref()).collect();
+-            let nulls = v.iter().filter(|o| o.is_none()).count() as u64;
+-            (non_null, nulls)
+-        }
+-        _ => (vec![], 0),
+-    };
+-    let mut sorted: Vec<&str> = values.clone();
+-    sorted.sort_unstable();
+-    let min_s = sorted.first().map(|s| (*s).to_string());
+-    let max_s = sorted.last().map(|s| (*s).to_string());
+-    let distinct: u64 = {
+-        let mut u = sorted.clone();
+-        u.dedup();
+-        u.len() as u64 + null_count.min(1)
+-    };
+-    // Surface min/max via top_k so notes and tests can read them.
+-    let span_entry = match (&min_s, &max_s) {
+-        (Some(min), Some(max)) => Some(vec![
+-            serde_json::json!({"value": min, "label": "min"}),
+-            serde_json::json!({"value": max, "label": "max"}),
+-        ]),
+-        _ => None,
+-    };
+-    ColStats {
+-        min: None,
+-        max: None,
+-        sum: None,
+-        mean: None,
+-        distinct: Some(distinct),
+-        top_k: span_entry,
+-    }
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn count_distinct_int(vals: &[i64]) -> u64 {
+     let mut v = vals.to_vec();
+     v.sort_unstable();
+     v.dedup();
+     v.len() as u64
+ }

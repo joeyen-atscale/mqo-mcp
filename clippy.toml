@@ -1,0 +1,12 @@
+# Clippy configuration for mqo-mcp-server.
+# Lints themselves are declared via #![deny(clippy::all, clippy::pedantic)] in lib.rs / main.rs.
+
+avoid-breaking-exported-api = false
+msrv = "1.70.0"
+
+# Tighten thresholds where the default is overly permissive.
+cognitive-complexity-threshold = 25
+type-complexity-threshold = 250
+too-many-arguments-threshold = 6
+too-many-lines-threshold = 100
+trivial-copy-size-limit = 16

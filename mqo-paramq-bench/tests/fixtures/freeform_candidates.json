@@ -1,0 +1,24 @@
+{
+  "task_001": [
+    {
+      "resolved_measures": ["[Total Sales Lookalike]"],
+      "resolved_dimensions": ["[Date]"]
+    },
+    {
+      "resolved_measures": ["[Total Sales]"],
+      "resolved_dimensions": ["[Date]"]
+    }
+  ],
+  "task_002": [
+    {
+      "resolved_measures": ["[Total Sales]"],
+      "resolved_dimensions": ["[Customer]"]
+    }
+  ],
+  "task_003": [
+    {
+      "resolved_measures": ["[Total Cost]"],
+      "resolved_dimensions": ["[Product]"]
+    }
+  ]
+}

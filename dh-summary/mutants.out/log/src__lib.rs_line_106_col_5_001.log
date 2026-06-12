@@ -1,0 +1,105 @@
+
+*** src/lib.rs:106:5: replace capabilities -> Vec<Capability> with vec![Default::default()]
+
+*** mutation diff:
+--- src/lib.rs
++++ replace capabilities -> Vec<Capability> with vec![Default::default()]
+@@ -98,35 +98,17 @@
+ 
+ /// Advertise which operations make sense for this dataset's shape.
+ ///
+ /// Rules:
+ /// * `Pivot` requires ≥2 dimension columns.
+ /// * All other capabilities are always advertised.
+ #[must_use]
+ pub fn capabilities(dataset: &Dataset) -> Vec<Capability> {
+-    let n_dims = dataset
+-        .columns
+-        .iter()
+-        .filter(|c| c.role == ColumnRole::Dimension)
+-        .count();
+-
+-    let mut caps = Vec::with_capacity(9);
+-    caps.push(Capability::Aggregate);
+-    caps.push(Capability::Filter);
+-    caps.push(Capability::Sort);
+-    caps.push(Capability::TopN);
+-    if n_dims >= 2 {
+-        caps.push(Capability::Pivot);
+-    }
+-    caps.push(Capability::Compare);
+-    caps.push(Capability::Drill);
+-    caps.push(Capability::Describe);
+-    caps.push(Capability::Export);
+-    caps
++    vec![Default::default()] /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ // ── Internal helpers ────────────────────────────────────────────────────────
+ 
+ /// Build the head+tail sample, capped at `sample_cap` total rows.
+ fn build_sample(dataset: &Dataset, sample_cap: usize) -> Vec<Row> {
+     let n = dataset.row_count();
+     if n == 0 || sample_cap == 0 {
+
+
+*** /Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo test --no-run --verbose --package=dh-summary@0.1.0
+       Fresh unicode-ident v1.0.24
+       Fresh proc-macro2 v1.0.106
+       Fresh quote v1.0.45
+       Fresh syn v2.0.117
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh serde_derive_internals v0.29.1
+       Fresh serde_derive v1.0.228
+       Fresh itoa v1.0.18
+       Fresh memchr v2.8.1
+       Fresh serde_json v1.0.150
+       Fresh serde v1.0.228
+       Fresh schemars_derive v0.8.22
+       Fresh libc v0.2.186
+       Fresh cfg-if v1.0.4
+       Fresh dyn-clone v1.0.20
+       Fresh schemars v0.8.22
+       Fresh getrandom v0.4.2
+       Fresh dh-spec v0.1.0 (/Users/jsy/Documents/projects/dh-spec)
+       Fresh uuid v1.23.2
+       Fresh dh-store v0.1.0 (/Users/jsy/Documents/projects/dh-store)
+       Dirty dh-summary v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp): stale, unknown reason
+   Compiling dh-summary v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp)
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name dh_summary --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=78d698b9a149721f -C extra-filename=-bd59e07e1bc4c303 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rmeta --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rmeta --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rmeta`
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name dh_summary --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=343947f4240e2b9c -C extra-filename=-5243533f63ef4209 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rlib --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib`
+warning: unused import: `ColumnRole`
+  --> src/lib.rs:19:37
+   |
+19 | use dh_spec::{Capability, ColStats, ColumnRole, DatasetSummary, DType, Row};
+   |                                     ^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` on by default
+
+error[E0277]: the trait bound `Capability: Default` is not satisfied
+   --> src/lib.rs:106:10
+    |
+106 |     vec![Default::default()] /* ~ changed by cargo-mutants ~ */
+    |          ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `Capability`
+
+error[E0277]: the trait bound `dh_spec::Capability: Default` is not satisfied
+   --> src/lib.rs:106:10
+    |
+106 |     vec![Default::default()] /* ~ changed by cargo-mutants ~ */
+    |          ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `dh_spec::Capability`
+
+For more information about this error, try `rustc --explain E0277`.
+warning: `dh-summary` (lib) generated 1 warning
+error: could not compile `dh-summary` (lib) due to 1 previous error; 1 warning emitted
+
+Caused by:
+  process didn't exit successfully: `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name dh_summary --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=78d698b9a149721f -C extra-filename=-bd59e07e1bc4c303 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rmeta --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rmeta --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rmeta` (exit status: 1)
+warning: build failed, waiting for other jobs to finish...
+warning: `dh-summary` (lib test) generated 1 warning (1 duplicate)
+error: could not compile `dh-summary` (lib test) due to 1 previous error; 1 warning emitted
+
+Caused by:
+  process didn't exit successfully: `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name dh_summary --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=343947f4240e2b9c -C extra-filename=-5243533f63ef4209 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rlib --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib` (exit status: 1)
+
+*** result: Failure(101)

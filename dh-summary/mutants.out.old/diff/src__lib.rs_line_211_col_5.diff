@@ -1,0 +1,53 @@
+--- src/lib.rs
++++ replace stats_int -> ColStats with Default::default()
+@@ -203,49 +203,17 @@
+         DType::Str => stats_str(data, topk),
+         DType::Bool => stats_bool(data),
+         DType::Date | DType::Time => stats_date(data),
+     }
+ }
+ 
+ #[allow(clippy::cast_precision_loss)]
+ fn stats_int(data: &ColumnData) -> ColStats {
+-    let (vals, null_count, total) = match data {
+-        ColumnData::Int(v) => {
+-            let non_null: Vec<i64> = v.iter().filter_map(|o| *o).collect();
+-            let nulls = v.iter().filter(|o| o.is_none()).count() as u64;
+-            let tot = v.len() as u64;
+-            (non_null, nulls, tot)
+-        }
+-        _ => (vec![], 0, 0),
+-    };
+-    let distinct = count_distinct_int(&vals);
+-    if vals.is_empty() {
+-        return ColStats {
+-            min: None,
+-            max: None,
+-            sum: None,
+-            mean: None,
+-            distinct: Some(distinct + null_count.min(1)),
+-            top_k: None,
+-        };
+-    }
+-    let min = vals.iter().copied().min().unwrap() as f64;
+-    let max = vals.iter().copied().max().unwrap() as f64;
+-    let sum: f64 = vals.iter().map(|&v| v as f64).sum();
+-    let non_null_count = total - null_count;
+-    let mean = sum / non_null_count as f64;
+-    ColStats {
+-        min: Some(min),
+-        max: Some(max),
+-        sum: Some(sum),
+-        mean: Some(mean),
+-        distinct: Some(distinct + null_count.min(1)),
+-        top_k: None,
+-    }
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ #[allow(clippy::cast_precision_loss)]
+ fn stats_float(data: &ColumnData) -> ColStats {
+     let (vals, null_count, total) = match data {
+         ColumnData::Float(v) => {
+             let non_null: Vec<f64> = v.iter().filter_map(|o| *o).collect();
+             let nulls = v.iter().filter(|o| o.is_none()).count() as u64;

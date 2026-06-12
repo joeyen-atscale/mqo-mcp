@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://atscale.com/schemas/dh-spec/0.1.0/dh-spec.schema.json",
+  "title": "dh-spec",
+  "description": "Dataset-Handle protocol types — wire contract for handle-based results in the dh-* MCP fleet",
+  "$defs": {
+    "DatasetHandle": {
+      "title": "DatasetHandle",
+      "description": "Opaque server-minted reference to a stored result set",
+      "type": "object",
+      "required": ["id", "created_at", "ttl_secs", "derived_from"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Server-minted opaque identifier (e.g. a UUID or hdl_<base62>)"
+        },
+        "created_at": {
+          "type": "integer",
+          "description": "Unix timestamp (seconds) when this handle was created"
+        },
+        "ttl_secs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How long the server will keep this handle alive, in seconds"
+        },
+        "derived_from": {
+          "oneOf": [
+            { "type": "null" },
+            { "$ref": "#/$defs/DatasetHandle" }
+          ],
+          "description": "Parent handle if this was produced by an operation, otherwise null"
+        }
+      }
+    },
+    "DType": {
+      "title": "DType",
+      "description": "The data type of a column value",
+      "type": "string",
+      "enum": ["Int", "Float", "Decimal", "Str", "Bool", "Date", "Time"]
+    },
+    "ColumnRole": {
+      "title": "ColumnRole",
+      "description": "The semantic role of a column in the model",
+      "type": "string",
+      "enum": ["Measure", "Dimension", "Derived"]
+    },
+    "ColumnSchema": {
+      "title": "ColumnSchema",
+      "description": "Metadata for one column of a result set",
+      "type": "object",
+      "required": ["name", "unique_name", "dtype", "nullable", "role"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Display name as it appears in the result set"
+        },
+        "unique_name": {
+          "type": "string",
+          "description": "Fully-qualified unique name in the semantic model"
+        },
+        "dtype": { "$ref": "#/$defs/DType" },
+        "nullable": {
+          "type": "boolean",
+          "description": "True when this column may contain null values"
+        },
+        "role": { "$ref": "#/$defs/ColumnRole" }
+      }
+    },
+    "ColStats": {
+      "title": "ColStats",
+      "description": "Per-column statistics (numeric and categorical)",
+      "type": "object",
+      "required": ["min", "max", "sum", "mean", "distinct", "top_k"],
+      "properties": {
+        "min": { "type": ["number", "null"], "description": "Minimum value (numerics only)" },
+        "max": { "type": ["number", "null"], "description": "Maximum value (numerics only)" },
+        "sum": { "type": ["number", "null"], "description": "Sum (numerics only)" },
+        "mean": { "type": ["number", "null"], "description": "Mean (numerics only)" },
+        "distinct": { "type": ["integer", "null"], "minimum": 0, "description": "Count of distinct values" },
+        "top_k": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "array", "items": {} }
+          ],
+          "description": "Top-k most-frequent values (categoricals only)"
+        }
+      }
+    },
+    "DatasetSummary": {
+      "title": "DatasetSummary",
+      "description": "Bounded summary of a result set — never the full dataset",
+      "type": "object",
+      "required": ["row_count", "columns", "sample", "sample_cap", "stats", "notes"],
+      "properties": {
+        "row_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of rows in the full (server-side) result set"
+        },
+        "columns": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ColumnSchema" },
+          "description": "Schema of all columns"
+        },
+        "sample": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "description": "Head/tail sample of rows, bounded by sample_cap"
+        },
+        "sample_cap": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Maximum number of rows that may appear in sample"
+        },
+        "stats": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/ColStats" },
+          "description": "Per-column statistics keyed by ColumnSchema.unique_name"
+        },
+        "notes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Free-form notes (warnings, truncation notices, etc.)"
+        }
+      }
+    },
+    "Capability": {
+      "title": "Capability",
+      "description": "An operation available on a DatasetHandle — exactly nine variants",
+      "type": "string",
+      "enum": [
+        "Aggregate",
+        "Filter",
+        "Sort",
+        "TopN",
+        "Pivot",
+        "Compare",
+        "Drill",
+        "Describe",
+        "Export"
+      ]
+    },
+    "OpRequest": {
+      "title": "OpRequest",
+      "description": "Request to apply an operation to a stored dataset handle",
+      "type": "object",
+      "required": ["handle", "op", "params"],
+      "properties": {
+        "handle": { "$ref": "#/$defs/DatasetHandle" },
+        "op": { "$ref": "#/$defs/Capability" },
+        "params": {
+          "description": "Operation-specific parameters"
+        }
+      }
+    },
+    "OpResult": {
+      "title": "OpResult",
+      "description": "Result of an operation: a new handle and its summary",
+      "type": "object",
+      "required": ["handle", "summary"],
+      "properties": {
+        "handle": { "$ref": "#/$defs/DatasetHandle" },
+        "summary": { "$ref": "#/$defs/DatasetSummary" }
+      }
+    },
+    "Lineage": {
+      "title": "Lineage",
+      "description": "Provenance record linking a derived handle to its inputs",
+      "type": "object",
+      "required": ["handle", "op", "params", "parents"],
+      "properties": {
+        "handle": { "$ref": "#/$defs/DatasetHandle" },
+        "op": { "$ref": "#/$defs/Capability" },
+        "params": {
+          "description": "The operation parameters as supplied by the caller"
+        },
+        "parents": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DatasetHandle" },
+          "description": "All input handles consumed by this operation"
+        }
+      }
+    }
+  },
+  "type": "object",
+  "properties": {
+    "DatasetHandle": { "$ref": "#/$defs/DatasetHandle" },
+    "DatasetSummary": { "$ref": "#/$defs/DatasetSummary" },
+    "ColumnSchema": { "$ref": "#/$defs/ColumnSchema" },
+    "Capability": { "$ref": "#/$defs/Capability" },
+    "OpRequest": { "$ref": "#/$defs/OpRequest" },
+    "OpResult": { "$ref": "#/$defs/OpResult" },
+    "Lineage": { "$ref": "#/$defs/Lineage" }
+  }
+}

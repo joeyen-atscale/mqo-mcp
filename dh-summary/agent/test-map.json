@@ -1,0 +1,55 @@
+{
+  "schema": "autobuilder.test_map.v1",
+  "crate": "dh-summary",
+  "tests": [
+    {
+      "id": "AC1",
+      "test_name": "tests::ac1_large_dataset_sample_and_size_bounds",
+      "file": "src/lib.rs",
+      "level": "MUST",
+      "description": "10k-row fixture: sample.len() <= sample_cap AND serialized size <= max_bytes"
+    },
+    {
+      "id": "AC2",
+      "test_name": "tests::ac2_numeric_stats_golden",
+      "file": "src/lib.rs",
+      "level": "MUST",
+      "description": "min/max/sum/mean/distinct match hand-computed golden (5 int values)"
+    },
+    {
+      "id": "AC3",
+      "test_name": "tests::ac3_categorical_topk_and_date_span",
+      "file": "src/lib.rs",
+      "level": "MUST",
+      "description": "Categorical top-k capped at topk; date min/max via top_k labels"
+    },
+    {
+      "id": "AC4",
+      "test_name": "tests::ac4_capabilities_pivot_rule",
+      "file": "src/lib.rs",
+      "level": "MUST",
+      "description": "Pivot absent with 1 dim; Pivot present with >=2 dims"
+    },
+    {
+      "id": "AC5",
+      "test_name": "tests::ac5_notes_nulls_and_dominant_group",
+      "file": "src/lib.rs",
+      "level": "MUST",
+      "description": "Null note present; dominant-group note present (>=50%); notes deterministic"
+    },
+    {
+      "id": "AC6",
+      "test_name": "tests::ac6_max_bytes_truncates_sample_not_stats",
+      "file": "src/lib.rs",
+      "level": "MUST",
+      "description": "max_bytes exceeded: sample truncated, stats preserved, truncation note added"
+    },
+    {
+      "id": "AC7",
+      "test_name": "tests::ac7_round_trip_serialization",
+      "file": "src/lib.rs",
+      "level": "MUST",
+      "description": "cargo test --release clean; clippy -D warnings clean; JSON round-trip lossless"
+    }
+  ]
+}

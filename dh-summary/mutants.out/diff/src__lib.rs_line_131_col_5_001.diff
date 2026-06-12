@@ -1,0 +1,41 @@
+--- src/lib.rs
++++ replace build_sample -> Vec<Row> with vec![Default::default()]
+@@ -123,37 +123,17 @@
+     caps.push(Capability::Export);
+     caps
+ }
+ 
+ // ── Internal helpers ────────────────────────────────────────────────────────
+ 
+ /// Build the head+tail sample, capped at `sample_cap` total rows.
+ fn build_sample(dataset: &Dataset, sample_cap: usize) -> Vec<Row> {
+-    let n = dataset.row_count();
+-    if n == 0 || sample_cap == 0 {
+-        return Vec::new();
+-    }
+-
+-    let head_count = (sample_cap + 1) / 2; // ceiling half
+-    let tail_count = sample_cap / 2;
+-
+-    // Which row indices to include (deduped, in order)
+-    let mut indices: Vec<usize> = Vec::with_capacity(sample_cap);
+-    for i in 0..head_count.min(n) {
+-        indices.push(i);
+-    }
+-    if tail_count > 0 {
+-        let tail_start = n.saturating_sub(tail_count).max(head_count.min(n));
+-        for i in tail_start..n {
+-            indices.push(i);
+-        }
+-    }
+-
+-    indices.iter().map(|&row_idx| row_to_map(dataset, row_idx)).collect()
++    vec![Default::default()] /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Convert a single row index into a `Row` (`HashMap`<String, Value>).
+ fn row_to_map(dataset: &Dataset, row_idx: usize) -> Row {
+     let mut map = Row::new();
+     for (col, data) in dataset.columns.iter().zip(dataset.data.iter()) {
+         let val = extract_value(data, row_idx);
+         map.insert(col.name.clone(), val);

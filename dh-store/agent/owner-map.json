@@ -1,0 +1,25 @@
+{
+  "schema": "autobuilder.owner_map.v1",
+  "owners": [
+    {
+      "path": "src/dataset.rs",
+      "owner": "joe.yen@atscale.com",
+      "description": "Dataset columnar struct and ColumnData typed-vector enum"
+    },
+    {
+      "path": "src/error.rs",
+      "owner": "joe.yen@atscale.com",
+      "description": "LookupError tri-state: NotFound, Expired"
+    },
+    {
+      "path": "src/store.rs",
+      "owner": "joe.yen@atscale.com",
+      "description": "StoreInner + Store public API: put/get/derive/lineage/evict_expired/stats"
+    },
+    {
+      "path": "src/lib.rs",
+      "owner": "joe.yen@atscale.com",
+      "description": "Crate root, re-exports, lint configuration"
+    }
+  ]
+}

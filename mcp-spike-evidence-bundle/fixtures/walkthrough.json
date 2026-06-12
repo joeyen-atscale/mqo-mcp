@@ -1,0 +1,37 @@
+{
+  "header": {
+    "requery_count": 1,
+    "store_backend": "mem",
+    "total_handles": 4
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "op": "query",
+      "input_handle": null,
+      "output_handle": "handle-a-uuid",
+      "row_count": 10
+    },
+    {
+      "turn": 2,
+      "op": "period_over_period",
+      "input_handle": "handle-a-uuid",
+      "output_handle": "handle-b-uuid",
+      "row_count": 8
+    },
+    {
+      "turn": 3,
+      "op": "slice",
+      "input_handle": "handle-b-uuid",
+      "output_handle": "handle-c-uuid",
+      "row_count": 4
+    },
+    {
+      "turn": 4,
+      "op": "chart",
+      "input_handle": "handle-c-uuid",
+      "output_handle": "handle-chart-uuid",
+      "row_count": 4
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "owners": [
+    {
+      "glob": "src/**/*.rs",
+      "owner": "joe.yen@atscale.com",
+      "role": "primary"
+    },
+    {
+      "glob": "Cargo.toml",
+      "owner": "joe.yen@atscale.com",
+      "role": "primary"
+    },
+    {
+      "glob": "deny.toml",
+      "owner": "joe.yen@atscale.com",
+      "role": "primary"
+    },
+    {
+      "glob": "agent/**",
+      "owner": "joe.yen@atscale.com",
+      "role": "primary"
+    }
+  ]
+}

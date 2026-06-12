@@ -1,0 +1,21 @@
+{
+  "schema": "autobuilder.owner_map.v1",
+  "intent_slug": "mqoguard-column-group-enrichment",
+  "paths": {
+    "src/lib.rs": "edit-agent",
+    "src/catalog.rs": "edit-agent",
+    "src/bindings.rs": "edit-agent",
+    "src/enrich.rs": "edit-agent",
+    "tests/acceptance_AC1.rs": "read-only",
+    "tests/acceptance_AC2.rs": "read-only",
+    "tests/acceptance_AC3.rs": "read-only",
+    "tests/acceptance_AC4.rs": "read-only",
+    "tests/acceptance_AC5.rs": "read-only",
+    "tests/acceptance_AC6.rs": "read-only",
+    "tests/proptest_invariants.rs": "read-only",
+    "scripts/run-metrics.sh": "read-only",
+    "scripts/risk-gate.sh": "read-only",
+    "scripts/audit.sh": "read-only",
+    "agent/intent-card.json": "read-only"
+  }
+}

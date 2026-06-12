@@ -1,0 +1,19 @@
+[package]
+name = "dh-summary"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70.0"
+description = "Bounded LLM-visible summary for Dataset-Handle — replaces raw row dumps"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "dh_summary"
+path = "src/lib.rs"
+
+[dependencies]
+dh-spec = { path = "../dh-spec" }
+dh-store = { path = "../dh-store" }
+serde_json = "1"
+
+[dev-dependencies]
+# none needed beyond [dependencies]

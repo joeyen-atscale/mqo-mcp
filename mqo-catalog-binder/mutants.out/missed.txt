@@ -1,0 +1,3 @@
+src/binder.rs:82:24: replace > with >= in resolve_measure
+src/binder.rs:94:9: delete match arm 0 in resolve_measure
+src/binder.rs:123:9: delete match arm 0 in resolve_level

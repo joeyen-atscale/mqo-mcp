@@ -1,0 +1,21 @@
+--- src/lib.rs
++++ replace / with % in stats_int
+@@ -227,17 +227,17 @@
+             distinct: Some(distinct + null_count.min(1)),
+             top_k: None,
+         };
+     }
+     let min = vals.iter().copied().min().unwrap() as f64;
+     let max = vals.iter().copied().max().unwrap() as f64;
+     let sum: f64 = vals.iter().map(|&v| v as f64).sum();
+     let non_null_count = total - null_count;
+-    let mean = sum / non_null_count as f64;
++    let mean = sum % /* ~ changed by cargo-mutants ~ */ non_null_count as f64;
+     ColStats {
+         min: Some(min),
+         max: Some(max),
+         sum: Some(sum),
+         mean: Some(mean),
+         distinct: Some(distinct + null_count.min(1)),
+         top_k: None,
+     }

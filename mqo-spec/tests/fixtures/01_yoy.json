@@ -1,0 +1,16 @@
+{
+  "model": "sales",
+  "measures": [
+    { "unique_name": "sales.revenue" }
+  ],
+  "dimensions": [
+    { "hierarchy": "date.calendar", "level": "year" }
+  ],
+  "filters": [],
+  "time_intelligence": [
+    { "op": "yo_y" }
+  ],
+  "order": [{ "key": "date.calendar.year", "direction": "asc" }],
+  "limit": null,
+  "non_empty": true
+}

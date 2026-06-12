@@ -1,0 +1,21 @@
+--- src/binder.rs
++++ delete ! in bind
+@@ -243,17 +243,17 @@
+             }
+         }
+     }
+ 
+     // ── Collate results ───────────────────────────────────────────────────
+     if !ambiguous.is_empty() {
+         return BindResult::Ambiguous(ambiguous);
+     }
+-    if !not_found.is_empty() {
++    if  /* ~ changed by cargo-mutants ~ */not_found.is_empty() {
+         return BindResult::NotFound(not_found);
+     }
+ 
+     BindResult::Bound(Box::new(BoundMqoOutput {
+         mqo: mqo.clone(),
+         measures: bound_measures,
+         dimensions: bound_dimensions,
+         calc_group_members: bound_calc_group_members,

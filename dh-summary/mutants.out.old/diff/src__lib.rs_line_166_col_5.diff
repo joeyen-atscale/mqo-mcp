@@ -1,0 +1,41 @@
+--- src/lib.rs
++++ replace extract_value -> Value with Default::default()
+@@ -158,37 +158,17 @@
+         let val = extract_value(data, row_idx);
+         map.insert(col.name.clone(), val);
+     }
+     map
+ }
+ 
+ /// Extract the JSON `Value` at position `row_idx` from [`ColumnData`].
+ fn extract_value(data: &ColumnData, row_idx: usize) -> Value {
+-    match data {
+-        ColumnData::Int(v) => v
+-            .get(row_idx)
+-            .and_then(|o| *o)
+-            .map_or(Value::Null, Value::from),
+-        ColumnData::Float(v) => v
+-            .get(row_idx)
+-            .and_then(|o| *o)
+-            .and_then(serde_json::Number::from_f64)
+-            .map_or(Value::Null, Value::Number),
+-        ColumnData::Decimal(v) | ColumnData::Str(v) | ColumnData::Date(v)
+-        | ColumnData::Time(v) => v
+-            .get(row_idx)
+-            .and_then(|o| o.as_deref())
+-            .map_or(Value::Null, |s| Value::String(s.to_string())),
+-        ColumnData::Bool(v) => v
+-            .get(row_idx)
+-            .and_then(|o| *o)
+-            .map_or(Value::Null, Value::Bool),
+-        _ => Value::Null,
+-    }
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Compute per-column statistics keyed by `unique_name`.
+ fn compute_stats(dataset: &Dataset, topk: usize) -> HashMap<String, ColStats> {
+     let mut stats = HashMap::new();
+     for (col, data) in dataset.columns.iter().zip(dataset.data.iter()) {
+         let s = compute_col_stats(data, col.dtype, topk);
+         stats.insert(col.unique_name.clone(), s);

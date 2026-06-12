@@ -1,0 +1,21 @@
+--- src/binder.rs
++++ replace && with || in resolve_level
+@@ -107,17 +107,17 @@
+ 
+     let candidates: Vec<&ColumnEntry> = columns
+         .iter()
+         .filter(|c| {
+             c.kind == "level"
+                 && c.hierarchy
+                     .as_deref()
+                     .is_some_and(|h| h.to_lowercase() == hier_key)
+-                && c.level
++                || /* ~ changed by cargo-mutants ~ */ c.level
+                     .as_deref()
+                     .is_some_and(|l| l.to_lowercase() == level_key)
+         })
+         .collect();
+ 
+     match candidates.len() {
+         1 => Ok(candidates[0]),
+         0 => Err(vec![]),

@@ -1,0 +1,59 @@
+--- src/main.rs
++++ replace main with ()
+@@ -30,55 +30,17 @@
+     mqo: PathBuf,
+ 
+     /// Path to the catalog snapshot JSON file
+     #[arg(long)]
+     catalog: PathBuf,
+ }
+ 
+ fn main() {
+-    let args = Args::parse();
+-
+-    // Load MQO
+-    let mqo_text = std::fs::read_to_string(&args.mqo).unwrap_or_else(|e| {
+-        eprintln!("mqo-bind: cannot read --mqo file: {e}");
+-        process::exit(2);
+-    });
+-    let mqo: mqo_spec::Mqo = serde_json::from_str(&mqo_text).unwrap_or_else(|e| {
+-        eprintln!("mqo-bind: --mqo file is not valid MQO JSON: {e}");
+-        process::exit(2);
+-    });
+-
+-    // Load catalog snapshot
+-    let catalog_text = std::fs::read_to_string(&args.catalog).unwrap_or_else(|e| {
+-        eprintln!("mqo-bind: cannot read --catalog file: {e}");
+-        process::exit(2);
+-    });
+-    let snapshot: catalog::CatalogSnapshot =
+-        serde_json::from_str(&catalog_text).unwrap_or_else(|e| {
+-            eprintln!("mqo-bind: --catalog file is not valid snapshot JSON: {e}");
+-            process::exit(2);
+-        });
+-
+-    match binder::bind(&mqo, &snapshot) {
+-        binder::BindResult::Bound(bound) => {
+-            println!("{}", serde_json::to_string_pretty(&*bound).expect("serialize"));
+-            process::exit(0);
+-        }
+-        binder::BindResult::Ambiguous(items) => {
+-            let out = serde_json::json!({ "ambiguous": items });
+-            println!("{}", serde_json::to_string_pretty(&out).expect("serialize"));
+-            process::exit(3);
+-        }
+-        binder::BindResult::NotFound(items) => {
+-            let out = serde_json::json!({ "not_found": items });
+-            println!("{}", serde_json::to_string_pretty(&out).expect("serialize"));
+-            process::exit(4);
+-        }
+-    }
++    () /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ #[cfg(test)]
+ mod integration_tests {
+     use crate::binder::{bind, BindResult};
+     use crate::catalog::{
+         CalcGroupEntry, CatalogSnapshot, ColumnEntry, DescribeModelOutput, SemiAdditiveInfo,
+     };

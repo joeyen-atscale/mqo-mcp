@@ -1,0 +1,49 @@
+[
+  {
+    "task_id": "q001",
+    "arm": "sql_run_query",
+    "query": "SELECT year, SUM(revenue) AS total_revenue FROM sales GROUP BY year ORDER BY year",
+    "rows": [
+      {"year": 2022, "total_revenue": 1500000.0},
+      {"year": 2023, "total_revenue": 1750000.0},
+      {"year": 2024, "total_revenue": 2100000.0}
+    ],
+    "error": null,
+    "n_retries": 0,
+    "latency_ms": 320,
+    "tokens": 850,
+    "invalid_entity": false
+  },
+  {
+    "task_id": "q002",
+    "arm": "sql_run_query",
+    "query": "SELECT region, COUNT(DISTINCT customer_id) AS customer_count FROM customers GROUP BY region",
+    "rows": [
+      {"region": "North", "customer_count": 4200},
+      {"region": "South", "customer_count": 3800},
+      {"region": "West", "customer_count": 5100}
+    ],
+    "error": null,
+    "n_retries": 1,
+    "latency_ms": 480,
+    "tokens": 920,
+    "invalid_entity": false
+  },
+  {
+    "task_id": "q003",
+    "arm": "sql_run_query",
+    "query": "SELECT product_name, SUM(units_sold) AS total_units FROM sales GROUP BY product_name ORDER BY total_units DESC LIMIT 5",
+    "rows": [
+      {"product_name": "Widget A", "total_units": 98000},
+      {"product_name": "Widget B", "total_units": 75000},
+      {"product_name": "Gadget X", "total_units": 62000},
+      {"product_name": "Gadget Y", "total_units": 55000},
+      {"product_name": "Thing Z", "total_units": 48000}
+    ],
+    "error": null,
+    "n_retries": 0,
+    "latency_ms": 290,
+    "tokens": 780,
+    "invalid_entity": true
+  }
+]

@@ -1,0 +1,21 @@
+--- src/lib.rs
++++ replace > with == in build_sample
+@@ -136,17 +136,17 @@
+     let head_count = (sample_cap + 1) / 2; // ceiling half
+     let tail_count = sample_cap / 2;
+ 
+     // Which row indices to include (deduped, in order)
+     let mut indices: Vec<usize> = Vec::with_capacity(sample_cap);
+     for i in 0..head_count.min(n) {
+         indices.push(i);
+     }
+-    if tail_count > 0 {
++    if tail_count == /* ~ changed by cargo-mutants ~ */ 0 {
+         let tail_start = n.saturating_sub(tail_count).max(head_count.min(n));
+         for i in tail_start..n {
+             indices.push(i);
+         }
+     }
+ 
+     indices.iter().map(|&row_idx| row_to_map(dataset, row_idx)).collect()
+ }

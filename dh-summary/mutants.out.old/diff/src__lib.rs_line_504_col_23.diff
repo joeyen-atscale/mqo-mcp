@@ -1,0 +1,21 @@
+--- src/lib.rs
++++ replace < with == in enforce_max_bytes
+@@ -496,17 +496,17 @@
+     // Progressive truncation: remove tail rows one at a time.
+     let original_sample_len = summary.sample.len();
+     while !summary.sample.is_empty() && serialized_len(&summary) > cfg.max_bytes {
+         summary.sample.pop();
+     }
+ 
+     // Add a truncation note if we removed anything.
+     let new_sample_len = summary.sample.len();
+-    if new_sample_len < original_sample_len {
++    if new_sample_len == /* ~ changed by cargo-mutants ~ */ original_sample_len {
+         let note = format!(
+             "sample truncated from {} to {} rows to fit max_bytes={} (full result: {} rows)",
+             original_sample_len, new_sample_len, cfg.max_bytes, row_count
+         );
+         notes.push(note.clone());
+         summary.notes.push(note);
+     }
+ 

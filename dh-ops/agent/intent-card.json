@@ -1,0 +1,135 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "intent_slug": "dh-ops-kernel",
+  "prd_source": "/Users/jsy/Documents/PRDs/ARCHIVE/PRD-dh-ops.md",
+  "created_at": "2026-06-08T00:00:00Z",
+  "root_motivation": "LLMs should never perform arithmetic on result rows; returning JSON and asking the model to 'sum column X' is a stochastic correctness problem that silently drifts on multi-step operations. Moving all post-query operations server-side into a deterministic, unit-tested Rust kernel turns a correctness gamble into a guarantee — the same input always yields byte-identical output, and the guarantee is enforced by tests, not inference.",
+  "user_persona": "An MCP server (dh-mcp-server) calling dh-ops on behalf of an LLM client. The LLM picks which operation and parameters; dh-ops does all arithmetic server-side and returns only a new DatasetHandle + summary, never raw rows.",
+  "unfakeable_metric": {
+    "name": "tests_pass_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --release 2>&1 | grep -E '^test result'",
+    "target": 17
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "aggregate sum/mean/min/max/count/count_distinct each verified against hand-computed golden over a fixture dataset (one test per agg function).",
+      "test": "tests::ac1_aggregate_sum, ac1_aggregate_mean, ac1_aggregate_min, ac1_aggregate_max, ac1_aggregate_count, ac1_aggregate_count_distinct"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "filter with a compound AND/OR predicate returns exactly the expected row subset; numeric and string predicates both covered.",
+      "test": "tests::ac2_filter_compound_predicate, ac2_filter_string_predicate, ac2_filter_or_predicate"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "sort is stable and correct for multi-key asc/desc; top_n returns the right N and breaks ties deterministically (documented tie-break rule: smaller original row index wins).",
+      "test": "tests::ac3_sort_multi_key, ac3_top_n_deterministic_tiebreak"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "pivot produces the correct crosstab for a 2-dimension × 1-measure fixture.",
+      "test": "tests::ac4_pivot_crosstab"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "compare over two handles yields correct delta + pct-change and records a 2-parent lineage.",
+      "test": "tests::ac5_compare_delta_and_pct_change"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "drill expands a grouped row to its detail rows by walking lineage to the parent.",
+      "test": "tests::ac6_drill_expands_to_detail"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "Every op returns a NEW handle (never mutates input) and an OpResult whose summary contains no more than sample_cap rows.",
+      "test": "tests::ac7_new_handle_and_sample_cap"
+    },
+    {
+      "id": "AC8",
+      "level": "MUST",
+      "description": "Determinism: running any op twice on the same input yields byte-identical stored output.",
+      "test": "tests::ac8_determinism_byte_identical"
+    },
+    {
+      "id": "AC9",
+      "level": "MUST",
+      "description": "cargo test --release passes; cargo clippy --release -- -D warnings clean.",
+      "test": "cargo test --release && cargo clippy --release -- -D warnings"
+    }
+  ],
+  "scope": [
+    "Implement aggregate, filter, sort, top_n, pivot, compare, drill, describe as pure fn (Dataset, params) -> Dataset operations",
+    "Each op calls store.derive(...) to allocate a new handle; no op mutates input or returns raw rows",
+    "Operations must be deterministic: same input + same params => byte-identical output",
+    "Depend on dh-spec (DatasetHandle, ColumnSchema, DType, Capability, OpResult), dh-store (Store, Dataset, ColumnData), dh-summary (summarize, SummaryCfg)",
+    "Expose public API: one function per operation, all signature fn op(store: &mut Store, handle: &DatasetHandle, params: &Value) -> Result<OpResult, OpError>"
+  ],
+  "non_goals": [
+    "Returning raw rows to the caller — summaries only",
+    "Async or streaming execution",
+    "Query planning or SQL compilation (that is mqo-*)",
+    "Serving as an HTTP endpoint or MCP server (that is dh-mcp-server)",
+    "Schema inference or type coercion beyond what dh-spec already provides",
+    "Distributed / sharded execution"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "msrv": "1.70.0",
+    "max_deps": null,
+    "additional": {
+      "forbid_unsafe_code": true,
+      "deny_clippy_all_pedantic": true,
+      "no_raw_row_return": true,
+      "determinism_required": true
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why does the dh-* MCP fleet need a separate dh-ops crate?",
+      "a": "The MCP server needs to perform post-query transformations (aggregate, filter, sort, etc.) on cached dataset handles, and those operations must be deterministic and server-side."
+    },
+    {
+      "why": 2,
+      "q": "Why must the operations be deterministic and server-side?",
+      "a": "Asking an LLM to perform arithmetic on returned JSON rows is the LLM-as-calculator anti-pattern — the results drift silently on multi-step operations. Moving the math to Rust gives a testable guarantee."
+    },
+    {
+      "why": 3,
+      "q": "Why is a Rust library the right artifact (vs inline logic in dh-mcp-server)?",
+      "a": "Separating the operation kernel from the server boundary lets it be unit-tested in isolation with golden fixtures, and makes the determinism guarantees enforceable by tests, not by code review."
+    },
+    {
+      "why": 4,
+      "q": "Why do all operations share the same signature fn(store, handle, params) -> Result<OpResult, OpError>?",
+      "a": "A uniform signature means the MCP server can dispatch any operation through one code path, reducing dispatch logic to a single match arm per op name — no special cases per operation."
+    },
+    {
+      "why": 5,
+      "q": "Why does every operation return a new handle rather than mutating the input?",
+      "a": "Immutability enables the lineage graph (each handle knows its parents) which powers the drill operation — walking the graph back to the detail dataset. It also prevents cache invalidation races."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Does compare need to support multi-parent lineage in the Store API, or just encode handle_b in params?",
+      "resolution": "The current dh-store Store API is single-parent for derive(). Compare records handle_b in params (already present as 'handle_b') so the lineage is walkable via params inspection. A future multi-parent API is a non-goal for this PRD."
+    },
+    {
+      "question": "What is the tie-break rule for top_n?",
+      "resolution": "Smaller original row index wins. This is documented in the function doc-comment and verified in AC3 test."
+    }
+  ]
+}

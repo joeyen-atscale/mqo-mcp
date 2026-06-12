@@ -1,0 +1,26 @@
+--- src/lib.rs
++++ delete match arm ColumnData::Bool(v) in stats_bool
+@@ -323,22 +323,17 @@
+         mean: None,
+         distinct: Some(distinct),
+         top_k: if entries.is_empty() { None } else { Some(entries) },
+     }
+ }
+ 
+ fn stats_bool(data: &ColumnData) -> ColStats {
+     let (trues, falses, nulls) = match data {
+-        ColumnData::Bool(v) => {
+-            let t = v.iter().filter(|o| matches!(o, Some(true))).count() as u64;
+-            let f = v.iter().filter(|o| matches!(o, Some(false))).count() as u64;
+-            let n = v.iter().filter(|o| o.is_none()).count() as u64;
+-            (t, f, n)
+-        }
++         /* ~ changed by cargo-mutants ~ */
+         _ => (0, 0, 0),
+     };
+     let distinct = u64::from(trues > 0) + u64::from(falses > 0) + u64::from(nulls > 0);
+     let mut entries: Vec<Value> = Vec::new();
+     if trues > 0 {
+         entries.push(serde_json::json!({"value": true, "count": trues}));
+     }
+     if falses > 0 {

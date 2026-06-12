@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <ExecuteResponse xmlns="urn:schemas-microsoft-com:xml-analysis">
+      <return>
+        <root xmlns="urn:schemas-microsoft-com:xml-analysis:rowset"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+          <row>
+            <Product>Widget A</Product>
+            <Sales>10169858384.28</Sales>
+            <Notes>Best seller</Notes>
+          </row>
+          <row>
+            <Product>Widget B</Product>
+            <Sales>500.0</Sales>
+            <!-- Notes absent → Null -->
+          </row>
+          <row>
+            <Product>Widget C</Product>
+            <Sales></Sales>
+            <Notes>Discontinued</Notes>
+          </row>
+        </root>
+      </return>
+    </ExecuteResponse>
+  </soap:Body>
+</soap:Envelope>

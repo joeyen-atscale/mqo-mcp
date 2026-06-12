@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, "autobuilder/**" ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: Check + Clippy + Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust (MSRV)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.75.0"
+          components: clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      # Note: the sibling path deps (dh-spec, dh-store, etc.) are resolved from
+      # the parent directory in local development. In CI we need the published
+      # crates. The Cargo.toml uses path deps for local development; update to
+      # use published crates on crates.io once published.
+      - name: cargo check
+        run: cargo check --workspace
+
+      - name: cargo clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: cargo test (release)
+        run: cargo test --workspace --release
+        # Note: fleet binaries (mqo-bind, mqo-route, mqo-dax, mqo-mdx) are not
+        # present in CI; fleet-dependent ACs are mock-gated and will skip.

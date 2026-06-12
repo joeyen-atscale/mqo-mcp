@@ -1,0 +1,32 @@
+[
+  {
+    "task_id": "q001",
+    "arm": "handle",
+    "payload_summary": "handle=dh://sales/abc123 summary={rows:3,cols:2}; called dataset_aggregate(sum,revenue)",
+    "reported_answer": 5350000.0,
+    "error": null,
+    "n_retries": 0,
+    "latency_ms": 210,
+    "tokens": 850
+  },
+  {
+    "task_id": "q002",
+    "arm": "handle",
+    "payload_summary": "handle=dh://sales/def456 summary={rows:100,cols:3}; called dataset_aggregate(mean,order_value)",
+    "reported_answer": 245.50,
+    "error": null,
+    "n_retries": 0,
+    "latency_ms": 195,
+    "tokens": 780
+  },
+  {
+    "task_id": "q003",
+    "arm": "handle",
+    "payload_summary": "handle=dh://sales/ghi789 summary={rows:20,cols:2}; called dataset_top_k(units,1)",
+    "reported_answer": {"product": "Widget A", "units": 98000},
+    "error": null,
+    "n_retries": 0,
+    "latency_ms": 220,
+    "tokens": 900
+  }
+]

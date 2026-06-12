@@ -1,0 +1,34 @@
+{
+  "schema": "autobuilder.test_map.v1",
+  "mappings": [
+    {
+      "source": "src/lib.rs",
+      "tests": [
+        "src/lib.rs::tests::ac1_low_cardinality_routes_to_dax",
+        "src/lib.rs::tests::ac2_drill_through_routes_to_mdx",
+        "src/lib.rs::tests::ac2_asymmetric_axes_routes_to_mdx",
+        "src/lib.rs::tests::ac2_cellset_requested_routes_to_mdx",
+        "src/lib.rs::tests::ac3_high_cardinality_routes_to_sql_with_projection",
+        "src/lib.rs::tests::ac4_estimated_rows_is_product_of_level_cardinalities",
+        "src/lib.rs::tests::ac4_member_filter_reduces_cardinality",
+        "src/lib.rs::tests::ac4_unknown_level_defaults_to_cardinality_one",
+        "src/lib.rs::tests::ac4_no_dimensions_is_scalar_aggregate_one_row",
+        "src/lib.rs::tests::ac5_row_threshold_override_changes_routing_boundary",
+        "src/lib.rs::tests::ac5_threshold_boundary_exactly_at_threshold_is_dax",
+        "src/lib.rs::tests::error_on_no_measures",
+        "src/lib.rs::tests::sql_projection_includes_dims_and_measures",
+        "src/lib.rs::tests::mdx_flag_takes_priority_over_high_cardinality"
+      ]
+    },
+    {
+      "source": "src/main.rs",
+      "tests": [
+        "tests/integration_cli.rs::end_to_end_dax_routing",
+        "tests/integration_cli.rs::end_to_end_sql_routing",
+        "tests/integration_cli.rs::end_to_end_mdx_routing",
+        "tests/integration_cli.rs::error_on_missing_bound_file",
+        "tests/integration_cli.rs::error_on_no_measures_binary"
+      ]
+    }
+  ]
+}

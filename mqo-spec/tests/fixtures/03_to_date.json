@@ -1,0 +1,16 @@
+{
+  "model": "finance",
+  "measures": [
+    { "unique_name": "finance.headcount" }
+  ],
+  "dimensions": [
+    { "hierarchy": "date.fiscal", "level": "month" }
+  ],
+  "filters": [],
+  "time_intelligence": [
+    { "op": "to_date", "grain": "year" }
+  ],
+  "order": null,
+  "limit": null,
+  "non_empty": false
+}

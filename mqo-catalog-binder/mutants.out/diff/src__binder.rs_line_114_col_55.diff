@@ -1,0 +1,21 @@
+--- src/binder.rs
++++ replace == with != in resolve_level
+@@ -106,17 +106,17 @@
+     let level_key = sel.level.to_lowercase();
+ 
+     let candidates: Vec<&ColumnEntry> = columns
+         .iter()
+         .filter(|c| {
+             c.kind == "level"
+                 && c.hierarchy
+                     .as_deref()
+-                    .is_some_and(|h| h.to_lowercase() == hier_key)
++                    .is_some_and(|h| h.to_lowercase() != /* ~ changed by cargo-mutants ~ */ hier_key)
+                 && c.level
+                     .as_deref()
+                     .is_some_and(|l| l.to_lowercase() == level_key)
+         })
+         .collect();
+ 
+     match candidates.len() {
+         1 => Ok(candidates[0]),

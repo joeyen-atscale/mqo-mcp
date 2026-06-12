@@ -1,0 +1,37 @@
+{
+  "schema": "autobuilder.test_map.v1",
+  "project": "mqo-mdx-compiler",
+  "mappings": [
+    {
+      "source_path": "src/codegen.rs",
+      "test_refs": [
+        "src/tests.rs::ac1_*",
+        "src/tests.rs::ac2_*",
+        "src/tests.rs::ac3_*",
+        "src/tests.rs::ac4_*",
+        "src/tests.rs::ac5_*",
+        "src/codegen.rs::codegen_unit_tests::*",
+        "tests/integration_cli.rs::acceptance_cli_*"
+      ]
+    },
+    {
+      "source_path": "src/input.rs",
+      "test_refs": [
+        "src/tests.rs::ac1_*",
+        "src/tests.rs::ac5_*"
+      ]
+    },
+    {
+      "source_path": "src/lib.rs",
+      "test_refs": [
+        "src/tests.rs::*"
+      ]
+    },
+    {
+      "source_path": "src/main.rs",
+      "test_refs": [
+        "tests/integration_cli.rs::acceptance_cli_*"
+      ]
+    }
+  ]
+}

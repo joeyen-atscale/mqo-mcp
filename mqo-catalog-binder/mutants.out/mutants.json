@@ -1,0 +1,1022 @@
+[
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/main.rs",
+    "function": {
+      "function_name": "main",
+      "return_type": "",
+      "span": {
+        "start": {
+          "line": 37,
+          "column": 1
+        },
+        "end": {
+          "line": 77,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 38,
+        "column": 5
+      },
+      "end": {
+        "line": 76,
+        "column": 6
+      }
+    },
+    "replacement": "()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_measure",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 62,
+          "column": 1
+        },
+        "end": {
+          "line": 97,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 71,
+        "column": 5
+      },
+      "end": {
+        "line": 96,
+        "column": 6
+      }
+    },
+    "replacement": "Ok(Box::leak(Box::new(Default::default())))",
+    "genre": "FnValue"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_measure",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 62,
+          "column": 1
+        },
+        "end": {
+          "line": 97,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 76,
+        "column": 41
+      },
+      "end": {
+        "line": 76,
+        "column": 43
+      }
+    },
+    "replacement": "||",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_measure",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 62,
+          "column": 1
+        },
+        "end": {
+          "line": 97,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 76,
+        "column": 28
+      },
+      "end": {
+        "line": 76,
+        "column": 30
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_measure",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 62,
+          "column": 1
+        },
+        "end": {
+          "line": 97,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 76,
+        "column": 73
+      },
+      "end": {
+        "line": 76,
+        "column": 75
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_measure",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 62,
+          "column": 1
+        },
+        "end": {
+          "line": 97,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 79,
+        "column": 24
+      },
+      "end": {
+        "line": 79,
+        "column": 26
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_measure",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 62,
+          "column": 1
+        },
+        "end": {
+          "line": 97,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 82,
+        "column": 24
+      },
+      "end": {
+        "line": 82,
+        "column": 25
+      }
+    },
+    "replacement": "==",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_measure",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 62,
+          "column": 1
+        },
+        "end": {
+          "line": 97,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 82,
+        "column": 24
+      },
+      "end": {
+        "line": 82,
+        "column": 25
+      }
+    },
+    "replacement": "<",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_measure",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 62,
+          "column": 1
+        },
+        "end": {
+          "line": 97,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 82,
+        "column": 24
+      },
+      "end": {
+        "line": 82,
+        "column": 25
+      }
+    },
+    "replacement": ">=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_measure",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 62,
+          "column": 1
+        },
+        "end": {
+          "line": 97,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 89,
+        "column": 41
+      },
+      "end": {
+        "line": 89,
+        "column": 43
+      }
+    },
+    "replacement": "||",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_measure",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 62,
+          "column": 1
+        },
+        "end": {
+          "line": 97,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 89,
+        "column": 28
+      },
+      "end": {
+        "line": 89,
+        "column": 30
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_measure",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 62,
+          "column": 1
+        },
+        "end": {
+          "line": 97,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 89,
+        "column": 67
+      },
+      "end": {
+        "line": 89,
+        "column": 69
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_measure",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 62,
+          "column": 1
+        },
+        "end": {
+          "line": 97,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 93,
+        "column": 9
+      },
+      "end": {
+        "line": 93,
+        "column": 30
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_measure",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 62,
+          "column": 1
+        },
+        "end": {
+          "line": 97,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 94,
+        "column": 9
+      },
+      "end": {
+        "line": 94,
+        "column": 26
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_level",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 99,
+          "column": 1
+        },
+        "end": {
+          "line": 126,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 105,
+        "column": 5
+      },
+      "end": {
+        "line": 125,
+        "column": 6
+      }
+    },
+    "replacement": "Ok(Box::leak(Box::new(Default::default())))",
+    "genre": "FnValue"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_level",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 99,
+          "column": 1
+        },
+        "end": {
+          "line": 126,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 115,
+        "column": 17
+      },
+      "end": {
+        "line": 115,
+        "column": 19
+      }
+    },
+    "replacement": "||",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_level",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 99,
+          "column": 1
+        },
+        "end": {
+          "line": 126,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 112,
+        "column": 17
+      },
+      "end": {
+        "line": 112,
+        "column": 19
+      }
+    },
+    "replacement": "||",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_level",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 99,
+          "column": 1
+        },
+        "end": {
+          "line": 126,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 111,
+        "column": 20
+      },
+      "end": {
+        "line": 111,
+        "column": 22
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_level",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 99,
+          "column": 1
+        },
+        "end": {
+          "line": 126,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 114,
+        "column": 55
+      },
+      "end": {
+        "line": 114,
+        "column": 57
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_level",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 99,
+          "column": 1
+        },
+        "end": {
+          "line": 126,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 117,
+        "column": 55
+      },
+      "end": {
+        "line": 117,
+        "column": 57
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_level",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 99,
+          "column": 1
+        },
+        "end": {
+          "line": 126,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 122,
+        "column": 9
+      },
+      "end": {
+        "line": 122,
+        "column": 32
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "resolve_level",
+      "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+      "span": {
+        "start": {
+          "line": 99,
+          "column": 1
+        },
+        "end": {
+          "line": 126,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 123,
+        "column": 9
+      },
+      "end": {
+        "line": 123,
+        "column": 26
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "bind",
+      "return_type": "-> BindResult",
+      "span": {
+        "start": {
+          "line": 130,
+          "column": 1
+        },
+        "end": {
+          "line": 261,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 143,
+        "column": 5
+      },
+      "end": {
+        "line": 260,
+        "column": 8
+      }
+    },
+    "replacement": "Default::default()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "bind",
+      "return_type": "-> BindResult",
+      "span": {
+        "start": {
+          "line": 130,
+          "column": 1
+        },
+        "end": {
+          "line": 261,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 165,
+        "column": 32
+      },
+      "end": {
+        "line": 165,
+        "column": 53
+      }
+    },
+    "replacement": "true",
+    "genre": "MatchArmGuard"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "bind",
+      "return_type": "-> BindResult",
+      "span": {
+        "start": {
+          "line": 130,
+          "column": 1
+        },
+        "end": {
+          "line": 261,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 165,
+        "column": 32
+      },
+      "end": {
+        "line": 165,
+        "column": 53
+      }
+    },
+    "replacement": "false",
+    "genre": "MatchArmGuard"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "bind",
+      "return_type": "-> BindResult",
+      "span": {
+        "start": {
+          "line": 130,
+          "column": 1
+        },
+        "end": {
+          "line": 261,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 191,
+        "column": 32
+      },
+      "end": {
+        "line": 191,
+        "column": 53
+      }
+    },
+    "replacement": "true",
+    "genre": "MatchArmGuard"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "bind",
+      "return_type": "-> BindResult",
+      "span": {
+        "start": {
+          "line": 130,
+          "column": 1
+        },
+        "end": {
+          "line": 261,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 191,
+        "column": 32
+      },
+      "end": {
+        "line": 191,
+        "column": 53
+      }
+    },
+    "replacement": "false",
+    "genre": "MatchArmGuard"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "bind",
+      "return_type": "-> BindResult",
+      "span": {
+        "start": {
+          "line": 130,
+          "column": 1
+        },
+        "end": {
+          "line": 261,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 220,
+        "column": 25
+      },
+      "end": {
+        "line": 220,
+        "column": 27
+      }
+    },
+    "replacement": "||",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "bind",
+      "return_type": "-> BindResult",
+      "span": {
+        "start": {
+          "line": 130,
+          "column": 1
+        },
+        "end": {
+          "line": 261,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 219,
+        "column": 49
+      },
+      "end": {
+        "line": 219,
+        "column": 51
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "bind",
+      "return_type": "-> BindResult",
+      "span": {
+        "start": {
+          "line": 130,
+          "column": 1
+        },
+        "end": {
+          "line": 261,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 220,
+        "column": 57
+      },
+      "end": {
+        "line": 220,
+        "column": 59
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "bind",
+      "return_type": "-> BindResult",
+      "span": {
+        "start": {
+          "line": 130,
+          "column": 1
+        },
+        "end": {
+          "line": 261,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 225,
+        "column": 17
+      },
+      "end": {
+        "line": 233,
+        "column": 18
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "bind",
+      "return_type": "-> BindResult",
+      "span": {
+        "start": {
+          "line": 130,
+          "column": 1
+        },
+        "end": {
+          "line": 261,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 234,
+        "column": 17
+      },
+      "end": {
+        "line": 236,
+        "column": 18
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "bind",
+      "return_type": "-> BindResult",
+      "span": {
+        "start": {
+          "line": 130,
+          "column": 1
+        },
+        "end": {
+          "line": 261,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 248,
+        "column": 8
+      },
+      "end": {
+        "line": 248,
+        "column": 9
+      }
+    },
+    "replacement": "",
+    "genre": "UnaryOperator"
+  },
+  {
+    "package": "mqo-catalog-binder",
+    "file": "src/binder.rs",
+    "function": {
+      "function_name": "bind",
+      "return_type": "-> BindResult",
+      "span": {
+        "start": {
+          "line": 130,
+          "column": 1
+        },
+        "end": {
+          "line": 261,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 251,
+        "column": 8
+      },
+      "end": {
+        "line": 251,
+        "column": 9
+      }
+    },
+    "replacement": "",
+    "genre": "UnaryOperator"
+  }
+]

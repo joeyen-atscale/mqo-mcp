@@ -1,0 +1,230 @@
+
+*** src/binder.rs:143:5: replace bind -> BindResult with Default::default()
+
+*** mutation diff:
+--- src/binder.rs
++++ replace bind -> BindResult with Default::default()
+@@ -135,134 +135,17 @@
+ ///
+ /// If any ref is ambiguous, returns `BindResult::Ambiguous`.
+ /// If any ref is missing (and none are ambiguous), returns `BindResult::NotFound`.
+ /// Only if all refs resolve returns `BindResult::Bound`.
+ ///
+ /// Priority: ambiguous > `not_found` > bound (i.e., if both exist, ambiguous wins).
+ #[allow(clippy::too_many_lines)]
+ pub fn bind(mqo: &Mqo, snapshot: &CatalogSnapshot) -> BindResult {
+-    let mut ambiguous: Vec<Value> = vec![];
+-    let mut not_found: Vec<String> = vec![];
+-
+-    // ── Resolve measures ──────────────────────────────────────────────────
+-    let mut bound_measures: Vec<BoundMeasureExt> = vec![];
+-
+-    for m_ref in &mqo.measures {
+-        match resolve_measure(&m_ref.unique_name, &snapshot.columns) {
+-            Ok(entry) => {
+-                let (semi_additive, trigger_hierarchies) = entry
+-                    .semi_additive
+-                    .as_ref()
+-                    .map_or((false, vec![]), |sa| (true, sa.trigger_hierarchies.clone()));
+-
+-                bound_measures.push(BoundMeasureExt {
+-                    unique_name: entry.unique_name.clone(),
+-                    is_calc: entry.is_calc,
+-                    semi_additive,
+-                    trigger_hierarchies,
+-                    required_dimension: entry.required_dimension.clone(),
+-                });
+-            }
+-            Err(candidates) if candidates.is_empty() => {
+-                not_found.push(m_ref.unique_name.clone());
+-            }
+-            Err(candidates) => {
+-                ambiguous.push(serde_json::json!({
+-                    "ref": m_ref.unique_name,
+-                    "candidates": candidates.iter().map(|c| &c.unique_name).collect::<Vec<_>>(),
+-                }));
+-            }
+-        }
+-    }
+-
+-    // ── Resolve dimensions ────────────────────────────────────────────────
+-    let mut bound_dimensions: Vec<BoundDimensionExt> = vec![];
+-
+-    for sel in &mqo.dimensions {
+-        match resolve_level(sel, &snapshot.columns) {
+-            Ok(entry) => {
+-                bound_dimensions.push(BoundDimensionExt {
+-                    unique_name: entry.unique_name.clone(),
+-                    hierarchy: entry
+-                        .hierarchy
+-                        .clone()
+-                        .unwrap_or_else(|| sel.hierarchy.clone()),
+-                });
+-            }
+-            Err(candidates) if candidates.is_empty() => {
+-                not_found.push(format!("dimension {}:{}", sel.hierarchy, sel.level));
+-            }
+-            Err(candidates) => {
+-                ambiguous.push(serde_json::json!({
+-                    "ref": format!("dimension {}:{}", sel.hierarchy, sel.level),
+-                    "candidates": candidates.iter().map(|c| &c.unique_name).collect::<Vec<_>>(),
+-                }));
+-            }
+-        }
+-    }
+-
+-    // ── Resolve CalcGroupMember filters ───────────────────────────────────
+-    let mut bound_calc_group_members: Vec<BoundCalcGroupMember> = vec![];
+-
+-    for filter in &mqo.filters {
+-        if let Filter::CalcGroupMember { calc_group, member } = filter {
+-            let group_key = calc_group.to_lowercase();
+-            let member_key = member.to_lowercase();
+-
+-            let calc_entries = snapshot
+-                .describe_model
+-                .as_ref()
+-                .map_or(&[][..], |dm| dm.calc_groups.as_slice());
+-
+-            let matches: Vec<_> = calc_entries
+-                .iter()
+-                .filter(|e| {
+-                    e.group_name.to_lowercase() == group_key
+-                        && e.member_name.to_lowercase() == member_key
+-                })
+-                .collect();
+-
+-            match matches.len() {
+-                1 => {
+-                    let e = matches[0];
+-                    bound_calc_group_members.push(BoundCalcGroupMember {
+-                        calc_group: calc_group.clone(),
+-                        member: member.clone(),
+-                        unique_name: e.unique_name.clone(),
+-                        mdx: e.mdx.clone(),
+-                    });
+-                }
+-                0 => {
+-                    not_found.push(format!("calc_group_member {calc_group}::{member}"));
+-                }
+-                _ => {
+-                    ambiguous.push(serde_json::json!({
+-                        "ref": format!("calc_group_member {calc_group}::{member}"),
+-                        "candidates": matches.iter().map(|e| &e.unique_name).collect::<Vec<_>>(),
+-                    }));
+-                }
+-            }
+-        }
+-    }
+-
+-    // ── Collate results ───────────────────────────────────────────────────
+-    if !ambiguous.is_empty() {
+-        return BindResult::Ambiguous(ambiguous);
+-    }
+-    if !not_found.is_empty() {
+-        return BindResult::NotFound(not_found);
+-    }
+-
+-    BindResult::Bound(Box::new(BoundMqoOutput {
+-        mqo: mqo.clone(),
+-        measures: bound_measures,
+-        dimensions: bound_dimensions,
+-        calc_group_members: bound_calc_group_members,
+-    }))
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ #[cfg(test)]
+ mod binder_unit_tests {
+     use super::*;
+     use crate::catalog::{CalcGroupEntry, ColumnEntry, DescribeModelOutput, SemiAdditiveInfo};
+     use mqo_spec::{Filter, LevelSelection, MeasureRef, Mqo};
+ 
+
+
+*** /Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo test --no-run --verbose --package=mqo-catalog-binder@0.1.0
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+       Fresh unicode-ident v1.0.24
+       Fresh utf8parse v0.2.2
+       Fresh bitflags v2.13.0
+       Fresh is_terminal_polyfill v1.70.2
+       Fresh proc-macro2 v1.0.106
+       Fresh anstyle-parse v1.0.0
+       Fresh colorchoice v1.0.5
+       Fresh memchr v2.8.1
+       Fresh quote v1.0.45
+       Fresh libc v0.2.186
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh anstyle-query v1.1.5
+       Fresh itoa v1.0.18
+       Fresh anstyle v1.0.14
+       Fresh dyn-clone v1.0.20
+       Fresh syn v2.0.117
+       Fresh errno v0.3.14
+       Fresh serde_json v1.0.150
+       Fresh anstream v1.0.0
+       Fresh heck v0.5.0
+       Fresh strsim v0.11.1
+       Fresh clap_lex v1.1.0
+       Fresh serde_derive_internals v0.29.1
+       Fresh serde_derive v1.0.228
+       Fresh thiserror-impl v1.0.69
+       Fresh clap_derive v4.6.1
+       Fresh clap_builder v4.6.0
+       Fresh cfg-if v1.0.4
+       Fresh home v0.5.9
+       Fresh either v1.16.0
+       Fresh fastrand v2.4.1
+       Fresh serde v1.0.228
+       Fresh schemars_derive v0.8.22
+       Fresh thiserror v1.0.69
+       Fresh rustix v1.1.4
+       Fresh rustix v0.38.44
+       Fresh clap v4.6.1
+       Fresh getrandom v0.4.2
+       Fresh once_cell v1.21.4
+       Fresh schemars v0.8.22
+       Fresh tempfile v3.27.0
+       Fresh which v4.4.2
+       Fresh mqo-spec v0.1.0 (/Users/jsy/Documents/projects/mqo-spec)
+       Dirty mqo-catalog-binder v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp): the file `src/binder.rs` has changed (1780953110.145550767s, 1s after last build at 1780953109.271966276s)
+   Compiling mqo-catalog-binder v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp)
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name mqo_bind --edition=2021 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=d7fb12093d750339 -C extra-filename=-15b3bf2cb7ca4e4d --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps --extern clap=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libclap-6ef1bb7bc880f55c.rlib --extern mqo_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libmqo_spec-7e26b3d78a7ff47c.rlib --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libserde-41903c5ca0372620.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib --extern tempfile=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libtempfile-ddf7a7aec14428d5.rlib --extern which=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libwhich-0d45d2f130598e30.rlib`
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name mqo_bind --edition=2021 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=8707073cd8a39173 -C extra-filename=-fc2049b68e3304bb --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps --extern clap=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libclap-6ef1bb7bc880f55c.rlib --extern mqo_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libmqo_spec-7e26b3d78a7ff47c.rlib --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libserde-41903c5ca0372620.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib`
+warning: unused import: `Filter`
+ --> src/binder.rs:4:16
+  |
+4 | use mqo_spec::{Filter, LevelSelection, Mqo};
+  |                ^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+
+error[E0277]: the trait bound `binder::BindResult: Default` is not satisfied
+   --> src/binder.rs:143:5
+    |
+143 |     Default::default() /* ~ changed by cargo-mutants ~ */
+    |     ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `binder::BindResult`
+
+error[E0277]: the trait bound `BindResult: Default` is not satisfied
+   --> src/binder.rs:143:5
+    |
+143 |     Default::default() /* ~ changed by cargo-mutants ~ */
+    |     ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `BindResult`
+
+For more information about this error, try `rustc --explain E0277`.
+warning: `mqo-catalog-binder` (bin "mqo-bind") generated 1 warning (1 duplicate)
+error: could not compile `mqo-catalog-binder` (bin "mqo-bind") due to 1 previous error; 1 warning emitted
+
+Caused by:
+  process didn't exit successfully: `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name mqo_bind --edition=2021 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=8707073cd8a39173 -C extra-filename=-fc2049b68e3304bb --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps --extern clap=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libclap-6ef1bb7bc880f55c.rlib --extern mqo_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libmqo_spec-7e26b3d78a7ff47c.rlib --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libserde-41903c5ca0372620.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib` (exit status: 1)
+warning: build failed, waiting for other jobs to finish...
+warning: `mqo-catalog-binder` (bin "mqo-bind" test) generated 1 warning
+error: could not compile `mqo-catalog-binder` (bin "mqo-bind" test) due to 1 previous error; 1 warning emitted
+
+Caused by:
+  process didn't exit successfully: `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name mqo_bind --edition=2021 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=d7fb12093d750339 -C extra-filename=-15b3bf2cb7ca4e4d --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps --extern clap=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libclap-6ef1bb7bc880f55c.rlib --extern mqo_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libmqo_spec-7e26b3d78a7ff47c.rlib --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libserde-41903c5ca0372620.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib --extern tempfile=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libtempfile-ddf7a7aec14428d5.rlib --extern which=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-Zkd03S.tmp/target/debug/deps/libwhich-0d45d2f130598e30.rlib` (exit status: 1)
+
+*** result: Failure(101)

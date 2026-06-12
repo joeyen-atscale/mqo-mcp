@@ -1,0 +1,21 @@
+--- src/lib.rs
++++ replace > with >= in enforce_max_bytes
+@@ -490,17 +490,17 @@
+ ) -> DatasetSummary {
+     // Fast path: already within budget.
+     if serialized_len(&summary) <= cfg.max_bytes {
+         return summary;
+     }
+ 
+     // Progressive truncation: remove tail rows one at a time.
+     let original_sample_len = summary.sample.len();
+-    while !summary.sample.is_empty() && serialized_len(&summary) > cfg.max_bytes {
++    while !summary.sample.is_empty() && serialized_len(&summary) >= /* ~ changed by cargo-mutants ~ */ cfg.max_bytes {
+         summary.sample.pop();
+     }
+ 
+     // Add a truncation note if we removed anything.
+     let new_sample_len = summary.sample.len();
+     if new_sample_len < original_sample_len {
+         let note = format!(
+             "sample truncated from {} to {} rows to fit max_bytes={} (full result: {} rows)",

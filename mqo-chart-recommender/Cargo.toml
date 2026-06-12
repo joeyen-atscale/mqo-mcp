@@ -1,0 +1,80 @@
+[package]
+name = "mqo-chart-recommender"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Chart type + encoding recommendation from result-profile.v1 for the bi-toolkit"
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_must_use = "deny"
+unreachable_pub = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+indexing_slicing = "warn"
+mem_forget = "deny"
+as_conversions = "warn"
+float_arithmetic = "warn"
+dbg_macro = "deny"
+print_stdout = "warn"
+print_stderr = "warn"
+
+module_name_repetitions = "allow"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+panic = "abort"
+
+[lib]
+name = "mqo_chart_recommender"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mqo-chart-recommender"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+proptest = "1"
+
+[build-dependencies]
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+
+# Binary-only dep: clap (only linked in the [[bin]] target)
+# We keep it in [dependencies] because Cargo doesn't allow per-target
+# dev-dependencies for binaries in a lib+bin crate; we gate it with
+# a feature so the lib remains clap-free.
+clap = { version = "4", features = ["derive"], optional = true }
+
+[features]
+default = ["cli"]
+cli = ["dep:clap"]

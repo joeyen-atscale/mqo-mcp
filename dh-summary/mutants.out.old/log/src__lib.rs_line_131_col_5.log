@@ -1,0 +1,190 @@
+
+*** src/lib.rs:131:5: replace build_sample -> Vec<Row> with vec![]
+
+*** mutation diff:
+--- src/lib.rs
++++ replace build_sample -> Vec<Row> with vec![]
+@@ -123,37 +123,17 @@
+     caps.push(Capability::Export);
+     caps
+ }
+ 
+ // ── Internal helpers ────────────────────────────────────────────────────────
+ 
+ /// Build the head+tail sample, capped at `sample_cap` total rows.
+ fn build_sample(dataset: &Dataset, sample_cap: usize) -> Vec<Row> {
+-    let n = dataset.row_count();
+-    if n == 0 || sample_cap == 0 {
+-        return Vec::new();
+-    }
+-
+-    let head_count = (sample_cap + 1) / 2; // ceiling half
+-    let tail_count = sample_cap / 2;
+-
+-    // Which row indices to include (deduped, in order)
+-    let mut indices: Vec<usize> = Vec::with_capacity(sample_cap);
+-    for i in 0..head_count.min(n) {
+-        indices.push(i);
+-    }
+-    if tail_count > 0 {
+-        let tail_start = n.saturating_sub(tail_count).max(head_count.min(n));
+-        for i in tail_start..n {
+-            indices.push(i);
+-        }
+-    }
+-
+-    indices.iter().map(|&row_idx| row_to_map(dataset, row_idx)).collect()
++    vec![] /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Convert a single row index into a `Row` (`HashMap`<String, Value>).
+ fn row_to_map(dataset: &Dataset, row_idx: usize) -> Row {
+     let mut map = Row::new();
+     for (col, data) in dataset.columns.iter().zip(dataset.data.iter()) {
+         let val = extract_value(data, row_idx);
+         map.insert(col.name.clone(), val);
+
+
+*** /Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo test --no-run --verbose --package=dh-summary@0.1.0
+       Fresh unicode-ident v1.0.24
+       Fresh itoa v1.0.18
+       Fresh proc-macro2 v1.0.106
+       Fresh memchr v2.8.1
+       Fresh quote v1.0.45
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh libc v0.2.186
+       Fresh dyn-clone v1.0.20
+       Fresh cfg-if v1.0.4
+       Fresh syn v2.0.117
+       Fresh serde_json v1.0.150
+       Fresh getrandom v0.4.2
+       Fresh serde_derive_internals v0.29.1
+       Fresh serde_derive v1.0.228
+       Fresh uuid v1.23.2
+       Fresh serde v1.0.228
+       Fresh schemars_derive v0.8.22
+       Fresh schemars v0.8.22
+       Fresh dh-spec v0.1.0 (/Users/jsy/Documents/projects/dh-spec)
+       Fresh dh-store v0.1.0 (/Users/jsy/Documents/projects/dh-store)
+       Dirty dh-summary v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp): the file `src/lib.rs` has changed (1780953593.349433660s, 2s after last build at 1780953591.409934215s)
+   Compiling dh-summary v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp)
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name dh_summary --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=343947f4240e2b9c -C extra-filename=-5243533f63ef4209 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rlib --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib`
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name dh_summary --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=78d698b9a149721f -C extra-filename=-bd59e07e1bc4c303 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rmeta --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rmeta --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rmeta`
+warning: unused variable: `dataset`
+   --> src/lib.rs:130:17
+    |
+130 | fn build_sample(dataset: &Dataset, sample_cap: usize) -> Vec<Row> {
+    |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_dataset`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `sample_cap`
+   --> src/lib.rs:130:36
+    |
+130 | fn build_sample(dataset: &Dataset, sample_cap: usize) -> Vec<Row> {
+    |                                    ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_sample_cap`
+
+warning: function `row_to_map` is never used
+   --> src/lib.rs:135:4
+    |
+135 | fn row_to_map(dataset: &Dataset, row_idx: usize) -> Row {
+    |    ^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: function `extract_value` is never used
+   --> src/lib.rs:145:4
+    |
+145 | fn extract_value(data: &ColumnData, row_idx: usize) -> Value {
+    |    ^^^^^^^^^^^^^
+
+warning: `dh-summary` (lib) generated 4 warnings
+warning: `dh-summary` (lib test) generated 4 warnings (4 duplicates)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.30s
+  Executable `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps/dh_summary-5243533f63ef4209`
+
+*** result: Success
+
+*** /Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo test --verbose --package=dh-summary@0.1.0
+       Fresh unicode-ident v1.0.24
+       Fresh itoa v1.0.18
+       Fresh memchr v2.8.1
+       Fresh proc-macro2 v1.0.106
+       Fresh dyn-clone v1.0.20
+       Fresh quote v1.0.45
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh libc v0.2.186
+       Fresh cfg-if v1.0.4
+       Fresh syn v2.0.117
+       Fresh serde_json v1.0.150
+       Fresh getrandom v0.4.2
+       Fresh serde_derive_internals v0.29.1
+       Fresh serde_derive v1.0.228
+       Fresh uuid v1.23.2
+       Fresh serde v1.0.228
+       Fresh schemars_derive v0.8.22
+       Fresh schemars v0.8.22
+       Fresh dh-spec v0.1.0 (/Users/jsy/Documents/projects/dh-spec)
+       Fresh dh-store v0.1.0 (/Users/jsy/Documents/projects/dh-store)
+warning: unused variable: `dataset`
+   --> src/lib.rs:130:17
+    |
+130 | fn build_sample(dataset: &Dataset, sample_cap: usize) -> Vec<Row> {
+    |                 ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_dataset`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `sample_cap`
+   --> src/lib.rs:130:36
+    |
+130 | fn build_sample(dataset: &Dataset, sample_cap: usize) -> Vec<Row> {
+    |                                    ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_sample_cap`
+
+warning: function `row_to_map` is never used
+   --> src/lib.rs:135:4
+    |
+135 | fn row_to_map(dataset: &Dataset, row_idx: usize) -> Row {
+    |    ^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: function `extract_value` is never used
+   --> src/lib.rs:145:4
+    |
+145 | fn extract_value(data: &ColumnData, row_idx: usize) -> Value {
+    |    ^^^^^^^^^^^^^
+
+warning: `dh-summary` (lib) generated 4 warnings
+warning: `dh-summary` (lib test) generated 4 warnings (4 duplicates)
+       Fresh dh-summary v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps/dh_summary-5243533f63ef4209`
+
+running 7 tests
+test tests::ac4_capabilities_pivot_rule ... ok
+test tests::ac3_categorical_topk_and_date_span ... ok
+test tests::ac7_round_trip_serialization ... ok
+test tests::ac2_numeric_stats_golden ... ok
+test tests::ac5_notes_nulls_and_dominant_group ... ok
+test tests::ac1_large_dataset_sample_and_size_bounds ... ok
+test tests::ac6_max_bytes_truncates_sample_not_stats ... FAILED
+
+failures:
+
+---- tests::ac6_max_bytes_truncates_sample_not_stats stdout ----
+
+thread 'tests::ac6_max_bytes_truncates_sample_not_stats' panicked at src/lib.rs:493:5:
+even the zero-sample summary exceeds max_bytes=950 — increase max_bytes
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::ac6_max_bytes_truncates_sample_not_stats
+
+test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p dh-summary --lib`
+
+*** result: Failure(101)

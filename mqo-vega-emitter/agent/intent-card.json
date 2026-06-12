@@ -1,0 +1,115 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "intent_slug": "mqo-vega-emitter",
+  "prd_source": "/Users/jsy/Documents/PRDs/PRD-mqo-vega-emitter.md",
+  "root_motivation": "The MQO bi-toolkit chain (recommender → emitter → bundle) needs a deterministic last hop that converts a typed chart-recommendation.v1 + rows into a renderer-ready Vega-Lite v5 JSON spec, so an LLM orchestrating 'chart this' never hand-assembles VL5 JSON and guesses at schema URLs, type keywords, or aggregation rules.",
+  "user_persona": "An LLM orchestrator (or human developer) running inside the mqo-mcp-server bi-toolkit pipeline; calls emit(recommendation, rows) and hands the returned spec to any VL5 renderer or downstream bundle step.",
+  "unfakeable_metric": {
+    "name": "acceptance_tests_passing_count",
+    "lower_is_better": false,
+    "harness_command": "bash scripts/run-metrics.sh",
+    "target": 7
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "A Line recommendation (x=year temporal, y=revenue quantitative) over matching rows emits a spec with $schema pointing at VL5, mark:'line', encoding.x.field=='year' with type temporal, and encoding.y.field=='revenue' with type quantitative.",
+      "test": "tests/ac1_line_spec.rs"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "data.values equals the input rows verbatim (inline embedding, no mutation or reordering of row objects).",
+      "test": "tests/ac2_inline_data.rs"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "A Bar recommendation emits mark:'bar' with the nominal field on the x channel.",
+      "test": "tests/ac3_bar_spec.rs"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "An encoding channel referencing a field absent from every row returns EmitError (does not emit a broken spec that renders blank).",
+      "test": "tests/ac4_missing_field_refused.rs"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "A BigNumber recommendation emits a 'text'-mark spec with the measure field in encoding.text.",
+      "test": "tests/ac5_bignumber_spec.rs"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "A quantitative y-channel gets aggregate:'sum' by default, but a semi_additive measure does NOT get aggregate:'sum'.",
+      "test": "tests/ac6_semi_additive_no_sum.rs"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "The emitted spec is deterministic and round-trips through serde_json without key-reordering surprises (stable object key order via a fixed struct).",
+      "test": "tests/ac7_deterministic.rs"
+    }
+  ],
+  "scope": [
+    "Pure Rust library: emit(recommendation, rows) -> Result<serde_json::Value, EmitError>",
+    "Map chart-recommendation.v1 mark + encoding channels to Vega-Lite v5 JSON spec",
+    "Embed rows verbatim under data.values",
+    "Apply aggregate:sum for quantitative channels (unless semi_additive)",
+    "Refuse to emit if any encoding channel references a field absent from every row",
+    "Handle BigNumber mark as text-mark with encoding.text",
+    "Handle Table mark as text-mark + _render:table extension key",
+    "Thin bin: mqo-vega-emitter --recommendation <f> --rows <f> [--pretty]"
+  ],
+  "non_goals": [
+    "No rendering: no PNG, SVG, browser, or vl-convert dependency",
+    "Does not call the mqo-chart-recommender crate — reads chart-recommendation.v1 as raw JSON",
+    "No network access of any kind",
+    "No live render feature (--render is an explicit out-of-scope future feature flag)",
+    "Does not validate the full VL5 spec against the JSON Schema (structural assembly only)",
+    "No Python/JS/WASM bindings in v1"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2024",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 4,
+    "msrv": "1.85",
+    "additional": {
+      "no_network": true,
+      "no_render_dep": true,
+      "semi_additive_guard": "A semi_additive quantitative channel must never receive aggregate:sum"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why build a Vega-Lite spec emitter?",
+      "a": "The MQO pipeline has chart-recommendation.v1 + rows but no step that turns them into a renderer-ready spec."
+    },
+    {
+      "why": 2,
+      "q": "Why can't the LLM just assemble the VL5 JSON itself?",
+      "a": "LLMs guess at the $schema URL, data_type keyword spelling, and whether to add aggregate, producing specs that render blank or lie; a deterministic function eliminates all three failure modes."
+    },
+    {
+      "why": 3,
+      "q": "Why does a blank-rendering spec matter?",
+      "a": "The LLM trusts the spec it emitted; a blank chart looks like no data, not a bug, so the error is invisible and silently propagates downstream to the bi-asset-bundle."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Should the emitter depend on the mqo-chart-recommender Rust crate?",
+      "resolution": "No. Reads chart-recommendation.v1 as serde_json::Value. This keeps the dep tree minimal and avoids a circular path dep."
+    },
+    {
+      "question": "What aggregate should a Table mark get?",
+      "resolution": "Table emits mark:'text' + _render:'table' extension key. It does not need aggregate logic — the consumer renders the raw rows as a grid."
+    }
+  ],
+  "created_at": "2026-06-09T00:00:00Z"
+}

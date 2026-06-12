@@ -1,0 +1,25 @@
+{
+  "schema": "autobuilder.owner_map.v1",
+  "owners": [
+    {
+      "glob": "src/**",
+      "owner": "joe.yen@atscale.com",
+      "role": "implementer"
+    },
+    {
+      "glob": "tests/**",
+      "owner": "joe.yen@atscale.com",
+      "role": "test-author"
+    },
+    {
+      "glob": "agent/**",
+      "owner": "autobuilder",
+      "role": "orchestrator"
+    },
+    {
+      "glob": "scripts/**",
+      "owner": "autobuilder",
+      "role": "harness"
+    }
+  ]
+}

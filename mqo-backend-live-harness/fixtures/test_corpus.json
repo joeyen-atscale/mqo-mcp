@@ -1,0 +1,31 @@
+{
+  "version": "parity-corpus.v1",
+  "catalog": "tpcds",
+  "cases": [
+    {
+      "case_id": "tpcds_benchmark_model_total_store_sales__total",
+      "mqo": {
+        "measures": ["store_sales.total_store_sales"],
+        "catalog": "tpcds",
+        "model": "tpcds"
+      },
+      "measures": ["store_sales.total_store_sales"],
+      "grain": "total",
+      "model_entities_touched": ["store_sales.total_store_sales"],
+      "has_grounding": false
+    },
+    {
+      "case_id": "tpcds_benchmark_model_total_store_sales__year",
+      "mqo": {
+        "measures": ["store_sales.total_store_sales"],
+        "dimensions": ["date_dim.year"],
+        "catalog": "tpcds",
+        "model": "tpcds"
+      },
+      "measures": ["store_sales.total_store_sales"],
+      "grain": "year",
+      "model_entities_touched": ["store_sales.total_store_sales", "date_dim.year"],
+      "has_grounding": false
+    }
+  ]
+}

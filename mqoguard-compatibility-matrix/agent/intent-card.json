@@ -1,0 +1,120 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "prd_source": "/Users/jsy/Documents/PRDs/PRD-mqoguard-compatibility-matrix.md",
+  "intent_slug": "mqoguard-compatibility-matrix",
+  "root_motivation": "AI agents constructing MQOs over AtScale models fail to determine which (measure, hierarchy) pairs are queryable because describe_model exposes a flat column list without the compatibility relation. A structured, derivable compatibility matrix embedded in describe_model output eliminates the hand-maintained prose table and gives agents a deterministic lookup instead of recalling from a wall of text.",
+  "user_persona": "AI agent (subagent in mcp-tuner benchmark) constructing MQOs via describe_model; data engineer operating mqo-mcp-server who maintains model correctness across catalog refreshes.",
+  "unfakeable_metric": {
+    "name": "acceptance_tests_passing_count",
+    "lower_is_better": false,
+    "harness_command": "bash scripts/run-metrics.sh",
+    "target": 7
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "Given enriched catalog where measure M (column-group {sales}) and hierarchy H has all levels in column-group {inventory}, build_matrix excludes H from M's compatible set and M from H's compatible set.",
+      "test": "tests/acceptance_ac1.rs"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "Given a conformed dimension hierarchy with levels spanning {sales, inventory}, build_matrix lists it compatible with both a sales measure and an inventory measure (no false exclusion).",
+      "test": "tests/acceptance_ac2.rs"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "For every (measure, hierarchy) pair in the output, the relation is symmetric: measure lists hierarchy iff hierarchy lists measure.",
+      "test": "tests/acceptance_ac3.rs (proptest)"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "Given the TPC-DS enriched catalog, Inventory Quantity On Hand is incompatible with the Promotions hierarchy and compatible with the Inventory Calendar hierarchy.",
+      "test": "tests/acceptance_ac4.rs"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "When configured payload budget is exceeded, emitted matrix drops the inverse index (hierarchy->measures) and retains per-measure forward map; the dropped index is reconstructable from the output.",
+      "test": "tests/acceptance_ac5.rs"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "Given a catalog with no column_group fields, build_matrix returns an empty matrix with a diagnostic note, not an all-compatible matrix.",
+      "test": "tests/acceptance_ac6.rs"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "cargo test passes; cargo clippy --all-targets -- -D warnings is clean; zero unsafe blocks.",
+      "test": "cargo clippy --all-targets -- -D warnings && cargo test"
+    }
+  ],
+  "scope": [
+    "build_matrix(catalog: &EnrichedCatalog) -> CompatibilityMatrix pure function",
+    "Compatibility = column_group set intersection between measure and union of hierarchy level column_groups",
+    "Symmetric relation enforced and verified internally before emission",
+    "JSON serialization under compatibility-matrix.v1 key",
+    "Configurable payload budget: drop inverse index when budget exceeded",
+    "Empty-matrix with diagnostic note when catalog has no column_groups (fail-safe)"
+  ],
+  "non_goals": [
+    "Validating a specific MQO query (that is mqo-param-validator)",
+    "Rejecting at runtime (that is Component 3 null-path detector)",
+    "Ranking or recommending which hierarchy to use for a question",
+    "Inventing compatibility beyond column_group intersection (no semantic join inference)",
+    "Calc-group / time-intelligence applicability (deferred per OQ2)",
+    "Network calls, LLM inference, or anything non-deterministic"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2024",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 3,
+    "msrv": "1.85",
+    "additional": {
+      "allowed_deps": "serde, serde_json, proptest (dev-only)"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why does the agent fail wrong_hierarchy_level and path_incompatible tasks?",
+      "a": "The agent must cross-reference column_groups by hand on every decision, relying on a hand-maintained prose incompatibility table in the subagent prompt."
+    },
+    {
+      "why": 2,
+      "q": "Why is the prose table unreliable?",
+      "a": "Prose tables are read inconsistently; the mcp-tuner k=4 run gave the agent the table but still scored 22.5% path-mean on path_incompatible and 60% on wrong_hierarchy_level."
+    },
+    {
+      "why": 3,
+      "q": "Why can't the agent derive compatibility deterministically from describe_model?",
+      "a": "describe_model returns a flat column list. Compatibility is a relation over that list; it is not surfaced. After Component 1 (column-group enrichment) adds column_group sets to each entity, the relation is derivable but not emitted."
+    },
+    {
+      "why": 4,
+      "q": "Why not compute the intersection in the agent at query time?",
+      "a": "Every agent call computes it independently, introducing per-call variance and burning context tokens. A pre-computed, validated, versioned matrix embedded in describe_model output is checkable deterministically — read the tool, don't recompute."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "OQ1: Default for FR5 — emit incompatible-set complement, or compatible-only?",
+      "resolution": "Compatible-only per measure (forward map). Incompatible complement is expensive on large catalogs. Drop inverse index first when over budget, as it is reconstructable from the forward map. NFR2 configurable cap controls this."
+    },
+    {
+      "question": "OQ2: Should matrix include calc-group/time-intelligence applicability?",
+      "resolution": "Out of scope for this PRD. Deferred until base measure×hierarchy compatibility is proven."
+    },
+    {
+      "question": "EnrichedCatalog type: sibling crate not yet published",
+      "resolution": "Define compatible local EnrichedCatalog stub inline in lib.rs, marked with TODO comment. Match the enriched-catalog.v1 schema from the column-group-enrichment PRD."
+    }
+  ],
+  "created_at": "2026-06-10T00:00:00Z"
+}

@@ -1,0 +1,36 @@
+[package]
+name = "mqo-chart-caption"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70.0"
+description = "Deterministic, data-computed takeaway captions for BI assets (chart-caption.v1)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/joeyen-atscale/mqo-chart-caption"
+keywords = ["semantic-layer", "olap", "mqo", "caption", "atscale"]
+categories = ["data-structures", "encoding"]
+
+[lib]
+name = "mqo_chart_caption"
+path = "src/lib.rs"
+
+[dependencies]
+mqo-result-profiler = { path = "../mqo-result-profiler" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+
+[dev-dependencies]
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+module_name_repetitions = "allow"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"

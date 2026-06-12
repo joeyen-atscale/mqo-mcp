@@ -1,0 +1,110 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "intent_slug": "mqo-spec",
+  "prd_source": "/Users/jsy/Documents/PRDs/PRD-mqo-spec.md",
+  "root_motivation": "Provide one canonical Rust crate that every component of the MQO fleet (binder, compilers, router, server, benchmark) imports for the shared Multidimensional Query Object schema — eliminating per-component type drift and the unconstrained SQL string output space.",
+  "user_persona": "AtScale MQO fleet engineers and LLM agent code that constructs queries; they import this crate and rely on its JSON Schema to validate MQO payloads at runtime.",
+  "unfakeable_metric": {
+    "name": "tests_pass_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --release --workspace 2>&1 | grep -E 'test result' | awk '{sum += $4} END {print sum}'",
+    "target": null
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "All MQO types round-trip through JSON losslessly (serde_json to-string → from-string equals original) for every fixture.",
+      "test": "tests/acceptance_ac1.rs — round_trip_fixtures"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "mqo-spec emits a valid JSON Schema document for Mqo (validated with schemars in a test).",
+      "test": "tests/acceptance_ac2.rs — schema_is_valid_json_schema"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "validate() rejects: empty measures, limit of 0, and a Range filter with lo > hi — each with a distinct MqoError variant.",
+      "test": "tests/acceptance_ac3.rs — validate_rejects_empty_measures, validate_rejects_limit_zero, validate_rejects_range_lo_gt_hi"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "At least 6 golden fixtures (one per TimeIntel variant + one calc-group filter + one member filter) parse and validate.",
+      "test": "tests/acceptance_ac4.rs — all_golden_fixtures_parse_and_validate"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "cargo test --release passes; cargo clippy -- -D warnings is clean.",
+      "test": "CI: cargo test --release && cargo clippy -- -D warnings exits 0"
+    },
+    {
+      "id": "AC6",
+      "level": "SHOULD",
+      "description": "BoundMqo carries resolved unique_names + per-ref metadata flags (is_calc, semi_additive, required_dimension).",
+      "test": "tests/acceptance_ac6.rs — bound_mqo_fields_present"
+    }
+  ],
+  "scope": [
+    "Typed serde Serialize/Deserialize Rust structs for Mqo, MeasureRef, LevelSelection, Filter, TimeIntel, OrderKey, BoundMqo",
+    "Filter enum variants: Member, Range, CalcGroupMember",
+    "TimeIntel enum variants: YoY, PriorPeriod, ToDate(Grain), RunningTotal, Share, Rank",
+    "schemars-derived JSON Schema for Mqo emitted via a build artifact or binary sub-command",
+    "validate(&Mqo) -> Result<(), Vec<MqoError>> — structural validation only",
+    "Golden JSON fixtures under tests/fixtures/ covering all TimeIntel variants plus filter types",
+    "thiserror-based MqoError enum"
+  ],
+  "non_goals": [
+    "No query execution, parsing, or compilation logic — schema and validation only",
+    "No DAX/MDX/SQL generation",
+    "No network or async runtime dependency",
+    "No semantic/model validation (e.g. checking whether a measure name exists in a model)",
+    "No binder implementation — BoundMqo is a type stub only"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 8,
+    "msrv": "1.70.0",
+    "additional": {
+      "allowed_deps": "serde, serde_json, schemars, thiserror"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why define a separate crate for the MQO schema rather than inline it in the binder or compiler?",
+      "a": "Each fleet component currently invents its own representation of an MQO, causing type drift between the binder, compilers, router, server, and benchmark."
+    },
+    {
+      "why": 2,
+      "q": "Why does type drift matter if each component works correctly in isolation?",
+      "a": "When the binder hands off to a compiler, the payload crosses a serialization boundary — if the types disagree, the JSON round-trip silently drops or misinterprets fields."
+    },
+    {
+      "why": 3,
+      "q": "Why not just share the JSON Schema without a Rust crate?",
+      "a": "Non-Rust producers (the LLM skill, other languages) can validate against the JSON Schema, but Rust consumers need a typed struct to avoid manual serde boilerplate that re-drifts from the schema."
+    },
+    {
+      "why": 4,
+      "q": "Why is this the right moment to ship it rather than deferring until a second component needs it?",
+      "a": "The query-semantic-layer skill's 13-rule gate (R1–R13) exists specifically because free-text SQL has an unconstrained output space; the MQO is the closed structure that replaces it, and every downstream component that ships without this crate re-embeds the unconstrained assumption."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Should BoundMqo be a full binder implementation or a type stub?",
+      "resolution": "Type stub only — the binder implementation is a separate PRD/crate."
+    },
+    {
+      "question": "Is the JSON Schema emitted at build time (build.rs) or at runtime?",
+      "resolution": "Both acceptable; implementation choice is to emit via a test + schemars::schema_for! macro, with optional bin helper."
+    }
+  ],
+  "created_at": "2026-06-08T00:00:00Z"
+}

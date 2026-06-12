@@ -1,0 +1,43 @@
+--- src/lib.rs
++++ replace summarize -> DatasetSummary with Default::default()
+@@ -66,39 +66,17 @@
+ ///
+ /// # Panics
+ ///
+ /// Panics if `cfg.max_bytes` is so small that even the zero-sample summary
+ /// (no rows at all) cannot fit.  In practice 1 KiB is always sufficient for
+ /// the header + stats.
+ #[must_use]
+ pub fn summarize(dataset: &Dataset, cfg: &SummaryCfg) -> DatasetSummary {
+-    let row_count = dataset.row_count() as u64;
+-
+-    // ── Build per-column stats ────────────────────────────────────────────
+-    let stats = compute_stats(dataset, cfg.topk);
+-
+-    // ── Build head/tail sample ────────────────────────────────────────────
+-    let sample = build_sample(dataset, cfg.sample_cap);
+-
+-    // ── Generate deterministic notes ──────────────────────────────────────
+-    let mut notes = generate_notes(dataset, &stats);
+-
+-    // ── Assemble summary (respects sample_cap via DatasetSummary::new) ───
+-    let summary = DatasetSummary::new(
+-        row_count,
+-        dataset.columns.clone(),
+-        sample,
+-        cfg.sample_cap,
+-        stats,
+-        notes.clone(),
+-    );
+-
+-    // ── Hard max_bytes self-check: truncate sample if needed ──────────────
+-    enforce_max_bytes(summary, row_count, cfg, &mut notes)
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Advertise which operations make sense for this dataset's shape.
+ ///
+ /// Rules:
+ /// * `Pivot` requires ≥2 dimension columns.
+ /// * All other capabilities are always advertised.
+ #[must_use]

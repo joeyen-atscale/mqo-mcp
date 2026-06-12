@@ -1,0 +1,2 @@
+# dh-store clippy configuration
+msrv = "1.70.0"

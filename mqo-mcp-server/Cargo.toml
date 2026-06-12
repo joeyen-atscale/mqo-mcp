@@ -1,0 +1,42 @@
+[package]
+name = "mqo-mcp-server"
+version = "0.12.0"
+edition = "2021"
+rust-version = "1.88.0"
+description = "MQO MCP server — exposes query_multidimensional (bind→route→compile→execute) plus read-only catalog tools over JSON-RPC stdio"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/joeyen-atscale/mqo-mcp-server"
+keywords = ["semantic-layer", "olap", "mqo", "mcp", "atscale"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "mqo-mcp-server"
+path = "src/main.rs"
+
+[lib]
+name = "mqo_mcp_server"
+path = "src/lib.rs"
+
+[dependencies]
+mqo-spec = { path = "../mqo-spec" }
+mqo-auth-bridge = { path = "../mqo-auth-bridge" }
+mcp-cluster-registry = { path = "../mcp-cluster-registry" }
+mcp-cluster-health-monitor = { path = "../mcp-cluster-health-monitor" }
+mcp-cross-cluster-diff = { path = "../mcp-cross-cluster-diff" }
+mqo-result-profiler = { path = "../mqo-result-profiler" }
+mqo-duckdb-handle-store = { path = "../mqo-duckdb-handle-store" }
+mqo-chart-recommender = { path = "../mqo-chart-recommender", default-features = false }
+mqo-vega-emitter = { path = "../mqo-vega-emitter" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+thiserror = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "rt", "net", "time", "macros"] }
+reqwest = { version = "0.12", features = ["json", "native-tls"] }
+mqoguard-column-group-enrichment = { path = "../mqoguard-column-group-enrichment" }
+mqoguard-compatibility-matrix = { path = "../mqoguard-compatibility-matrix" }
+mqoguard-filter-bind-report = { path = "../mqoguard-filter-bind-report" }
+mqo-bi-asset-bundle = { path = "../mqo-bi-asset-bundle" }
+mqo-dashboard-composer = { path = "../mqo-dashboard-composer" }
+
+[dev-dependencies]

@@ -1,0 +1,111 @@
+
+*** src/lib.rs:339:5: replace emit_summary_schema -> String with String::new()
+
+*** mutation diff:
+--- src/lib.rs
++++ replace emit_summary_schema -> String with String::new()
+@@ -331,18 +331,17 @@
+ /// Emit the JSON Schema for [`DatasetSummary`] as a pretty-printed string.
+ ///
+ /// # Panics
+ ///
+ /// Panics only if `serde_json` fails to serialize the schema, which cannot
+ /// happen in practice for a schema derived from a concrete struct.
+ #[must_use]
+ pub fn emit_summary_schema() -> String {
+-    let schema = schemars::schema_for!(DatasetSummary);
+-    serde_json::to_string_pretty(&schema).expect("schemars schema is always serializable")
++    String::new() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Emit the JSON Schema for [`OpResult`] as a pretty-printed string.
+ ///
+ /// # Panics
+ ///
+ /// Panics only if `serde_json` fails to serialize the schema.
+ #[must_use]
+
+
+*** /Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo test --no-run --verbose --package=dh-spec@0.1.0
+       Fresh unicode-ident v1.0.24
+       Fresh itoa v1.0.18
+       Fresh memchr v2.8.1
+       Fresh dyn-clone v1.0.20
+       Fresh proc-macro2 v1.0.106
+       Fresh quote v1.0.45
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh syn v2.0.117
+       Fresh serde_json v1.0.150
+       Fresh serde_derive_internals v0.29.1
+       Fresh serde_derive v1.0.228
+       Fresh schemars_derive v0.8.22
+       Fresh serde v1.0.228
+       Fresh schemars v0.8.22
+       Dirty dh-spec v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp): the file `src/lib.rs` has changed (1780952136.707636255s, 3s after last build at 1780952133.631606820s)
+   Compiling dh-spec v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp)
+     Running `/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name dh_spec --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --cfg 'feature="default"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("default"))' -C metadata=0b82325436e4f41b -C extra-filename=-063e8206ef00a9d6 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps --extern schemars=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libschemars-0a36d708fafe2293.rlib --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde-def5093dfb9863be.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde_json-6e1f8c5a9adebcfb.rlib`
+     Running `/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name dh_spec --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --cfg 'feature="default"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("default"))' -C metadata=ee6a1f1ee9416538 -C extra-filename=-c0b5fa02bf1c0dca --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps --extern schemars=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libschemars-0a36d708fafe2293.rmeta --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde-def5093dfb9863be.rmeta --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde_json-6e1f8c5a9adebcfb.rmeta`
+     Running `/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name ac6_schema_validation --edition=2021 tests/ac6_schema_validation.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --cfg 'feature="default"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("default"))' -C metadata=3bedc4221255d6bd -C extra-filename=-cfe4bc26217530a2 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libdh_spec-c0b5fa02bf1c0dca.rlib --extern schemars=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libschemars-0a36d708fafe2293.rlib --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde-def5093dfb9863be.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde_json-6e1f8c5a9adebcfb.rlib`
+     Running `/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name ac4_op_result_new_handle --edition=2021 tests/ac4_op_result_new_handle.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --cfg 'feature="default"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("default"))' -C metadata=0cdb09d73f725b20 -C extra-filename=-855aeaa5a8b784ec --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libdh_spec-c0b5fa02bf1c0dca.rlib --extern schemars=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libschemars-0a36d708fafe2293.rlib --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde-def5093dfb9863be.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde_json-6e1f8c5a9adebcfb.rlib`
+     Running `/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name ac2_summary_bounded --edition=2021 tests/ac2_summary_bounded.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --cfg 'feature="default"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("default"))' -C metadata=fea2ba669da2324b -C extra-filename=-a1fc6890dccfe8f7 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libdh_spec-c0b5fa02bf1c0dca.rlib --extern schemars=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libschemars-0a36d708fafe2293.rlib --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde-def5093dfb9863be.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde_json-6e1f8c5a9adebcfb.rlib`
+     Running `/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name ac7_cargo_clean --edition=2021 tests/ac7_cargo_clean.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --cfg 'feature="default"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("default"))' -C metadata=01125c2b7a141d55 -C extra-filename=-bb3ef2ea8b32acfb --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libdh_spec-c0b5fa02bf1c0dca.rlib --extern schemars=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libschemars-0a36d708fafe2293.rlib --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde-def5093dfb9863be.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde_json-6e1f8c5a9adebcfb.rlib`
+     Running `/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name ac3_capability_set --edition=2021 tests/ac3_capability_set.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --cfg 'feature="default"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("default"))' -C metadata=a96db74dc14ad4e6 -C extra-filename=-dba9efc526e1697a --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libdh_spec-c0b5fa02bf1c0dca.rlib --extern schemars=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libschemars-0a36d708fafe2293.rlib --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde-def5093dfb9863be.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde_json-6e1f8c5a9adebcfb.rlib`
+     Running `/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name ac5_lineage_multi_parent --edition=2021 tests/ac5_lineage_multi_parent.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --cfg 'feature="default"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("default"))' -C metadata=d0f177313ba3144c -C extra-filename=-a750a4c7ef95241a --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libdh_spec-c0b5fa02bf1c0dca.rlib --extern schemars=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libschemars-0a36d708fafe2293.rlib --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde-def5093dfb9863be.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde_json-6e1f8c5a9adebcfb.rlib`
+     Running `/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name ac1_round_trip --edition=2021 tests/ac1_round_trip.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --cfg 'feature="default"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("default"))' -C metadata=f3630ed547234afc -C extra-filename=-6fedd3d57a9e094a --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libdh_spec-c0b5fa02bf1c0dca.rlib --extern schemars=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libschemars-0a36d708fafe2293.rlib --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde-def5093dfb9863be.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/libserde_json-6e1f8c5a9adebcfb.rlib`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.19s
+  Executable `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/dh_spec-063e8206ef00a9d6`
+  Executable `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/ac1_round_trip-6fedd3d57a9e094a`
+  Executable `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/ac2_summary_bounded-a1fc6890dccfe8f7`
+  Executable `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/ac3_capability_set-dba9efc526e1697a`
+  Executable `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/ac4_op_result_new_handle-855aeaa5a8b784ec`
+  Executable `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/ac5_lineage_multi_parent-a750a4c7ef95241a`
+  Executable `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/ac6_schema_validation-cfe4bc26217530a2`
+  Executable `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/ac7_cargo_clean-bb3ef2ea8b32acfb`
+
+*** result: Success
+
+*** /Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo test --verbose --package=dh-spec@0.1.0
+       Fresh unicode-ident v1.0.24
+       Fresh proc-macro2 v1.0.106
+       Fresh quote v1.0.45
+       Fresh syn v2.0.117
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh serde_derive v1.0.228
+       Fresh serde_derive_internals v0.29.1
+       Fresh itoa v1.0.18
+       Fresh memchr v2.8.1
+       Fresh serde_json v1.0.150
+       Fresh schemars_derive v0.8.22
+       Fresh serde v1.0.228
+       Fresh dyn-clone v1.0.20
+       Fresh schemars v0.8.22
+       Fresh dh-spec v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-spec-CdZjol.tmp/target/debug/deps/dh_spec-063e8206ef00a9d6`
+
+running 5 tests
+test unit_tests::inline_threshold_is_eight_or_fewer ... ok
+test unit_tests::handle_round_trips_json ... ok
+test unit_tests::summary_truncates_at_sample_cap ... ok
+test unit_tests::emit_summary_schema_is_valid_json ... FAILED
+test unit_tests::emit_op_result_schema_is_valid_json ... ok
+
+failures:
+
+---- unit_tests::emit_summary_schema_is_valid_json stdout ----
+
+thread 'unit_tests::emit_summary_schema_is_valid_json' (3312722) panicked at src/lib.rs:420:49:
+valid JSON: Error("EOF while parsing a value", line: 1, column: 0)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    unit_tests::emit_summary_schema_is_valid_json
+
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p dh-spec --lib`
+
+*** result: Failure(101)

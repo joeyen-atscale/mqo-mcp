@@ -1,0 +1,24 @@
+--- src/lib.rs
++++ delete match arm ColumnData::Decimal(v) | ColumnData::Str(v) | ColumnData::Date(v) | ColumnData::Time(v) in count_nulls
+@@ -465,20 +465,17 @@
+     notes
+ }
+ 
+ fn count_nulls(data: &ColumnData) -> u64 {
+     match data {
+         ColumnData::Int(v) => v.iter().filter(|o| o.is_none()).count() as u64,
+         ColumnData::Float(v) => v.iter().filter(|o| o.is_none()).count() as u64,
+         ColumnData::Bool(v) => v.iter().filter(|o| o.is_none()).count() as u64,
+-        ColumnData::Decimal(v)
+-        | ColumnData::Str(v)
+-        | ColumnData::Date(v)
+-        | ColumnData::Time(v) => v.iter().filter(|o| o.is_none()).count() as u64,
++         /* ~ changed by cargo-mutants ~ */
+         _ => 0,
+     }
+ }
+ 
+ /// Enforce `cfg.max_bytes` by progressively truncating the sample.
+ ///
+ /// Stats are never removed.  If the zero-sample summary still exceeds
+ /// `max_bytes`, this function panics (the caller's `max_bytes` is too small).

@@ -1,0 +1,27 @@
+--- src/lib.rs
++++ replace compute_col_stats -> ColStats with Default::default()
+@@ -192,23 +192,17 @@
+     for (col, data) in dataset.columns.iter().zip(dataset.data.iter()) {
+         let s = compute_col_stats(data, col.dtype, topk);
+         stats.insert(col.unique_name.clone(), s);
+     }
+     stats
+ }
+ 
+ fn compute_col_stats(data: &ColumnData, dtype: DType, topk: usize) -> ColStats {
+-    match dtype {
+-        DType::Int => stats_int(data),
+-        DType::Float | DType::Decimal => stats_float(data),
+-        DType::Str => stats_str(data, topk),
+-        DType::Bool => stats_bool(data),
+-        DType::Date | DType::Time => stats_date(data),
+-    }
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ #[allow(clippy::cast_precision_loss)]
+ fn stats_int(data: &ColumnData) -> ColStats {
+     let (vals, null_count, total) = match data {
+         ColumnData::Int(v) => {
+             let non_null: Vec<i64> = v.iter().filter_map(|o| *o).collect();
+             let nulls = v.iter().filter(|o| o.is_none()).count() as u64;

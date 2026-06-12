@@ -1,0 +1,13 @@
+{
+  "schema": "autobuilder.owner_map.v1",
+  "owners": {
+    "src/main.rs": ["cli-interface", "exit-codes"],
+    "src/binder.rs": ["resolution-logic", "ambiguity-detection", "not-found-detection"],
+    "src/catalog.rs": ["catalog-types", "semi-additive-metadata", "calc-group-metadata"]
+  },
+  "proof_lane_assignments": {
+    "src/main.rs": ["cli-integration"],
+    "src/binder.rs": ["unit-resolution", "integration-binding"],
+    "src/catalog.rs": ["serde-roundtrip"]
+  }
+}

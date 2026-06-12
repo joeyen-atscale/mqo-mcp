@@ -1,0 +1,52 @@
+{
+  "catalog": "atscale_catalogs",
+  "schema": "tpcds_Snowflake",
+  "columns": [
+    {
+      "unique_name": "store_sales.Total Store Sales",
+      "label": "Total Store Sales",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_sales.Number of Store Sales",
+      "label": "Number of Store Sales",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_sales.Store Sales Net Profit",
+      "label": "Store Sales Net Profit",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "time_dim.calendar.[Year]",
+      "label": "Year",
+      "kind": "level",
+      "hierarchy": "time_dim.calendar",
+      "level": "Year"
+    },
+    {
+      "unique_name": "time_dim.calendar.[Month]",
+      "label": "Month",
+      "kind": "level",
+      "hierarchy": "time_dim.calendar",
+      "level": "Month"
+    },
+    {
+      "unique_name": "customer.geography.[State]",
+      "label": "State",
+      "kind": "level",
+      "hierarchy": "customer.geography",
+      "level": "State"
+    },
+    {
+      "unique_name": "item.category.[Category]",
+      "label": "Category",
+      "kind": "level",
+      "hierarchy": "item.category",
+      "level": "Category"
+    }
+  ]
+}

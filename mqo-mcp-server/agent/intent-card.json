@@ -1,0 +1,111 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "prd_source": "/Users/jsy/Documents/PRDs/ARCHIVE/PRD-mqo-mcp-server.md",
+  "intent_slug": "mqo-mcp-server",
+  "root_motivation": "Prove that a semantic-layer query interface can be read-only by construction — not by convention — so that MCP clients (like Blue Yonder) never need to gate tool calls with HITL because the only query input is a selection-only Multidimensional Query Object, making a write path structurally impossible.",
+  "user_persona": "AtScale SE / AE who integrates the MCP server into an MCP client (Claude Desktop, Blue Yonder eval) and needs to demonstrate that `query_multidimensional` cannot write to the warehouse even if the client omits a human-in-the-loop gate.",
+  "unfakeable_metric": {
+    "name": "acceptance_tests_passing_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --release --workspace 2>&1 | grep -cE '^test .* ok$'",
+    "target": 10
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "Server starts and advertises its tools; the three catalog tools carry readOnlyHint: true in the advertised schema.",
+      "test": "tests/acceptance.rs::ac1_server_advertises_tools_with_readonly_hints"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "query_multidimensional accepts a valid MQO JSON and returns bounded result rows from the fixture engine.",
+      "test": "tests/acceptance.rs::ac2_query_multidimensional_returns_bounded_rows"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "query_multidimensional rejects a raw SQL string (and any non-MQO input) with a structured error and no execution; no SQL passthrough tool exists.",
+      "test": "tests/acceptance.rs::ac3_raw_sql_string_is_rejected_with_structured_error + ac3_no_sql_passthrough_tool_exists"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "Small MQO routes to DAX, drill-through MQO routes to MDX, large-extract MQO routes to SQL — asserted end-to-end against the fixture using mqo-backend-router.",
+      "test": "tests/acceptance.rs::ac4_small_mqo_routes_to_dax + ac4_drillthrough_mqo_routes_to_mdx + ac4_large_extract_mqo_routes_to_sql"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "Ungroundable MQO (fabricated measure name) returns the binder's not-found report verbatim, not a guessed query.",
+      "test": "tests/acceptance.rs::ac5_ungroundable_mqo_returns_not_found_not_a_guess"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "cargo test --release passes; clippy clean under -D warnings.",
+      "test": "tests/acceptance.rs::ac6_runs_under_release_toolchain + cargo clippy --workspace -- -D warnings"
+    }
+  ],
+  "scope": [
+    "JSON-RPC 2.0 stdio MCP server exposing query_multidimensional, list_models, describe_model, search_columns",
+    "Hard guard: input to query_multidimensional must be a valid MQO object; raw SQL strings are rejected before any execution",
+    "Pipeline orchestration: spawns fleet binaries (mqo-bind, mqo-route, mqo-dax, mqo-mdx) as subprocesses over temp-file JSON",
+    "Fixture engine: deterministic synthetic result rows for tests without a live cluster",
+    "Catalog tools served from a recorded snapshot JSON passed via --catalog flag",
+    "readOnlyHint: true on all four advertised tools"
+  ],
+  "non_goals": [
+    "No OIDC/OAuth authentication (delegated to mqo-auth-bridge follow-on)",
+    "No live PGWire or XMLA cluster execution in v1 (fixture engine only)",
+    "No raw SQL passthrough — by construction, no tool accepts a SQL string",
+    "No streaming or SSE transport — v1 is stdio JSON-RPC only",
+    "No Rust library imports of the fleet crates — fleet is CLI subprocess pipeline, not a library graph",
+    "No write operations of any kind — the MQO type is selection-only by spec"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "cli",
+    "deny_unsafe": true,
+    "max_deps": null,
+    "msrv": "1.70.0",
+    "additional": {
+      "subprocess_architecture": "JSON pipeline over temp files — no Rust FFI to fleet crates",
+      "no_rmcp_sdk": "v1 implements minimal JSON-RPC 2.0 over stdio directly; rmcp SDK is a follow-on"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why build a new MCP server when the Go server (AtScaleInc/mcp-server) already exists?",
+      "a": "The Go server accepts raw SQL, so MCP clients must gate every call with HITL because the tool might write. Blue Yonder's eval (ticket 45387747714) shows clients are doing exactly this — they see a generic SQL tool and must assume worst-case."
+    },
+    {
+      "why": 2,
+      "q": "Why does accepting raw SQL force HITL? Can't readOnlyHint be set on the existing server?",
+      "a": "readOnlyHint is a hint, not a proof. The MCP spec says clients SHOULD use it but may still prompt. The only way to make the guarantee airtight is to make a write path structurally impossible: if the server never accepts SQL, it cannot execute a DROP TABLE regardless of client behavior."
+    },
+    {
+      "why": 3,
+      "q": "Why does removing SQL injection risk require a new server — why not just strip SQL from the existing server?",
+      "a": "The Go server's whole interface is PGWire SQL over AtScale. Removing SQL means replacing the query surface with something else — which is exactly the MQO: a structured object that can only express selections, never writes. That new interface is the point, not a side effect."
+    },
+    {
+      "why": 4,
+      "q": "Why Rust specifically, not Go or Python?",
+      "a": "The MQO fleet (mqo-spec, mqo-catalog-binder, mqo-backend-router, mqo-dax-compiler, mqo-mdx-compiler) is already built in Rust. The server needs to share the mqo-spec type system for structural MQO validation. A subprocess JSON pipeline lets it orchestrate those binaries without re-implementing the fleet in another language."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Does the server need to embed rmcp SDK or implement MCP over stdio manually?",
+      "resolution": "v1 implements minimal JSON-RPC 2.0 over stdio directly (initialize / tools/list / tools/call). rmcp SDK is a follow-on once the interface is proven stable."
+    },
+    {
+      "question": "Do tests require a live AtScale cluster?",
+      "resolution": "No. Tests use a recorded catalog.json fixture and the fixture engine (engine.rs) that produces deterministic synthetic rows. Fleet binaries are resolved from sibling release dirs or ~/.local/bin; tests skip with a note if unavailable (mock-gated)."
+    }
+  ],
+  "created_at": "2026-06-08T00:00:00Z"
+}

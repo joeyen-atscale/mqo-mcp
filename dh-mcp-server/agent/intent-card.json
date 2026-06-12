@@ -1,0 +1,125 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "prd_source": "/Users/jsy/Documents/PRDs/ARCHIVE/PRD-dh-mcp-server.md",
+  "root_motivation": "Replace the LLM-as-calculator anti-pattern in BI agents: the existing mqo-mcp-server returns raw rows into the context window, which forces the model to do arithmetic and causes hallucinated numbers. The real fix is to never let rows touch the context window — store them server-side behind a handle, expose operations the server computes, and let the LLM orchestrate handles rather than crunch data. dh-mcp-server is that keystone: it wraps the MQO pipeline as its data source and replaces the EngineResult{rows} contract with {summary, handle, capabilities}.",
+  "user_persona": "An LLM agent (Claude, GPT-5, etc.) connected to the dh-mcp-server via MCP stdio transport. The agent needs to query AtScale semantic-layer data, manipulate it (aggregate, filter, sort, pivot, compare, drill), and export it — without ever receiving a raw row in its context window except through the explicit dataset_export path.",
+  "unfakeable_metric": {
+    "name": "tests_pass_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --workspace --release 2>&1 | grep -E 'test result'",
+    "target": 9
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "tools/list advertises query_multidimensional + ten dataset_* tools, all with readOnlyHint:true.",
+      "test": "ac1_advertises_all_tools_with_readonly_hints"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "query_multidimensional over a fixture returns {summary, handle, capabilities} and NO rows field; rows retrievable only via a subsequent dataset_* call.",
+      "test": "ac2_query_returns_summary_handle_caps_and_no_rows"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "query → dataset_aggregate → dataset_top_n chain works end-to-end over fixtures; each step returns new handle+summary; final numbers match hand-computed golden.",
+      "test": "ac3_query_aggregate_top_n_chain_matches_golden"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "dataset_filter/sort/pivot/compare/drill each reachable as MCP tools and exercised end-to-end on a fixture.",
+      "test": "ac4_filter_sort_pivot_compare_drill_reachable_end_to_end"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "dataset_export is the only tool that emits full data and produces a dh-export receipt; no other tool path returns more than sample_cap rows.",
+      "test": "ac5_export_is_only_full_data_path_and_emits_receipt"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "Raw SQL/non-MQO input to query_multidimensional is rejected with structured error; expired/unknown handle to any dataset_* tool returns typed error, never a panic.",
+      "test": "ac6_raw_sql_rejected_and_bad_handles_are_typed_not_panics"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "cargo test --release passes; cargo clippy --release -- -D warnings clean.",
+      "test": "ac7_runs_under_release_toolchain"
+    }
+  ],
+  "scope": [
+    "JSON-RPC 2.0 over stdio (MCP protocol: initialize, tools/list, tools/call, ping)",
+    "query_multidimensional: accepts an MQO, invokes the mqo-mcp-server pipeline as a subprocess, stores result in dh-store, returns {summary, handle, capabilities} — never rows",
+    "dataset_* tool family (10 tools): dataset_peek, dataset_aggregate, dataset_filter, dataset_sort, dataset_top_n, dataset_pivot, dataset_compare, dataset_drill, dataset_describe, dataset_export",
+    "Read-only guard: reject raw SQL / non-MQO input; reject raw SQL passthrough; all tools carry readOnlyHint:true",
+    "Handle lifecycle: dh-store TTL + LRU eviction wired into request loop",
+    "Fixture-backed tests: no live AtScale cluster required for CI"
+  ],
+  "non_goals": [
+    "Not a general-purpose HTTP MCP server — stdio only (box is 0-swap / ~2.3 GB constraint)",
+    "Not a replacement for mqo-mcp-server — it wraps that pipeline as its data source",
+    "Not a query rewrite layer — MQO is passed through as-is to the existing pipeline",
+    "No persistent storage — dh-store is in-memory; datasets are ephemeral within TTL",
+    "No multi-user isolation — single-process, single-agent context",
+    "No streaming / chunked export — dataset_export is a one-shot operation",
+    "No SQL passthrough — the server rejects any attempt to pass raw SQL",
+    "No heavy async MCP SDK dependency (tokio/axum) — minimal JSON-RPC over stdio"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "cli",
+    "deny_unsafe": true,
+    "msrv": "1.75.0",
+    "max_deps": null,
+    "additional": {
+      "forbid_unsafe_code": true,
+      "mcp_transport": "stdio_only",
+      "no_rows_in_context_invariant": true
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why does the existing mqo-mcp-server contract need to change?",
+      "a": "It returns EngineResult{rows} directly, which dumps raw tabular data into the LLM context window. The LLM is then expected to do arithmetic on that data, which produces hallucinated numbers — the LLM-as-calculator anti-pattern."
+    },
+    {
+      "why": 2,
+      "q": "Why can't the LLM be trusted to do arithmetic on the rows it receives?",
+      "a": "LLMs don't reliably add, multiply, or compute percentages on large row sets. The calculator failure is a documented class of BI agent errors that gets worse as the dataset grows. The numbers must be computed server-side from the source of truth."
+    },
+    {
+      "why": 3,
+      "q": "Why not fix this in the MQO server itself by adding aggregation endpoints?",
+      "a": "The MQO server's contract is the MQO pipeline: bind → route → compile → execute → rows. Changing it would break existing consumers. The right architecture is a keystone layer that wraps the MQO pipeline as its data source and owns the handle/operation contract."
+    },
+    {
+      "why": 4,
+      "q": "Why must the handle abstraction be server-managed rather than client-managed (e.g. the LLM caches the rows and rerequests)?",
+      "a": "If the LLM holds the rows (even cached), the no-rows-in-context-window invariant is violated. The whole point is that the server is the authoritative number-cruncher. Handle = opaque pointer to server-side state; LLM only holds the pointer, never the data."
+    },
+    {
+      "why": 5,
+      "q": "Why is this the right scope boundary (why not also manage authentication, rate-limiting, multi-tenancy here)?",
+      "a": "dh-mcp-server runs on the same box as the MQO fleet (0-swap, ~2.3 GB). It's a single-agent stdio server. Auth, rate-limiting, and multi-tenancy belong to an outer HTTP gateway layer that doesn't exist yet and would require a different deployment model."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Does 'invoke the mqo-mcp-server pipeline as a subprocess' mean shelling out to the binary or linking its lib?",
+      "resolution": "The Cargo.toml uses `mqo-mcp-server = { path = \"../mqo-mcp-server\" }` (lib linkage), matching the accepted pattern from the existing sibling crates. Subprocess shelling is not used."
+    },
+    {
+      "question": "What does 'reachable and exercised end-to-end' mean for pivot/compare/drill (AC4) when those ops require specific dataset shapes?",
+      "resolution": "Either a successful ok result or a structured typed error (e.g. unknown_column for pivot on a 1-dim dataset) is acceptable — the requirement is 'never a panic' and 'isError is boolean'. The acceptance tests reflect this with `assert!(result[\"isError\"].is_boolean())`."
+    }
+  ],
+  "intent_slug": "dh-mcp-server",
+  "created_at": "2026-06-08T00:00:00Z"
+}

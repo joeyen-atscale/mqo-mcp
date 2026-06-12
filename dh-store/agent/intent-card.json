@@ -1,0 +1,122 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "prd_source": "/Users/jsy/Documents/PRDs/ARCHIVE/PRD-dh-store.md",
+  "intent_slug": "dh-store",
+  "root_motivation": "Make 'the LLM cannot change a value' structurally true by housing query results in a bounded server-side store keyed by opaque handles — so the context window never contains mutable data, and a memory-constrained host (0 swap, ~2.3 GB free) cannot OOM from an unbounded result cache.",
+  "user_persona": "A Rust library consumer (mqo-mcp-server, dh-ops, dh-mcp-server) that calls Store::put / ::get / ::derive / ::lineage / ::evict_expired / ::stats to manage in-memory query results on a single-process server under a total-bytes cap.",
+  "unfakeable_metric": {
+    "name": "tests_pass_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --workspace --release 2>&1 | grep -E '^test result' | awk '{sum += $4} END {print sum}'",
+    "target": 10
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "put then get returns the same dataset; the handle string contains none of the column names or row values.",
+      "test": "store::tests::ac1_put_get_and_opaque_handle"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "derive(parent, ...) returns a NEW handle, leaves the parent retrievable unchanged, and lineage(child) includes the parent (immutability + provenance).",
+      "test": "store::tests::ac2_derive_immutability_and_lineage"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "A dataset past its TTL returns Expired (distinct from NotFound) after evict_expired().",
+      "test": "store::tests::ac3_expired_returns_expired_not_not_found"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "Inserting datasets past max_total_bytes evicts LRU entries until under cap; the most-recently-used dataset survives; total_bytes <= cap.",
+      "test": "store::tests::ac4_lru_eviction_under_cap"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "There is no public mutation API — derive is the only path to a changed dataset; compile-time + runtime test.",
+      "test": "store::tests::ac5_no_mutation_api_only_derive"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "stats() reports live dataset count + total bytes accurately after a mixed put/derive/evict sequence.",
+      "test": "store::tests::ac6_stats_accurate"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "cargo test --release passes; cargo clippy --release -- -D warnings clean.",
+      "test": "cargo test --release exit 0 AND cargo clippy --release -- -D warnings exit 0"
+    }
+  ],
+  "scope": [
+    "Rust library crate `dh-store` with Dataset (columnar Vec-of-typed-Vec, no Arrow dep), Store (put/get/derive/lineage/evict_expired/stats), and LookupError",
+    "Opaque handle IDs minted as UUID v4 prefixed hdl_ (unguessable, content-blind)",
+    "Per-entry TTL with tombstone Expired distinction from NotFound after evict_expired",
+    "LRU + max_total_bytes cap with two-pass eviction (skip lineage parents first, force second pass if needed)",
+    "Immutable derive semantics: no mutate/update API; derive always allocates a new handle and records Lineage",
+    "Thread-safety via Mutex<StoreInner> (Arc<Store> shareable across threads)"
+  ],
+  "non_goals": [
+    "No Arrow / Parquet / columnar serialization — plain Rust enums + Vec only",
+    "No persistence — store is entirely in-memory; restarting the process drops all datasets",
+    "No distributed or cross-process replication — single-process server only",
+    "No query execution — dh-store holds results; dh-ops executes operations against them",
+    "No async API — Mutex is acceptable for v1 single-process server; RwLock/async is a v2 concern",
+    "No gRPC/HTTP server — pure library crate; embedding is the consumer's responsibility"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 4,
+    "msrv": "1.70.0",
+    "additional": {
+      "forbid_unsafe_code": "enforced via #![forbid(unsafe_code)] in lib.rs",
+      "max_total_bytes_constraint": "must be configurable and default-safe; 0 means unlimited (not recommended)"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why does mqo-mcp-server hand Vec<Value> straight to the caller instead of returning a handle?",
+      "a": "There was no server-side store for it to put the bytes into — the handle concept existed in dh-spec but nowhere to actually hold the data."
+    },
+    {
+      "why": 2,
+      "q": "Why does it matter that bytes live server-side rather than in the context window?",
+      "a": "An LLM with query results in its context can hallucinate modified values; a handle is opaque so the LLM can reference but never alter the underlying bytes."
+    },
+    {
+      "why": 3,
+      "q": "Why is a bounded memory footprint non-optional here specifically?",
+      "a": "The target host has 0 swap and ~2.3 GB free (measured 2026-06-08); an unbounded result cache would OOM the entire server."
+    },
+    {
+      "why": 4,
+      "q": "Why must eviction preserve lineage parents?",
+      "a": "An operation that derived dataset B from A must be auditable — if A disappears silently, provenance is lost and downstream ops on B become unverifiable."
+    },
+    {
+      "why": 5,
+      "q": "Why is immutability (no mutate API) the design principle rather than, say, versioning?",
+      "a": "Structural immutability makes the 'LLM cannot change a value' guarantee mechanically true rather than a runtime check — there is no code path through which mutation could happen."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Should get() auto-evict expired entries, or only evict_expired()?",
+      "resolution": "evict_expired() is the explicit sweep. get() on an entry that has not been swept returns the entry if still present (no lazy expiry at read time). This keeps get() deterministic."
+    },
+    {
+      "question": "What byte_estimate strategy for Dataset?",
+      "resolution": "Sum of ColumnData::byte_estimate() per column: sizeof(Option<T>) * len for fixed-width types, sizeof(Option<String>) + str.len() per slot for string types. Heap-only; does not count struct stack overhead. Acceptable precision for a size cap."
+    }
+  ],
+  "created_at": "2026-06-08T00:00:00Z"
+}

@@ -1,0 +1,22 @@
+--- src/lib.rs
++++ replace emit_op_result_schema -> String with "xyzzy".into()
+@@ -342,18 +342,17 @@
+ 
+ /// Emit the JSON Schema for [`OpResult`] as a pretty-printed string.
+ ///
+ /// # Panics
+ ///
+ /// Panics only if `serde_json` fails to serialize the schema.
+ #[must_use]
+ pub fn emit_op_result_schema() -> String {
+-    let schema = schemars::schema_for!(OpResult);
+-    serde_json::to_string_pretty(&schema).expect("schemars schema is always serializable")
++    "xyzzy".into() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ // ── Unit tests ─────────────────────────────────────────────────────────────
+ 
+ #[cfg(test)]
+ mod unit_tests {
+     use super::*;
+ 

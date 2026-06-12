@@ -1,0 +1,27 @@
+{
+  "k": 1,
+  "per_mode": [
+    {
+      "failure_mode": "hallucinated_measure",
+      "task_count": 5,
+      "freeform_pass_at_1": 0.4,
+      "freeform_pass_at_k": 0.4,
+      "freeform_first_try_valid_rate": 1.0,
+      "structured_pass_at_1": 0.8,
+      "structured_pass_at_k": 0.8,
+      "structured_first_try_valid_rate": 0.8,
+      "caught_by_validator": 2,
+      "verdict": "hallucinated_measure: structured caught 2/5 the free-form arm executed"
+    }
+  ],
+  "overall": {
+    "task_count": 5,
+    "freeform_pass_at_1": 0.4,
+    "freeform_pass_at_k": 0.4,
+    "freeform_first_try_valid_rate": 1.0,
+    "structured_pass_at_1": 0.8,
+    "structured_pass_at_k": 0.8,
+    "structured_first_try_valid_rate": 0.8,
+    "total_caught_by_validator": 2
+  }
+}

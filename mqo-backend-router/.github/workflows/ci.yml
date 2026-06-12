@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "autobuilder/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          submodules: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # mqo-spec is a sibling path dep — check it out alongside this repo.
+      # In CI, clone it manually since there's no workspace Cargo.toml.
+      - name: Checkout mqo-spec sibling
+        run: |
+          git clone https://github.com/joeyen-atscale/mqo-spec ../mqo-spec
+
+      - name: cargo check
+        run: cargo check --release
+
+      - name: cargo clippy
+        run: cargo clippy --release -- -D warnings
+
+      - name: cargo test
+        run: cargo test --release
+
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Checkout mqo-spec sibling
+        run: |
+          git clone https://github.com/joeyen-atscale/mqo-spec ../mqo-spec
+
+      - uses: EmbarkStudios/cargo-deny-action@34899fc7ba81f3da96cae69e5aac036f5be79f0a
+        with:
+          command: check bans licenses sources

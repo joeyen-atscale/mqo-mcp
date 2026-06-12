@@ -1,0 +1,9 @@
+{
+  "description": "Baseline with only path_incompatible mode (tests additive baseline AC4).",
+  "modes": {
+    "path_incompatible": {
+      "path_mean_floor": 0.225,
+      "note": "only this mode is gated"
+    }
+  }
+}

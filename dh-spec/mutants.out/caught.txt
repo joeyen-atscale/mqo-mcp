@@ -1,0 +1,4 @@
+src/lib.rs:339:5: replace emit_summary_schema -> String with String::new()
+src/lib.rs:350:5: replace emit_op_result_schema -> String with String::new()
+src/lib.rs:339:5: replace emit_summary_schema -> String with "xyzzy".into()
+src/lib.rs:350:5: replace emit_op_result_schema -> String with "xyzzy".into()

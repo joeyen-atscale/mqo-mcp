@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <ExecuteResponse xmlns="urn:schemas-microsoft-com:xml-analysis">
+      <return>
+        <MDDataSet xmlns="urn:schemas-microsoft-com:xml-analysis:mddataset">
+          <Axes>
+            <Axis name="Axis0">
+              <Tuples>
+                <Tuple>
+                  <Member Hierarchy="[Product].[Product Name]">
+                    <UName>[Product].[Product Name].[Widget A]</UName>
+                    <Caption>Widget A</Caption>
+                    <LName>[Product].[Product Name].[MEMBER_KEY]</LName>
+                    <LNum>0</LNum>
+                    <DisplayInfo>131076</DisplayInfo>
+                  </Member>
+                </Tuple>
+                <Tuple>
+                  <Member Hierarchy="[Product].[Product Name]">
+                    <UName>[Product].[Product Name].[Widget B]</UName>
+                    <Caption>Widget B</Caption>
+                    <LName>[Product].[Product Name].[MEMBER_KEY]</LName>
+                    <LNum>0</LNum>
+                    <DisplayInfo>131076</DisplayInfo>
+                  </Member>
+                </Tuple>
+              </Tuples>
+            </Axis>
+            <Axis name="Axis1">
+              <Tuples>
+                <Tuple>
+                  <Member Hierarchy="[Measures]">
+                    <UName>[Measures].[Sales]</UName>
+                    <Caption>Sales</Caption>
+                    <LName>[Measures].[MEMBERS]</LName>
+                    <LNum>0</LNum>
+                    <DisplayInfo>0</DisplayInfo>
+                  </Member>
+                </Tuple>
+                <Tuple>
+                  <Member Hierarchy="[Measures]">
+                    <UName>[Measures].[Units]</UName>
+                    <Caption>Units</Caption>
+                    <LName>[Measures].[MEMBERS]</LName>
+                    <LNum>0</LNum>
+                    <DisplayInfo>0</DisplayInfo>
+                  </Member>
+                </Tuple>
+              </Tuples>
+            </Axis>
+          </Axes>
+          <CellData>
+            <!-- Row 0 (Widget A): Sales=10169858384.28, Units=42 -->
+            <Cell CellOrdinal="0">
+              <Value>10169858384.28</Value>
+            </Cell>
+            <Cell CellOrdinal="1">
+              <Value>42</Value>
+            </Cell>
+            <!-- Row 1 (Widget B): Sales=500.0, Units=null -->
+            <Cell CellOrdinal="2">
+              <Value>500.0</Value>
+            </Cell>
+            <Cell CellOrdinal="3">
+              <Value/>
+            </Cell>
+          </CellData>
+        </MDDataSet>
+      </return>
+    </ExecuteResponse>
+  </soap:Body>
+</soap:Envelope>

@@ -1,0 +1,3 @@
+# clippy.toml — project-level clippy configuration for mqo-mdx-compiler.
+# msrv controls which lints apply.
+msrv = "1.85.0"

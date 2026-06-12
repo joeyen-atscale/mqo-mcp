@@ -1,0 +1,20 @@
+[package]
+name = "mqo-backend-live-harness"
+version = "0.1.0"
+edition = "2021"
+description = "Port-gated DAX/MDX E2E harness; green-skips dead ports, flips pass when ports open"
+authors = ["Joe Yen <jyen.tech@gmail.com>"]
+
+[[bin]]
+name = "mqo-live-harness"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+mqo-cross-backend-parity = { path = "../mqo-cross-backend-parity" }
+
+[dev-dependencies]
+assert_cmd = "2"
+tempfile = "3"

@@ -1,0 +1,39 @@
+--- src/lib.rs
++++ replace capabilities -> Vec<Capability> with vec![]
+@@ -98,35 +98,17 @@
+ 
+ /// Advertise which operations make sense for this dataset's shape.
+ ///
+ /// Rules:
+ /// * `Pivot` requires ≥2 dimension columns.
+ /// * All other capabilities are always advertised.
+ #[must_use]
+ pub fn capabilities(dataset: &Dataset) -> Vec<Capability> {
+-    let n_dims = dataset
+-        .columns
+-        .iter()
+-        .filter(|c| c.role == ColumnRole::Dimension)
+-        .count();
+-
+-    let mut caps = Vec::with_capacity(9);
+-    caps.push(Capability::Aggregate);
+-    caps.push(Capability::Filter);
+-    caps.push(Capability::Sort);
+-    caps.push(Capability::TopN);
+-    if n_dims >= 2 {
+-        caps.push(Capability::Pivot);
+-    }
+-    caps.push(Capability::Compare);
+-    caps.push(Capability::Drill);
+-    caps.push(Capability::Describe);
+-    caps.push(Capability::Export);
+-    caps
++    vec![] /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ // ── Internal helpers ────────────────────────────────────────────────────────
+ 
+ /// Build the head+tail sample, capped at `sample_cap` total rows.
+ fn build_sample(dataset: &Dataset, sample_cap: usize) -> Vec<Row> {
+     let n = dataset.row_count();
+     if n == 0 || sample_cap == 0 {

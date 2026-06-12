@@ -1,0 +1,2181 @@
+{
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "summary": "Success",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 5.109039292,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.852479459,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/main.rs",
+          "function": {
+            "function_name": "main",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 37,
+                "column": 1
+              },
+              "end": {
+                "line": 77,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 38,
+              "column": 5
+            },
+            "end": {
+              "line": 76,
+              "column": 6
+            }
+          },
+          "replacement": "()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__main.rs_line_38_col_5.log",
+      "diff_path": "diff/src__main.rs_line_38_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.388791166,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.578141875,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_measure",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 62,
+                "column": 1
+              },
+              "end": {
+                "line": 97,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 71,
+              "column": 5
+            },
+            "end": {
+              "line": 96,
+              "column": 6
+            }
+          },
+          "replacement": "Ok(Box::leak(Box::new(Default::default())))",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/src__binder.rs_line_71_col_5.log",
+      "diff_path": "diff/src__binder.rs_line_71_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.172432,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_measure",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 62,
+                "column": 1
+              },
+              "end": {
+                "line": 97,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 76,
+              "column": 41
+            },
+            "end": {
+              "line": 76,
+              "column": 43
+            }
+          },
+          "replacement": "||",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_76_col_41.log",
+      "diff_path": "diff/src__binder.rs_line_76_col_41.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.463157042,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.338073291,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_measure",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 62,
+                "column": 1
+              },
+              "end": {
+                "line": 97,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 76,
+              "column": 28
+            },
+            "end": {
+              "line": 76,
+              "column": 30
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_76_col_28.log",
+      "diff_path": "diff/src__binder.rs_line_76_col_28.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.318836583,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.342794459,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_measure",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 62,
+                "column": 1
+              },
+              "end": {
+                "line": 97,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 76,
+              "column": 73
+            },
+            "end": {
+              "line": 76,
+              "column": 75
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_76_col_73.log",
+      "diff_path": "diff/src__binder.rs_line_76_col_73.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.340852,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.34910075,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_measure",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 62,
+                "column": 1
+              },
+              "end": {
+                "line": 97,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 79,
+              "column": 24
+            },
+            "end": {
+              "line": 79,
+              "column": 26
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_79_col_24.log",
+      "diff_path": "diff/src__binder.rs_line_79_col_24.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.289279167,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.330583542,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_measure",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 62,
+                "column": 1
+              },
+              "end": {
+                "line": 97,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 82,
+              "column": 24
+            },
+            "end": {
+              "line": 82,
+              "column": 25
+            }
+          },
+          "replacement": "==",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_82_col_24.log",
+      "diff_path": "diff/src__binder.rs_line_82_col_24.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.387145,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.340834916,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_measure",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 62,
+                "column": 1
+              },
+              "end": {
+                "line": 97,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 82,
+              "column": 24
+            },
+            "end": {
+              "line": 82,
+              "column": 25
+            }
+          },
+          "replacement": "<",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_82_col_24_001.log",
+      "diff_path": "diff/src__binder.rs_line_82_col_24_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.39757925,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.330581916,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_measure",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 62,
+                "column": 1
+              },
+              "end": {
+                "line": 97,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 82,
+              "column": 24
+            },
+            "end": {
+              "line": 82,
+              "column": 25
+            }
+          },
+          "replacement": ">=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__binder.rs_line_82_col_24_002.log",
+      "diff_path": "diff/src__binder.rs_line_82_col_24_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.335058792,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.601941834,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_measure",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 62,
+                "column": 1
+              },
+              "end": {
+                "line": 97,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 89,
+              "column": 41
+            },
+            "end": {
+              "line": 89,
+              "column": 43
+            }
+          },
+          "replacement": "||",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_89_col_41.log",
+      "diff_path": "diff/src__binder.rs_line_89_col_41.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.326819375,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.392811166,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_measure",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 62,
+                "column": 1
+              },
+              "end": {
+                "line": 97,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 89,
+              "column": 28
+            },
+            "end": {
+              "line": 89,
+              "column": 30
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_89_col_28.log",
+      "diff_path": "diff/src__binder.rs_line_89_col_28.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.326237334,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.341574792,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_measure",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 62,
+                "column": 1
+              },
+              "end": {
+                "line": 97,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 89,
+              "column": 67
+            },
+            "end": {
+              "line": 89,
+              "column": 69
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_89_col_67.log",
+      "diff_path": "diff/src__binder.rs_line_89_col_67.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.328327875,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.349196083,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_measure",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 62,
+                "column": 1
+              },
+              "end": {
+                "line": 97,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 93,
+              "column": 9
+            },
+            "end": {
+              "line": 93,
+              "column": 30
+            }
+          },
+          "replacement": "",
+          "genre": "MatchArm"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_93_col_9.log",
+      "diff_path": "diff/src__binder.rs_line_93_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.435616875,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.331422291,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_measure",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 62,
+                "column": 1
+              },
+              "end": {
+                "line": 97,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 94,
+              "column": 9
+            },
+            "end": {
+              "line": 94,
+              "column": 26
+            }
+          },
+          "replacement": "",
+          "genre": "MatchArm"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__binder.rs_line_94_col_9.log",
+      "diff_path": "diff/src__binder.rs_line_94_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.337359292,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.510768292,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_level",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 99,
+                "column": 1
+              },
+              "end": {
+                "line": 126,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 105,
+              "column": 5
+            },
+            "end": {
+              "line": 125,
+              "column": 6
+            }
+          },
+          "replacement": "Ok(Box::leak(Box::new(Default::default())))",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/src__binder.rs_line_105_col_5.log",
+      "diff_path": "diff/src__binder.rs_line_105_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.173187541,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_level",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 99,
+                "column": 1
+              },
+              "end": {
+                "line": 126,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 115,
+              "column": 17
+            },
+            "end": {
+              "line": 115,
+              "column": 19
+            }
+          },
+          "replacement": "||",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_115_col_17.log",
+      "diff_path": "diff/src__binder.rs_line_115_col_17.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.345452125,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.37903,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_level",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 99,
+                "column": 1
+              },
+              "end": {
+                "line": 126,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 112,
+              "column": 17
+            },
+            "end": {
+              "line": 112,
+              "column": 19
+            }
+          },
+          "replacement": "||",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_112_col_17.log",
+      "diff_path": "diff/src__binder.rs_line_112_col_17.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.338560208,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.345105375,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_level",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 99,
+                "column": 1
+              },
+              "end": {
+                "line": 126,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 111,
+              "column": 20
+            },
+            "end": {
+              "line": 111,
+              "column": 22
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_111_col_20.log",
+      "diff_path": "diff/src__binder.rs_line_111_col_20.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.44768075,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.35278075,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_level",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 99,
+                "column": 1
+              },
+              "end": {
+                "line": 126,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 114,
+              "column": 55
+            },
+            "end": {
+              "line": 114,
+              "column": 57
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_114_col_55.log",
+      "diff_path": "diff/src__binder.rs_line_114_col_55.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.385747167,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.455435083,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_level",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 99,
+                "column": 1
+              },
+              "end": {
+                "line": 126,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 117,
+              "column": 55
+            },
+            "end": {
+              "line": 117,
+              "column": 57
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_117_col_55.log",
+      "diff_path": "diff/src__binder.rs_line_117_col_55.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.3404035,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.291900958,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_level",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 99,
+                "column": 1
+              },
+              "end": {
+                "line": 126,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 122,
+              "column": 9
+            },
+            "end": {
+              "line": 122,
+              "column": 32
+            }
+          },
+          "replacement": "",
+          "genre": "MatchArm"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_122_col_9.log",
+      "diff_path": "diff/src__binder.rs_line_122_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.401128959,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.301191542,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "resolve_level",
+            "return_type": "-> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>>",
+            "span": {
+              "start": {
+                "line": 99,
+                "column": 1
+              },
+              "end": {
+                "line": 126,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 123,
+              "column": 9
+            },
+            "end": {
+              "line": 123,
+              "column": 26
+            }
+          },
+          "replacement": "",
+          "genre": "MatchArm"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__binder.rs_line_123_col_9.log",
+      "diff_path": "diff/src__binder.rs_line_123_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.338456791,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.596329542,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "bind",
+            "return_type": "-> BindResult",
+            "span": {
+              "start": {
+                "line": 130,
+                "column": 1
+              },
+              "end": {
+                "line": 261,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 143,
+              "column": 5
+            },
+            "end": {
+              "line": 260,
+              "column": 8
+            }
+          },
+          "replacement": "Default::default()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/src__binder.rs_line_143_col_5.log",
+      "diff_path": "diff/src__binder.rs_line_143_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.120272042,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "bind",
+            "return_type": "-> BindResult",
+            "span": {
+              "start": {
+                "line": 130,
+                "column": 1
+              },
+              "end": {
+                "line": 261,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 165,
+              "column": 32
+            },
+            "end": {
+              "line": 165,
+              "column": 53
+            }
+          },
+          "replacement": "true",
+          "genre": "MatchArmGuard"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_165_col_32.log",
+      "diff_path": "diff/src__binder.rs_line_165_col_32.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.375370417,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.402735,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "bind",
+            "return_type": "-> BindResult",
+            "span": {
+              "start": {
+                "line": 130,
+                "column": 1
+              },
+              "end": {
+                "line": 261,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 165,
+              "column": 32
+            },
+            "end": {
+              "line": 165,
+              "column": 53
+            }
+          },
+          "replacement": "false",
+          "genre": "MatchArmGuard"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_165_col_32_001.log",
+      "diff_path": "diff/src__binder.rs_line_165_col_32_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.402773708,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.302141917,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "bind",
+            "return_type": "-> BindResult",
+            "span": {
+              "start": {
+                "line": 130,
+                "column": 1
+              },
+              "end": {
+                "line": 261,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 191,
+              "column": 32
+            },
+            "end": {
+              "line": 191,
+              "column": 53
+            }
+          },
+          "replacement": "true",
+          "genre": "MatchArmGuard"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_191_col_32.log",
+      "diff_path": "diff/src__binder.rs_line_191_col_32.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.572386042,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.347057,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "bind",
+            "return_type": "-> BindResult",
+            "span": {
+              "start": {
+                "line": 130,
+                "column": 1
+              },
+              "end": {
+                "line": 261,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 191,
+              "column": 32
+            },
+            "end": {
+              "line": 191,
+              "column": 53
+            }
+          },
+          "replacement": "false",
+          "genre": "MatchArmGuard"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_191_col_32_001.log",
+      "diff_path": "diff/src__binder.rs_line_191_col_32_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.487437542,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.332835042,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "bind",
+            "return_type": "-> BindResult",
+            "span": {
+              "start": {
+                "line": 130,
+                "column": 1
+              },
+              "end": {
+                "line": 261,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 220,
+              "column": 25
+            },
+            "end": {
+              "line": 220,
+              "column": 27
+            }
+          },
+          "replacement": "||",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_220_col_25.log",
+      "diff_path": "diff/src__binder.rs_line_220_col_25.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.439930959,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.333264333,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "bind",
+            "return_type": "-> BindResult",
+            "span": {
+              "start": {
+                "line": 130,
+                "column": 1
+              },
+              "end": {
+                "line": 261,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 219,
+              "column": 49
+            },
+            "end": {
+              "line": 219,
+              "column": 51
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_219_col_49.log",
+      "diff_path": "diff/src__binder.rs_line_219_col_49.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.44690025,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.293546917,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "bind",
+            "return_type": "-> BindResult",
+            "span": {
+              "start": {
+                "line": 130,
+                "column": 1
+              },
+              "end": {
+                "line": 261,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 220,
+              "column": 57
+            },
+            "end": {
+              "line": 220,
+              "column": 59
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_220_col_57.log",
+      "diff_path": "diff/src__binder.rs_line_220_col_57.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.49931575,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.286260375,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "bind",
+            "return_type": "-> BindResult",
+            "span": {
+              "start": {
+                "line": 130,
+                "column": 1
+              },
+              "end": {
+                "line": 261,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 225,
+              "column": 17
+            },
+            "end": {
+              "line": 233,
+              "column": 18
+            }
+          },
+          "replacement": "",
+          "genre": "MatchArm"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_225_col_17.log",
+      "diff_path": "diff/src__binder.rs_line_225_col_17.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.516600667,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.332735917,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "bind",
+            "return_type": "-> BindResult",
+            "span": {
+              "start": {
+                "line": 130,
+                "column": 1
+              },
+              "end": {
+                "line": 261,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 234,
+              "column": 17
+            },
+            "end": {
+              "line": 236,
+              "column": 18
+            }
+          },
+          "replacement": "",
+          "genre": "MatchArm"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_234_col_17.log",
+      "diff_path": "diff/src__binder.rs_line_234_col_17.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.4541555,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.336727333,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "bind",
+            "return_type": "-> BindResult",
+            "span": {
+              "start": {
+                "line": 130,
+                "column": 1
+              },
+              "end": {
+                "line": 261,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 248,
+              "column": 8
+            },
+            "end": {
+              "line": 248,
+              "column": 9
+            }
+          },
+          "replacement": "",
+          "genre": "UnaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_248_col_8.log",
+      "diff_path": "diff/src__binder.rs_line_248_col_8.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.397510542,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.342706583,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "mqo-catalog-binder",
+          "file": "src/binder.rs",
+          "function": {
+            "function_name": "bind",
+            "return_type": "-> BindResult",
+            "span": {
+              "start": {
+                "line": 130,
+                "column": 1
+              },
+              "end": {
+                "line": 261,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 251,
+              "column": 8
+            },
+            "end": {
+              "line": 251,
+              "column": 9
+            }
+          },
+          "replacement": "",
+          "genre": "UnaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__binder.rs_line_251_col_8.log",
+      "diff_path": "diff/src__binder.rs_line_251_col_8.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.617194458,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.350039083,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=mqo-catalog-binder@0.1.0"
+          ]
+        }
+      ]
+    }
+  ],
+  "total_mutants": 34,
+  "missed": 3,
+  "caught": 28,
+  "timeout": 0,
+  "unviable": 3,
+  "success": 0,
+  "start_time": "2026-06-08T21:12:05.632128Z",
+  "end_time": "2026-06-08T21:12:36.264315Z",
+  "cargo_mutants_version": "26.0.0"
+}

@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "autobuilder/**"]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Test (stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # mqo-spec is a git path dep; clone it into the expected location
+      - name: Clone mqo-spec
+        run: |
+          mkdir -p /home/runner/Documents/projects
+          git clone https://github.com/joeyen-atscale/mqo-spec /home/runner/Documents/projects/mqo-spec
+
+      - name: Update Cargo.toml path dep for CI
+        run: |
+          sed -i 's|path = "/Users/jsy/Documents/projects/mqo-spec"|path = "/home/runner/Documents/projects/mqo-spec"|' Cargo.toml
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85.0"
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo check
+        run: cargo check --workspace
+
+      - name: cargo clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: cargo test (release)
+        run: cargo test --release
+
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses
+        continue-on-error: true   # advisory — deny.toml is present but permissive

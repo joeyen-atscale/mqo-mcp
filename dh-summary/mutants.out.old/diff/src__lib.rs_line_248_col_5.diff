@@ -1,0 +1,67 @@
+--- src/lib.rs
++++ replace stats_float -> ColStats with Default::default()
+@@ -240,63 +240,17 @@
+         mean: Some(mean),
+         distinct: Some(distinct + null_count.min(1)),
+         top_k: None,
+     }
+ }
+ 
+ #[allow(clippy::cast_precision_loss)]
+ fn stats_float(data: &ColumnData) -> ColStats {
+-    let (vals, null_count, total) = match data {
+-        ColumnData::Float(v) => {
+-            let non_null: Vec<f64> = v.iter().filter_map(|o| *o).collect();
+-            let nulls = v.iter().filter(|o| o.is_none()).count() as u64;
+-            let tot = v.len() as u64;
+-            (non_null, nulls, tot)
+-        }
+-        ColumnData::Decimal(v) => {
+-            let non_null: Vec<f64> = v
+-                .iter()
+-                .filter_map(|o| o.as_deref())
+-                .filter_map(|s| s.parse::<f64>().ok())
+-                .collect();
+-            let nulls = v.iter().filter(|o| o.is_none()).count() as u64;
+-            let tot = v.len() as u64;
+-            (non_null, nulls, tot)
+-        }
+-        _ => (vec![], 0, 0),
+-    };
+-    let non_null_count = total - null_count;
+-    if vals.is_empty() {
+-        return ColStats {
+-            min: None,
+-            max: None,
+-            sum: None,
+-            mean: None,
+-            distinct: Some(null_count.min(1)),
+-            top_k: None,
+-        };
+-    }
+-    let min = vals.iter().copied().fold(f64::INFINITY, f64::min);
+-    let max = vals.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+-    let sum: f64 = vals.iter().sum();
+-    let mean = sum / non_null_count as f64;
+-    // Approximate distinct count via sort-dedup on bits.
+-    let mut sorted = vals.clone();
+-    sorted.sort_by(f64::total_cmp);
+-    sorted.dedup_by(|a, b| a.to_bits() == b.to_bits());
+-    let distinct = sorted.len() as u64 + null_count.min(1);
+-    ColStats {
+-        min: Some(min),
+-        max: Some(max),
+-        sum: Some(sum),
+-        mean: Some(mean),
+-        distinct: Some(distinct),
+-        top_k: None,
+-    }
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ #[allow(clippy::cast_precision_loss)]
+ fn stats_str(data: &ColumnData, topk: usize) -> ColStats {
+     let (values, null_count) = match data {
+         ColumnData::Str(v) => {
+             let non_null: Vec<&str> = v.iter().filter_map(|o| o.as_deref()).collect();
+             let nulls = v.iter().filter(|o| o.is_none()).count() as u64;

@@ -1,0 +1,30 @@
+--- src/lib.rs
++++ replace count_nulls -> u64 with 1
+@@ -461,26 +461,17 @@
+             }
+         }
+     }
+ 
+     notes
+ }
+ 
+ fn count_nulls(data: &ColumnData) -> u64 {
+-    match data {
+-        ColumnData::Int(v) => v.iter().filter(|o| o.is_none()).count() as u64,
+-        ColumnData::Float(v) => v.iter().filter(|o| o.is_none()).count() as u64,
+-        ColumnData::Bool(v) => v.iter().filter(|o| o.is_none()).count() as u64,
+-        ColumnData::Decimal(v)
+-        | ColumnData::Str(v)
+-        | ColumnData::Date(v)
+-        | ColumnData::Time(v) => v.iter().filter(|o| o.is_none()).count() as u64,
+-        _ => 0,
+-    }
++    1 /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Enforce `cfg.max_bytes` by progressively truncating the sample.
+ ///
+ /// Stats are never removed.  If the zero-sample summary still exceeds
+ /// `max_bytes`, this function panics (the caller's `max_bytes` is too small).
+ fn enforce_max_bytes(
+     mut summary: DatasetSummary,

@@ -1,0 +1,116 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "prd_source": "/Users/jsy/Documents/PRDs/ARCHIVE/PRD-mqo-vs-sql-bench.md",
+  "root_motivation": "The multidimensional-query-object hypothesis must be a falsifiable number before it can drive product decisions: we need a head-to-head benchmark that proves (or disproves) that the object interface reduces invalid-entity errors and improves accuracy vs raw text-to-SQL, on the same NL-question corpus, with a configurable external grader that prevents the benchmark from grading its own work.",
+  "user_persona": "AtScale engineer or PM running the benchmark locally or in CI to produce evidence for the 'semantic layer for AI' vision; must work with no live cluster via bundled fixtures.",
+  "unfakeable_metric": {
+    "name": "acceptance_tests_passing",
+    "lower_is_better": false,
+    "harness_command": "cargo test --release 2>&1 | grep -E '^test result' | tail -1",
+    "target": 17
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "Runs both arms over a tasks file and produces a per-question result table (one row per task, each carrying arm_a and arm_b outputs).",
+      "test": "tests/integration.rs::ac1_per_question_table_has_correct_row_count, ac1_each_row_has_both_arms"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "Emits aggregate accuracy, invalid-entity rate, retry count, latency, and token deltas between the two arms; delta fields equal arm_b minus arm_a.",
+      "test": "tests/integration.rs::ac2_aggregate_covers_all_five_metrics, ac2_deltas_are_b_minus_a"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "Result equivalence judged by a configurable external grader (shell-out); grader command is not hardcoded.",
+      "test": "tests/integration.rs::ac3_grader_is_configurable_not_hardcoded"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "Report names the winning arm per metric and writes both JSON and markdown formats; every winner field is one of arm_a_sql / arm_b_mqo / tie.",
+      "test": "tests/integration.rs::ac4_aggregate_names_winner_per_metric, ac4_markdown_report_contains_required_sections, ac4_json_report_structure"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "Runs green end-to-end on bundled fixture (recorded arm outputs + stub grader); no live cluster or model key required.",
+      "test": "tests/integration.rs::ac5_end_to_end_fixture_run_no_external_deps"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "cargo test --release passes; clippy clean (deny warnings).",
+      "test": "tests/integration.rs::ac6_cargo_test_release_passes + cargo clippy -- -D warnings exit 0"
+    }
+  ],
+  "scope": [
+    "CLI binary mqo-bench accepting --tasks, --grader, --fixture-a, --fixture-b, --output-json, --output-md flags",
+    "Arm A: text-to-SQL run_query path (fixture-driven for tests; live path reserved for future work)",
+    "Arm B: MQO query_multidimensional path (fixture-driven for tests)",
+    "External grader invocation via shell-out; grader receives JSON file {a:[...], b:[...]}",
+    "Aggregate report: accuracy, invalid-entity rate, retries, latency, tokens \u2014 each with delta and named winner",
+    "Per-question result table in JSON and Markdown",
+    "Bundled fixture set (3 tasks) + stub grader for offline tests"
+  ],
+  "non_goals": [
+    "Live cluster integration (no real AtScale MCP calls in this crate; fixture-only for tests)",
+    "Implementing or bundling the grader logic (grader is always external shell-out)",
+    "Statistical significance testing, confidence intervals, or p-values",
+    "Streaming or incremental output (batch-only)",
+    "Multi-model or multi-grader combinatorial runs in a single invocation",
+    "Web UI, TUI, or any interactive output format beyond JSON+Markdown"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "cli",
+    "deny_unsafe": true,
+    "max_deps": 8,
+    "msrv": "1.70.0",
+    "additional": {
+      "forbid_unsafe_code": "enforced via #![forbid(unsafe_code)] in both lib.rs and main.rs",
+      "keystone_deps": "mqo-spec (path dep), mqo-mcp-server (transitive); both rebuilt via autobuilder"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why build a benchmark CLI instead of writing a one-off script?",
+      "a": "The hypothesis ('multidimensional beats tabular for AI analytics') needs to be repeatable across corpus updates and referenced by name in vision documents, not re-derived each time."
+    },
+    {
+      "why": 2,
+      "q": "Why does it need to be repeatable and citable?",
+      "a": "The 20%\u219295% accuracy claim in Self-Assessment Dossier PTC/4713087073 is cited externally; a benchmark without a reproducible binary is not citeable \u2014 it's just a number someone typed."
+    },
+    {
+      "why": 3,
+      "q": "Why does the benchmark test the interface (SQL vs MQO object) rather than just measuring accuracy on a shared query path?",
+      "a": "The object interface is the unique value proposition of the MQO vision; if a schema-aware SQL prompt matches MQO accuracy, the interface layer adds no value and the vision needs to be revised."
+    },
+    {
+      "why": 4,
+      "q": "Why include invalid-entity rate as a first-class metric, not just accuracy?",
+      "a": "Hallucinated measure/dimension names in SQL are a silent failure (wrong rows, no error); the MQO arm fails loudly on invalid entities. If MQO's hallucination rate is lower, that's a stronger safety claim than accuracy alone."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Does 'configurable grader' mean the grader binary must accept exactly one positional argument (the JSON file path)?",
+      "resolution": "Yes. The protocol is: grader_cmd <input_json_file>; grader emits GraderVerdict JSON on stdout. This is the contract verified in AC3."
+    },
+    {
+      "question": "Should the benchmark call the live MQO/SQL endpoints in tests?",
+      "resolution": "No. AC5 explicitly requires offline operation via bundled fixtures. Live calls are deferred to a future integration-test crate."
+    },
+    {
+      "question": "Is mqo-spec a path dependency (local) or a crates.io dependency?",
+      "resolution": "Path dependency at ../mqo-spec, rebuilt via autobuilder. No crates.io publication required for tests to pass."
+    }
+  ],
+  "intent_slug": "mqo-vs-sql-bench",
+  "created_at": "2026-06-08T00:00:00Z"
+}

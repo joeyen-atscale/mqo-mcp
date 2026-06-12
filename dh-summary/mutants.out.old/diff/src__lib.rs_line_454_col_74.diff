@@ -1,0 +1,21 @@
+--- src/lib.rs
++++ replace == with != in generate_notes
+@@ -446,17 +446,17 @@
+                 if let Some(topk_vals) = &cs.top_k {
+                     let min_val = topk_vals
+                         .iter()
+                         .find(|v| v.get("label").and_then(Value::as_str) == Some("min"))
+                         .and_then(|v| v.get("value"))
+                         .and_then(Value::as_str);
+                     let max_val = topk_vals
+                         .iter()
+-                        .find(|v| v.get("label").and_then(Value::as_str) == Some("max"))
++                        .find(|v| v.get("label").and_then(Value::as_str) != /* ~ changed by cargo-mutants ~ */ Some("max"))
+                         .and_then(|v| v.get("value"))
+                         .and_then(Value::as_str);
+                     if let (Some(min), Some(max)) = (min_val, max_val) {
+                         notes.push(format!("{} spans {} to {}", col.name, min, max));
+                     }
+                 }
+             }
+         }

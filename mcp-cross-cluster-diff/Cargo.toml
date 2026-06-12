@@ -1,0 +1,26 @@
+[package]
+name = "mcp-cross-cluster-diff"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70.0"
+description = "Diff two AtScale cluster describe_model catalogs and classify divergences"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/joeyen-atscale/mcp-cross-cluster-diff"
+keywords = ["semantic-layer", "olap", "federation", "diff", "atscale"]
+categories = ["command-line-utilities", "data-structures"]
+
+[[bin]]
+name = "mcp-cross-cluster-diff"
+path = "src/main.rs"
+
+[lib]
+name = "mcp_cross_cluster_diff"
+path = "src/lib.rs"
+
+[dependencies]
+mcp-cluster-registry = { path = "../mcp-cluster-registry" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]

@@ -1,0 +1,125 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "prd_source": "/Users/jsy/Documents/PRDs/ARCHIVE/PRD-dh-summary.md",
+  "intent_slug": "dh-summary",
+  "created_at": "2026-06-08T00:00:00Z",
+  "root_motivation": "The LLM orchestrating MQO operations needs a faithful, context-safe, and stable picture of every dataset it touches so it can decide the correct next operation (filter, aggregate, top_n, etc.) without ever receiving the raw rows. The summary IS the protocol boundary: without a bounded, informative summary the dataset-handle abstraction is fictional and the HARD_ROW_CAP=1000 leak in mqo-mcp-server is the only thing standing between the model and context overflow.",
+  "user_persona": "Rust library consumer (mqo-mcp-server, dh-ops, future fleet members) that calls summarize(&dataset, &cfg) and capabilities(&dataset) to produce the LLM-visible compact view of any Dataset returned by dh-store.",
+  "unfakeable_metric": {
+    "name": "tests_pass_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --release 2>&1 | grep -E '^test result' | grep -oP '[0-9]+ passed' | grep -oP '[0-9]+'",
+    "target": 7
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "summarize over a 10_000-row fixture produces a summary whose sample.len() <= sample_cap AND whose serialized JSON size <= max_bytes.",
+      "test": "tests::ac1_large_dataset_sample_and_size_bounds"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "Numeric stats (min/max/sum/mean/distinct) match a hand-computed golden for a 5-value Int fixture.",
+      "test": "tests::ac2_numeric_stats_golden"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "Categorical top-k is correct and capped at topk; date span min/max are correct.",
+      "test": "tests::ac3_categorical_topk_and_date_span"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "capabilities omits Pivot for a single-dimension dataset and includes Pivot for a >=2-dimension dataset.",
+      "test": "tests::ac4_capabilities_pivot_rule"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "At least one deterministic null note is generated for a nullable fixture; a dominant-group note is generated when one group >= 50%; notes are stable (same input -> same output).",
+      "test": "tests::ac5_notes_nulls_and_dominant_group"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "When a dataset would exceed max_bytes, the sample is truncated (not the stats) and a truncation note is added; stats for all columns are still present.",
+      "test": "tests::ac6_max_bytes_truncates_sample_not_stats"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "cargo test --release passes; cargo clippy --release -- -D warnings is clean; round-trip serialization to/from JSON is lossless.",
+      "test": "tests::ac7_round_trip_serialization"
+    }
+  ],
+  "scope": [
+    "summarize(&Dataset, cfg: &SummaryCfg) -> DatasetSummary with bounded sample and stats",
+    "Per-column ColStats: numerics (min/max/sum/mean/distinct), categoricals (distinct + top-k with counts), dates (min/max/span via top_k)",
+    "Deterministic notes: null counts, dominant group >= 50%, date spans",
+    "capabilities(&Dataset) -> Vec<Capability> with Pivot rule (>= 2 dims)",
+    "Hard max_bytes self-check: truncates sample (never stats); panics only if zero-sample still exceeds budget",
+    "Pure/deterministic library — no I/O, no async, no randomness"
+  ],
+  "non_goals": [
+    "Not a row-dump or pass-through — summarize must never return more rows than sample_cap",
+    "Not an async or streaming API — pure synchronous fn",
+    "Not responsible for storing or evicting dataset handles — that is dh-store's job",
+    "Not computing expensive statistical measures (median, percentiles, histograms) — only cheap O(n) stats",
+    "Not providing a CLI binary — library crate only (--target lib)",
+    "Not computing ground-truth numerical correctness for the benchmark scorer — separate concern"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 3,
+    "msrv": "1.70.0",
+    "additional": {
+      "no_std": false,
+      "deterministic_output": true,
+      "dep_dh_spec": "git or path",
+      "dep_dh_store": "git or path",
+      "dep_serde_json": "1"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why does the LLM need a summary instead of raw rows?",
+      "a": "Raw rows can exceed the context window. The HARD_ROW_CAP=1000 in mqo-mcp-server is an ad-hoc ceiling; the model also can't decide its next op without shape/stats."
+    },
+    {
+      "why": 2,
+      "q": "Why does the bound on the summary matter specifically?",
+      "a": "If summary size is unbounded, the bounded-handle contract is fictional — rows still flood the context even if called 'a summary'."
+    },
+    {
+      "why": 3,
+      "q": "Why not just extend the existing HARD_ROW_CAP truncation at the MQO engine layer?",
+      "a": "Truncation gives the model a partial view with no stats; the model still can't decide whether to filter, aggregate, or pivot next without knowing shape, nulls, or dominant groups."
+    },
+    {
+      "why": 4,
+      "q": "Why must the output be deterministic?",
+      "a": "Non-deterministic summaries would produce flapping orchestrator decisions; the model would see different data on retries and potentially choose conflicting operations."
+    },
+    {
+      "why": 5,
+      "q": "Why is this a separate crate rather than inlining into mqo-mcp-server?",
+      "a": "Every dh-* fleet member (dh-ops, dh-pivot, future ops) needs to emit a summary after every operation. A shared crate enforces the single canonical summary shape and the max_bytes contract across the fleet."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Should 'distinct' count nulls as a distinct value?",
+      "resolution": "Yes — nulls are treated as one additional distinct value when null_count > 0, consistent with SQL semantics."
+    },
+    {
+      "question": "What does 'date span correct' mean for the test?",
+      "resolution": "Date min/max are surfaced via top_k entries with label fields ('min'/'max') since ColStats has no dedicated span field."
+    }
+  ]
+}

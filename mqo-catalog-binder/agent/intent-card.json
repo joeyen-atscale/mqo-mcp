@@ -1,0 +1,118 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "prd_source": "/Users/jsy/Documents/PRDs/ARCHIVE/PRD-mqo-catalog-binder.md",
+  "root_motivation": "Make fabricated or ambiguous MQO references a structural hard-error rather than a silently-wrong name in generated SQL, by turning R1–R3 from prompt rules into a deterministic code gate that the MQO compiler must pass before it can emit any query.",
+  "user_persona": "An MQO compiler pipeline (mqo-mcp-server or similar automation), dispatched by an LLM, that needs a validated BoundMqo before calling the SQL generator.  Also: an AtScale engineer or SE running one-off verification of a catalog snapshot against a draft MQO.",
+  "unfakeable_metric": {
+    "name": "acceptance_tests_passing",
+    "lower_is_better": false,
+    "harness_command": "cargo test --release 2>&1 | grep -E '^test result' | tail -1",
+    "target": 24
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "A valid MQO over a fixture catalog binds every measure, level, and filter ref to its unique_name and exits 0. Binding is case-insensitive against both unique_name and label.",
+      "test": "integration_tests::ac1_valid_mqo_binds_and_exits_0 + integration_tests::ac1_case_insensitive_resolution"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "A fabricated measure or level name not in the catalog produces a {\"not_found\":[...]} report and exit 4. The binder must never guess or substitute a close match.",
+      "test": "integration_tests::ac2_fabricated_measure_not_found + integration_tests::ac2_not_found_no_guess"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "An ambiguous label (same label in two or more columns) produces a {\"ambiguous\":[{ref, candidates:[...]}]} report and exit 3 with the full candidate set.",
+      "test": "integration_tests::ac3_ambiguous_label_returns_candidates"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "A CalcGroupMember filter is resolved exclusively from the Calculation Groups section of describe_model output; its MDX is carried into the BoundMqo. A member not found in that section is reported not_found, never guessed.",
+      "test": "integration_tests::ac4_calc_group_member_resolved_with_mdx + integration_tests::ac4_missing_calc_group_member_not_found"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "A semi-additive measure is flagged semi_additive=true in the BoundMqo output and carries the full trigger_hierarchies list; a non-semi-additive measure has semi_additive=false and empty trigger_hierarchies.",
+      "test": "integration_tests::ac5_semi_additive_flagged_with_trigger_hierarchies + integration_tests::ac5_non_semi_additive_has_empty_triggers"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "cargo test --release passes with zero failures; cargo clippy --workspace -- -D warnings emits no diagnostics.",
+      "test": "cargo test --release 2>&1 | grep -c 'FAILED' | grep -q '^0$' && cargo clippy --workspace -- -D warnings 2>&1 | grep -cE 'error|warning\\[' | grep -q '^0$'"
+    }
+  ],
+  "scope": [
+    "CLI binary mqo-bind: reads --mqo <file> and --catalog <file>, resolves all MQO refs, emits BoundMqo or error report as JSON on stdout.",
+    "Resolution modes: exact unique_name match (case-insensitive) then label match (case-insensitive).",
+    "Structured not_found and ambiguous error reports, each listing all unresolved/colliding refs in a single pass.",
+    "CalcGroupMember resolution from describe_model calc_groups section only.",
+    "Semi-additive flag and trigger_hierarchies forwarded from catalog metadata.",
+    "required_dimension forwarded from catalog metadata for R11 compiler enforcement.",
+    "Exit codes: 0 bound, 3 ambiguous, 4 not-found, 2 bad input.",
+    "Dependency on mqo-spec git crate for MQO/BoundMqo types."
+  ],
+  "non_goals": [
+    "SQL compilation or query execution — binder stops at unique_name resolution.",
+    "Fuzzy matching / Levenshtein suggestions — not_found is a hard stop, no guessing.",
+    "Catalog snapshot retrieval (no network calls, no MCP calls) — snapshot must be pre-fetched and passed as --catalog.",
+    "Multi-model disambiguation when both models are equally valid — caller must disambiguate by prefixing unique_name.",
+    "Updating or mutating the catalog snapshot — the snapshot is read-only.",
+    "WASM, async, or service target — CLI only.",
+    "Building a full BoundMqo type inside this crate — uses extended local types (BoundMqoOutput, BoundMeasureExt, etc.) that are a superset of what mqo_spec::BoundMqo currently exposes."
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "cli",
+    "deny_unsafe": true,
+    "max_deps": 4,
+    "msrv": "1.70.0",
+    "additional": {
+      "forbid_unsafe_code": "src/main.rs carries #![forbid(unsafe_code)] — must not be removed or weakened",
+      "exit_codes_are_contract": "Exit codes 0/2/3/4 are part of the public API; any change requires AC amendment"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why do you need a CLI that resolves MQO references against a catalog?",
+      "a": "Because the MQO compiler currently trusts the LLM-supplied unique_names verbatim, and fabricated names silently produce wrong SQL."
+    },
+    {
+      "why": 2,
+      "q": "Why does the compiler trust the LLM without validation?",
+      "a": "Because R1–R3 (identify exact unique_names, present alternatives on ambiguity, confirm with rejected alternatives) are prompt rules, not code gates — the LLM can violate them without any structural check."
+    },
+    {
+      "why": 3,
+      "q": "Why are R1–R3 implemented as prompt rules instead of code?",
+      "a": "Because when the MQO pipeline was designed, the catalog was queried inline by the agent; there was no pre-compiled catalog snapshot to validate against before compilation."
+    },
+    {
+      "why": 4,
+      "q": "Why is a catalog snapshot now available?",
+      "a": "mqo-mcp-server now calls list_models/search_columns/describe_model and stores the result as a JSON bundle before dispatching the compiler; that bundle is the ground truth the binder can validate against."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Should the binder guess close matches (Levenshtein) for not_found refs?",
+      "resolution": "No. AC2 explicitly says 'never a guessed substitute.' not_found is a hard stop."
+    },
+    {
+      "question": "What if both ambiguous and not_found conditions occur in one MQO?",
+      "resolution": "Ambiguous takes precedence over not_found per the implementation comment in binder.rs: collect all, if any ambiguous → Ambiguous; else if any not_found → NotFound."
+    },
+    {
+      "question": "Does required_dimension belong in BoundMeasureExt or only in catalog metadata?",
+      "resolution": "Carried into BoundMeasureExt so the downstream compiler can enforce R11 without re-reading the catalog."
+    }
+  ],
+  "created_at": "2026-06-08T00:00:00Z",
+  "intent_slug": "mqo-catalog-binder"
+}

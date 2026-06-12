@@ -1,0 +1,124 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "intent_slug": "mqo-dax-compiler",
+  "prd_source": "/Users/jsy/Documents/PRDs/ARCHIVE/PRD-mqo-dax-compiler.md",
+  "root_motivation": "DAX EVALUATE is the primary compile target for the MQO because it returns a flat table (1:1 with JSON array-of-objects, LLM-native) while preserving multidimensional semantics — eliminating the MDX cellset cross-product that burns inference credits. The compiler must be drop-in usable from the mqo pipeline: BoundMqo JSON in, valid DAX EVALUATE string out.",
+  "user_persona": "AtScale MQO pipeline subagent (or CLI integration) that feeds BoundMqo JSON produced by mqo-bind into mqo-dax and receives syntactically valid DAX EVALUATE text for execution against a Power BI / AtScale DAX engine.",
+  "unfakeable_metric": {
+    "name": "acceptance_tests_passing",
+    "lower_is_better": false,
+    "harness_command": "cargo test --release 2>&1 | grep -E '^test result' | awk '{print $4}'",
+    "target": 30
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "At least 8 golden BoundMqo → DAX pairs compile string-equal after normalization.",
+      "test": "tests/acceptance.rs — ac1_golden_* (8 cases: measure_only_row, measure_plus_dim, two_measures, member_filter, range_filter, limit_topn, order_by, calc_group_member_filter)"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "Each TimeIntel variant maps to the correct DAX function: YoY→SAMEPERIODLASTYEAR, PriorPeriod→DATEADD, ToDate{Year}→DATESYTD, ToDate{Quarter}→DATESQTD, ToDate{Month}→DATESMTD, RunningTotal→DATESINTORANGE, Share→DIVIDE+ALL, Rank{top_n}→TOPN.",
+      "test": "tests/acceptance.rs — ac2_* (9 cases per variant)"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "A calc-group member is emitted as a calc-group column filter (CalcGroup[CalcGroup] = 'member'), not invented time-intelligence logic.",
+      "test": "tests/acceptance.rs — ac3_calc_group_member_is_column_filter, ac3_filter_calc_group_member_is_column_filter"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "limit produces TOPN wrapper; order produces ORDER BY clause with correct ASC/DESC direction.",
+      "test": "tests/acceptance.rs — ac4_limit_produces_topn, ac4_order_desc_produces_order_by_desc, ac4_order_asc_produces_order_by_asc, ac4_multi_key_order"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "All emitted DAX passes the bundled structural syntax check (EVALUATE keyword, balanced parens/brackets/quotes, at least one recognized table construct). No engine round-trip required.",
+      "test": "tests/acceptance.rs — ac5_* + validate_dax_syntax called on every golden output in all AC1-AC4 tests"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "cargo test --release passes; cargo clippy -- -D warnings passes.",
+      "test": "cargo test --release && cargo clippy --workspace -- -D warnings"
+    },
+    {
+      "id": "AC7",
+      "level": "SHOULD",
+      "description": "Binary integration test: mqo-dax --bound <fixture.json> emits valid DAX to stdout with exit code 0; missing file exits 2; empty-measures JSON exits 1.",
+      "test": "tests/integration_cli.rs — cli_measure_only_stdout, cli_missing_file_exits_2, cli_empty_measures_exits_1"
+    },
+    {
+      "id": "AC8",
+      "level": "MAY",
+      "description": "Mutation kill rate >= 60% (Phase 1 telemetry only, not a hard gate).",
+      "test": "target/autobuilder/mutants-receipt.json — mutation_kill_rate field"
+    }
+  ],
+  "scope": [
+    "Rust CLI binary (mqo-dax) + companion library (mqo_dax_compiler)",
+    "BoundMqo JSON deserialization via local types (not binder crate dep)",
+    "DAX EVALUATE / SUMMARIZECOLUMNS / ROW codegen",
+    "TimeIntel variant mapping to DAX functions",
+    "Calc-group member filter emission",
+    "Limit (TOPN) and order (ORDER BY) emission",
+    "Bundled structural DAX syntax validation (no engine round-trip)",
+    "Integration CLI tests via std::process::Command"
+  ],
+  "non_goals": [
+    "MDX compilation — this is the DAX-primary path; MDX is a separate binary",
+    "Engine round-trip validation — syntax check is structural only",
+    "DAX semantic correctness verification (model schema awareness)",
+    "Power BI dataset / XMLA connectivity",
+    "Streaming or async compilation",
+    "GUI or web service interface"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "cli",
+    "deny_unsafe": true,
+    "max_deps": 6,
+    "msrv": "1.70.0",
+    "additional": {
+      "git_dep_mqo_spec": "mqo-spec is a path dep from the mqo monorepo; must resolve to the autobuilder-rebuilt version"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why compile BoundMqo to DAX rather than MDX?",
+      "a": "DAX EVALUATE returns a flat table — JSON array-of-objects — which is directly LLM-native. MDX returns a multidimensional cellset that produces cross-product blow-up (the rowLimitAdvisory in mcp-server proves it burns credits)."
+    },
+    {
+      "why": 2,
+      "q": "Why is LLM-native output the deciding factor?",
+      "a": "The consumer is an LLM agent (MQO pipeline subagent). It must parse the result in a single token-efficient pass. A flat table is O(rows) tokens; a cellset is O(rows × cols) and requires a reshape step that adds latency and failure modes."
+    },
+    {
+      "why": 3,
+      "q": "Why not flatten MDX on the server side and skip a new compiler?",
+      "a": "AtScale's DaxEvaluateHandler already exists and returns tabular results natively. Using the DAX path avoids an extra reshape layer and leverages the SSDAX + Power BI investment already in Joe's charter."
+    },
+    {
+      "why": 4,
+      "q": "Why is this a standalone CLI rather than a function inside mqo-server?",
+      "a": "The MQO pipeline is compositional: bind → compile → execute. A CLI binary is independently testable, can be swapped for a future SPARQL or SQL backend, and matches the pipeline's Unix-pipe architecture."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Should the compiler validate DAX semantics (measure exists in model) or only structure?",
+      "resolution": "Structural only — no engine round-trip required per AC5. The binder (mqo-bind) owns semantic validation."
+    },
+    {
+      "question": "What is the git dep path for mqo-spec now that autobuilder rebuilt it?",
+      "resolution": "Cargo.toml uses path = '../mqo-spec' (sibling directory); the autobuilder-rebuilt mqo-spec is in ~/Documents/projects/mqo-spec."
+    }
+  ],
+  "created_at": "2026-06-08T21:03:00Z"
+}

@@ -1,0 +1,17 @@
+{
+  "model": "sales",
+  "measures": [
+    { "unique_name": "sales.revenue" },
+    { "unique_name": "sales.units_sold" }
+  ],
+  "dimensions": [
+    { "hierarchy": "customer.geography", "level": "country" }
+  ],
+  "filters": [],
+  "time_intelligence": [
+    { "op": "rank", "by": "sales.revenue", "top_n": 10 }
+  ],
+  "order": null,
+  "limit": null,
+  "non_empty": true
+}

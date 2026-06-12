@@ -1,0 +1,13 @@
+{
+  "level_cardinalities": {
+    "time.calendar.[Year]": 5,
+    "time.calendar.[Month]": 60,
+    "geo.country.[Country]": 200,
+    "customer.account.[Account]": 100000
+  },
+  "shape_flags": {
+    "asymmetric_axes": false,
+    "drill_through": false,
+    "cellset_requested": false
+  }
+}

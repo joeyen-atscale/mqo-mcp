@@ -1,0 +1,23 @@
+--- src/lib.rs
++++ replace serialized_len -> usize with 0
+@@ -515,19 +515,17 @@
+         "even the zero-sample summary exceeds max_bytes={} — increase max_bytes",
+         cfg.max_bytes
+     );
+ 
+     summary
+ }
+ 
+ fn serialized_len(summary: &DatasetSummary) -> usize {
+-    serde_json::to_vec(summary)
+-        .expect("DatasetSummary is always serializable")
+-        .len()
++    0 /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ // ── Tests ───────────────────────────────────────────────────────────────────
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+     use dh_spec::{ColumnRole, DType};

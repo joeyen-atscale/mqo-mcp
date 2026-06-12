@@ -1,0 +1,12 @@
+src/lib.rs:74:5: replace summarize -> DatasetSummary with Default::default()
+src/lib.rs:106:5: replace capabilities -> Vec<Capability> with vec![Default::default()]
+src/lib.rs:191:5: replace compute_stats -> HashMap<String, ColStats> with HashMap::from_iter([(String::new(), Default::default())])
+src/lib.rs:191:5: replace compute_stats -> HashMap<String, ColStats> with HashMap::from_iter([("xyzzy".into(), Default::default())])
+src/lib.rs:200:5: replace compute_col_stats -> ColStats with Default::default()
+src/lib.rs:211:5: replace stats_int -> ColStats with Default::default()
+src/lib.rs:248:5: replace stats_float -> ColStats with Default::default()
+src/lib.rs:299:5: replace stats_str -> ColStats with Default::default()
+src/lib.rs:300:9: delete match arm ColumnData::Str(v) in stats_str
+src/lib.rs:330:5: replace stats_bool -> ColStats with Default::default()
+src/lib.rs:358:5: replace stats_date -> ColStats with Default::default()
+src/lib.rs:492:5: replace enforce_max_bytes -> DatasetSummary with Default::default()

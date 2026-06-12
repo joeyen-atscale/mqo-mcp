@@ -1,0 +1,24 @@
+--- src/lib.rs
++++ replace count_distinct_int -> u64 with 1
+@@ -386,20 +386,17 @@
+         sum: None,
+         mean: None,
+         distinct: Some(distinct),
+         top_k: span_entry,
+     }
+ }
+ 
+ fn count_distinct_int(vals: &[i64]) -> u64 {
+-    let mut v = vals.to_vec();
+-    v.sort_unstable();
+-    v.dedup();
+-    v.len() as u64
++    1 /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Generate deterministic notes about nulls, dominant groups, date spans, etc.
+ #[allow(clippy::cast_precision_loss)]
+ fn generate_notes(dataset: &Dataset, stats: &HashMap<String, ColStats>) -> Vec<String> {
+     let mut notes = Vec::new();
+     let total_rows = dataset.row_count();
+     if total_rows == 0 {

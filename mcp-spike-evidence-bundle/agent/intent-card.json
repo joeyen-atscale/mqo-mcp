@@ -1,0 +1,109 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "prd_source": "/Users/jsy/Documents/PRDs/PRD-mcp-spike-evidence-bundle.md",
+  "intent_slug": "mcp-spike-evidence-bundle",
+  "root_motivation": "Engineering and Patrick need a single machine-readable + human-readable document that maps every AC from the four grooming spikes (ATSCALE-49212-49215) to a concrete produced artifact (or an honest gap/skip verdict), so no one mistakes 'we measured the token side' for 'we closed the spike' and the hand-back brief is checksum-verifiable against the fleet's actual outputs.",
+  "user_persona": "Joe Yen (spike owner) runs this once after the four sibling CLIs ship; output goes to the grooming thread and to Patrick as the spike-closure evidence package.",
+  "unfakeable_metric": {
+    "name": "acceptance_tests_passing_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --workspace --no-fail-fast 2>&1 | grep -c 'test .* ok'",
+    "target": 7
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "Given all four artifact inputs + a ticket-map, the bundle emits spike_evidence.json with one entry per ticket and a per-AC verdict for every AC in the map.",
+      "test": "tests/acceptance_AC1.rs"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "An AC whose expected artifact field is present with a real value is verdicted 'produced' with a value_summary echoing the value; an AC whose artifact is absent is 'skip-needs-live' or 'gap' (never 'produced').",
+      "test": "tests/acceptance_AC2.rs"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "A 'skip-needs-live' verdict carries a non-empty blocked_on naming the unmet dependency; the run still exits 0.",
+      "test": "tests/acceptance_AC3.rs"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "The per-ticket summary counts sum to the number of ACs in the map for that ticket (every AC gets exactly one verdict — no AC dropped, no double-count).",
+      "test": "tests/acceptance_AC4.rs"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "--format markdown emits one section per ticket with an AC→verdict→evidence table, and skip-needs-live rows render their blocked_on.",
+      "test": "tests/acceptance_AC5.rs"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "Malformed JSON in any input exits 2 with a stderr diagnostic naming the bad file, never a panic; a missing optional artifact degrades its ACs to skip-needs-live, not a crash.",
+      "test": "tests/acceptance_AC6.rs"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "cargo test passes offline on fixtures; cargo clippy --all-targets -- -D warnings clean.",
+      "test": "tests/acceptance_AC7.rs — clippy_warning_count == 0 AND all prior ACs green"
+    }
+  ],
+  "scope": [
+    "Reads four artifact JSON files (footprint, paramq bench report, walkthrough transcript, handle-demo) plus a ticket-map JSON",
+    "Maps each ticket AC in the ticket-map to a verdict: produced | gap | skip-needs-live",
+    "Emits spike_evidence.json with per-AC verdicts and per-ticket summary counts",
+    "Emits --format markdown brief with AC→verdict→evidence tables per ticket",
+    "Exits 0 on honest gaps/skips, exits 2 on malformed input"
+  ],
+  "non_goals": [
+    "Producing any measurement itself — it only reads the sibling outputs",
+    "Deciding whether a spike should ship — it organizes evidence; engineering decides",
+    "Inventing AC coverage that artifacts don't support — missing value is gap, never produced",
+    "Network access or live DAX/MDX port execution",
+    "Integrating or calling the sibling CLIs directly — it reads their output JSON only"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2024",
+    "target_kind": "cli",
+    "deny_unsafe": true,
+    "max_deps": 5,
+    "msrv": "1.85",
+    "additional": {
+      "allowed_deps": "serde, serde_json, clap — no network, no measurement logic"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why build a capstone bundler when the four CLIs already emit JSON?",
+      "a": "Because four separate JSON files scattered across four repos is not a finding; engineering needs 'here is AC1, here is the number, here is what's still a gap.'"
+    },
+    {
+      "why": 2,
+      "q": "Why does engineering need an AC→verdict mapping rather than just reading the raw JSON?",
+      "a": "Because each spike's ACs are only partially covered by the fleet — the honest gaps (live LLM vendor, live DAX port, SE-DEMO access) must be named explicitly so no one mistakes partial coverage for full spike closure."
+    },
+    {
+      "why": 3,
+      "q": "Why must the gaps be named in a machine-readable artifact rather than prose?",
+      "a": "So the grooming thread can verify the hand-back brief against the ticket's ACs by checksum rather than by reading prose — the spike convention says the deliverable is documented evidence, not a narrative."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "What is the exact shape of the ticket-map input?",
+      "resolution": "A checked-in JSON file: {tickets: [{ticket, acs: [{id, text, expected_artifact, owner, verdict_if_absent?}]}]}. The bundle scores each AC against the named artifact file."
+    },
+    {
+      "question": "How does the bundle decide 'gap' vs 'skip-needs-live' for absent artifacts?",
+      "resolution": "The ticket-map AC entry carries an optional 'verdict_if_absent' field; if set to 'skip-needs-live' it must also carry 'blocked_on'. If absent, the bundle defaults to 'gap'."
+    }
+  ],
+  "created_at": "2026-06-09T00:00:00Z"
+}

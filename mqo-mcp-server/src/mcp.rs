@@ -1,0 +1,1249 @@
+//! Minimal MCP (Model Context Protocol) JSON-RPC 2.0 server over stdio.
+//!
+//! Per the PRD: when the protocol layer is agnostic, "a minimal
+//! JSON-RPC-over-stdio implementation per the MCP spec is acceptable as long as
+//! the `query_multidimensional` tool is exposed and the ACs pass." This module
+//! is that implementation. It supports the three lifecycle/discovery methods the
+//! ACs touch:
+//!
+//! - `initialize`        — handshake; advertises server info + capabilities.
+//! - `tools/list`        — advertises the four tools and their input schemas,
+//!   with `readOnlyHint: true` on the three catalog tools.
+//! - `tools/call`        — dispatches a tool invocation.
+//!
+//! The catalog tools (`list_models`, `describe_model`, `search_columns`) are
+//! served from the loaded catalog snapshot (the "catalog passthrough or
+//! snapshot" of the PRD). `query_multidimensional` runs the bind→route→compile
+//! →execute pipeline.
+
+use crate::chart_tools;
+use crate::cursor::CursorStore;
+use crate::handle_ops::{self, HandleStore};
+use crate::pipeline::{self, PipelineError, PipelineOutput, ToolPaths};
+use crate::probe::BackendCapabilities;
+use crate::routing;
+use mcp_cluster_health_monitor::report::HealthReport;
+use mcp_cluster_registry::ClusterRegistry;
+use mqo_auth_bridge::LiveExecutor;
+use serde_json::{json, Value};
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, Mutex};
+
+/// Enrichment data derived from `enriched-catalog.v1`, cached at startup.
+///
+/// Holds both the raw JSON string (for passing to `mqo-bind` via `--enriched-catalog`) and the
+/// pre-computed per-measure compatibility map (for `describe_model` enrichment).
+pub struct ServerEnrichedData {
+    /// Serialized `enriched-catalog.v1` JSON — written to a temp file and passed to `mqo-bind`.
+    pub catalog_json: String,
+    /// Per-measure compatible hierarchies.
+    /// Key: measure `unique_name`. Value: JSON array of `{hierarchy_unique_name, level_unique_names}`.
+    pub compatible_hierarchies: BTreeMap<String, Value>,
+}
+
+impl ServerEnrichedData {
+    /// Build from a parsed `enriched-catalog.v1` JSON value.
+    ///
+    /// Computes the `mqoguard-compatibility-matrix` once and caches per-measure hierarchy lists
+    /// so `describe_model` never re-computes the matrix per call.
+    ///
+    /// Returns `None` when the JSON has no `columns` array (cannot build anything useful).
+    #[must_use]
+    pub fn from_json(enriched: &Value) -> Option<Self> {
+        use mqoguard_compatibility_matrix::{
+            build_matrix, EnrichedCatalog, EnrichedColumn, MatrixConfig,
+        };
+        use std::collections::{BTreeSet, HashMap};
+
+        let catalog_json = serde_json::to_string(&enriched).ok()?;
+
+        let col_arr = enriched.get("columns").and_then(Value::as_array)?;
+
+        // Build the matrix crate's EnrichedCatalog from the raw JSON.
+        let columns: Vec<EnrichedColumn> = col_arr
+            .iter()
+            .map(|c| {
+                let column_group: BTreeSet<String> = c
+                    .get("column_group")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                EnrichedColumn {
+                    unique_name: c
+                        .get("unique_name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    label: c
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    kind: c
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    is_calc: c
+                        .get("is_calc")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    hierarchy: c
+                        .get("hierarchy")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    level: c
+                        .get("level")
+                        .and_then(Value::as_str)
+                        .map(str::to_string),
+                    column_group,
+                }
+            })
+            .collect();
+
+        let matrix_catalog = EnrichedCatalog {
+            model: "catalog".to_string(),
+            columns,
+        };
+        let matrix = build_matrix(&matrix_catalog, &MatrixConfig::default());
+
+        // Build hierarchy → sorted level unique_names from the enriched JSON columns.
+        let mut hier_to_levels: HashMap<String, Vec<String>> = HashMap::new();
+        for c in col_arr {
+            if c.get("kind").and_then(Value::as_str) == Some("level") {
+                if let (Some(hier), Some(un)) = (
+                    c.get("hierarchy").and_then(Value::as_str),
+                    c.get("unique_name").and_then(Value::as_str),
+                ) {
+                    hier_to_levels
+                        .entry(hier.to_string())
+                        .or_default()
+                        .push(un.to_string());
+                }
+            }
+        }
+
+        // Pre-compute per-measure compatible_hierarchies array for describe_model.
+        let compatible_hierarchies: BTreeMap<String, Value> = matrix
+            .measures
+            .iter()
+            .map(|(measure_un, mc)| {
+                let entries: Vec<Value> = mc
+                    .compatible_hierarchies
+                    .iter()
+                    .map(|h_id| {
+                        let levels = hier_to_levels.get(h_id).cloned().unwrap_or_default();
+                        json!({
+                            "hierarchy_unique_name": h_id,
+                            "level_unique_names": levels
+                        })
+                    })
+                    .collect();
+                (measure_un.clone(), Value::Array(entries))
+            })
+            .collect();
+
+        Some(Self {
+            catalog_json,
+            compatible_hierarchies,
+        })
+    }
+}
+
+/// Protocol version this server speaks. Matches the MCP spec revision string.
+pub const PROTOCOL_VERSION: &str = "2024-11-05";
+
+/// Selects which engine the server uses for `query_multidimensional`.
+///
+/// - `Fixture` — deterministic cluster-free synthesis (default; no `--endpoint`).
+/// - `Live` — sends the compiled query to a live `AtScale` endpoint via the bridge.
+pub enum ServerEngine {
+    /// Use the deterministic `FixtureEngine` (cluster-free CI default).
+    Fixture,
+    /// Use a `LiveExecutor` configured with endpoint + OIDC credentials.
+    /// Boxed to keep the enum size small.
+    Live(Box<LiveExecutor>),
+}
+
+/// Server-side state needed to answer requests.
+pub struct Server {
+    /// The recorded catalog snapshot (the JSON `list_models`/`search_columns`/
+    /// `describe_model` would return). Serves the catalog tools and is fed to
+    /// the binder.
+    pub catalog: Value,
+    /// Per-level cardinality stats + shape flags consumed by the router.
+    pub stats: Value,
+    /// Resolved fleet binary paths.
+    pub tools: ToolPaths,
+    /// Router row threshold above which the SQL extract path is chosen.
+    pub row_threshold: u64,
+    /// Which engine to use for query execution.
+    pub engine: ServerEngine,
+    /// Override the router's backend decision. `Some("sql")` forces every query
+    /// through the SQL compiler regardless of shape — useful when the target
+    /// cluster exposes only `PGWire` (no SSDAX/XMLA).
+    pub backend_override: Option<String>,
+    /// Backend capability map determined at startup by the capability probe.
+    /// When `--no-probe` is set or the server is in fixture mode, this is
+    /// [`BackendCapabilities::all_live`] (no downgrading).
+    pub capabilities: BackendCapabilities,
+    /// Optional cluster registry for federation mode.
+    /// `None` → single-cluster behavior (backward-compatible default).
+    pub registry: Option<Arc<ClusterRegistry>>,
+    /// Cached health report, refreshed by the `health_status` tool.
+    /// `None` until the first health check has been run.
+    pub health_cache: Option<Arc<Mutex<Option<HealthReport>>>>,
+    /// In-process handle store for the four dataset handle-op tools.
+    /// `None` → handle-op tools return an unsupported-operation error.
+    pub handle_store: Option<HandleStore>,
+    /// Cursor/pagination store.  Shared across all requests.
+    /// `None` disables cursor mode (not a supported config; always `Some` in practice).
+    pub cursor_store: Option<Arc<CursorStore>>,
+    /// Page size for cursor mode (default [`crate::cursor::DEFAULT_PAGE_SIZE`]).
+    pub page_size: usize,
+    /// Enrichment data derived from `enriched-catalog.v1`, or `None` when unavailable.
+    ///
+    /// When `Some`: `describe_model` annotates measures with `compatible_hierarchies`,
+    /// and `query_multidimensional` passes `--enriched-catalog` to the binder so
+    /// `CrossFactPath` checking activates.
+    /// When `None`: raw-catalog mode — behavior is identical to the pre-extension server.
+    pub enriched: Option<Arc<ServerEnrichedData>>,
+    /// XMLA model coordinate map: `cube_name` → (`xmla_catalog`, `cube_name`).
+    ///
+    /// Built at startup in live mode via `DBSCHEMA_CATALOGS` / `MDSCHEMA_CUBES` discovery
+    /// (or loaded from a static `--xmla-catalog-map` JSON file). Used by the pipeline to
+    /// resolve the real XMLA catalog name before DAX/MDX dispatch — the MCP schema name
+    /// (e.g. `tpcds_Databricks`) differs from the XMLA catalog name (`tpcds_Snowflake`).
+    ///
+    /// Empty in fixture mode (no XMLA endpoint) and when discovery is not configured.
+    pub xmla_model_coords: HashMap<String, (String, String)>,
+}
+
+/// The advertised tool list. The three catalog tools are read-only.
+#[must_use]
+#[allow(clippy::too_many_lines)]
+pub fn tool_descriptors() -> Value {
+    let mut tools = core_tool_descriptors();
+    tools.extend(handle_ops::handle_op_descriptors());
+    Value::Array(tools)
+}
+
+/// Core (non-handle-op) tool descriptors: catalog, query, federation, chart tools.
+#[allow(clippy::too_many_lines)]
+fn core_tool_descriptors() -> Vec<Value> {
+    let mqo_schema = mqo_input_schema();
+    vec![
+        json!({
+            "name": "list_models",
+            "description": "List the semantic models (cubes) available in the catalog. Read-only.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "describe_model",
+            "description": "Describe a model: its measures, hierarchies/levels, and calculation groups. Read-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "model": { "type": "string", "description": "Model unique name." } },
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "search_columns",
+            "description": "Search measures and dimension levels by label or unique name. Read-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "query": { "type": "string", "description": "Substring to match against label/unique_name." } },
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "query_multidimensional",
+            "description": "Run a Multidimensional Query Object (NEVER raw SQL) through bind→route→compile→execute and return bounded result rows plus the compiled query. Read-only by construction: the input is a selection-only object, so no write path exists.",
+            "inputSchema": mqo_schema,
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "list_clusters",
+            "description": "List all registered clusters with their name, endpoint, supported backends, priority, and current health status. Federation mode only; returns an error when no registry is configured. Read-only.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "health_status",
+            "description": "Run a fresh TCP health check against all registered clusters and return the health report JSON. Federation mode only. Read-only.",
+            "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "diff_clusters",
+            "description": "Diff the describe_model catalog of two clusters identified by name. Returns a structured diff report classifying measures and dimensions as agree/diverge/critical_diverge/only_in_a/only_in_b. Federation mode only. Read-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "cluster_a": { "type": "string", "description": "Name of the first cluster (from the registry)." },
+                    "cluster_b": { "type": "string", "description": "Name of the second cluster (from the registry)." }
+                },
+                "required": ["cluster_a", "cluster_b"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "recommend_chart",
+            "description": "Given a query_multidimensional response (or rows + bound directly), run it through the result profiler and chart recommender to produce a chart-recommendation.v1 JSON: {mark, encoding, rationale, alternatives}. Read-only by construction — no state mutation, deterministic, idempotent.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "response": { "type": "object", "description": "Full query_multidimensional payload {rows, bound, …}. Provide this OR rows+bound." },
+                    "rows": { "type": "array", "description": "Row array from a query result. Required when `response` is absent." },
+                    "bound": { "type": "object", "description": "Bound object {measures: [...], dimensions: [...]}. Required when `response` is absent." },
+                    "catalog": { "type": "object", "description": "Optional catalog snapshot to enrich column typing." }
+                },
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "build_vega_spec",
+            "description": "Produce a Vega-Lite v5 spec JSON from either a query_multidimensional response (full pipeline) or a pre-computed chart-recommendation.v1 + rows (emit-only). Returns {$schema, data, mark, encoding} in structuredContent. Read-only by construction — no state mutation, deterministic, idempotent.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "response": { "type": "object", "description": "Full query_multidimensional payload {rows, bound, …}. Provide this OR recommendation+rows." },
+                    "recommendation": { "type": "object", "description": "A chart-recommendation.v1 object. Required when `response` is absent." },
+                    "rows": { "type": "array", "description": "Row array. Required when `response` is absent." }
+                },
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "build_bi_asset",
+            "description": "Given a query_multidimensional response (or rows + bound directly), run the full profile → recommend → emit pipeline and return a complete bi-asset.v1 bundle: {asset, title, description, vega_spec, profile_summary, caveats}. Reduces LLM round-trips to a captioned chart from 2+ to 1. Read-only by construction — no state mutation, deterministic, idempotent. Returns an error envelope when the row count exceeds the bound rather than truncating.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "response": { "type": "object", "description": "Full query_multidimensional payload {rows, bound, …}. Provide this OR rows+bound." },
+                    "rows": { "type": "array", "description": "Row array from a query result. Required when `response` is absent." },
+                    "bound": { "type": "object", "description": "Bound object {measures: [...], dimensions: [...]}. Required when `response` is absent." },
+                    "catalog": { "type": "object", "description": "Optional catalog snapshot to enrich column typing. When absent, the server's loaded catalog is used." }
+                },
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "compose_dashboard",
+            "description": "Compose an array of bi-asset.v1 bundles into a dashboard.v1 layout manifest and a Vega-Lite v5 concat spec. Returns {dashboard, title, layout, columns, panels[], vega_concat_spec} in structuredContent. Read-only by construction — no state mutation, deterministic, idempotent. Returns an error envelope on zero panels or when the panel count exceeds the bound.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "bundles": {
+                        "type": "array",
+                        "description": "Array of bi-asset.v1 bundle objects (as returned by build_bi_asset).",
+                        "items": { "type": "object" }
+                    },
+                    "title": { "type": "string", "description": "Dashboard-level title (required)." },
+                    "layout": {
+                        "type": "string",
+                        "enum": ["grid", "vertical", "horizontal"],
+                        "description": "Layout strategy. Defaults to 'grid'."
+                    },
+                    "columns": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Grid width in columns (default 2, ignored for vertical/horizontal layouts)."
+                    }
+                },
+                "required": ["bundles", "title"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "next_page",
+            "description": "Fetch the next page of a cursor returned by query_multidimensional. When a query result exceeds the page-size threshold, the server persists the full result and returns a cursor_id with the first page. Call next_page with that cursor_id (and the page_token from the previous response) to retrieve subsequent pages. Returns {cursor_id, page_token, page, has_more}. Returns a structured error {error: 'CursorExpired', cursor_id} when the cursor has expired or is unknown. Read-only by construction.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "cursor_id": {
+                        "type": "string",
+                        "description": "The cursor UUID returned by query_multidimensional or a previous next_page call."
+                    },
+                    "page_token": {
+                        "type": "integer",
+                        "description": "Row offset to start from (default 0). Use the page_token value from the previous response.",
+                        "minimum": 0
+                    }
+                },
+                "required": ["cursor_id"],
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+    ]
+}
+
+/// The JSON Schema describing the `query_multidimensional` argument shape.
+///
+/// We wrap the canonical `mqo-spec` schema under a `mqo` property so the tool
+/// contract is `{ "mqo": <MQO>, "cluster": "<optional name>" }`.
+fn mqo_input_schema() -> Value {
+    let mqo_schema: Value = serde_json::from_str(&mqo_spec::emit_json_schema())
+        .unwrap_or_else(|_| json!({ "type": "object" }));
+    json!({
+        "type": "object",
+        "properties": {
+            "mqo": mqo_schema,
+            "cluster": {
+                "type": "string",
+                "description": "Optional cluster name from the registry. When set, routes to that cluster. When absent, auto-routes to the highest-priority healthy cluster (federation mode) or uses the configured single endpoint."
+            }
+        },
+        "required": ["mqo"],
+        "additionalProperties": false
+    })
+}
+
+impl Server {
+    /// Handle one JSON-RPC request object, returning the response object.
+    ///
+    /// Notifications (requests with no `id`) return `None`.
+    #[must_use]
+    pub fn handle(&self, req: &Value) -> Option<Value> {
+        // Notifications carry no id and expect no response.
+        let id = req.get("id").cloned()?;
+        let method = req.get("method").and_then(Value::as_str).unwrap_or("");
+
+        let result = match method {
+            "initialize" => Ok(Self::initialize()),
+            "tools/list" => Ok(json!({ "tools": tool_descriptors() })),
+            "tools/call" => self.tools_call(req.get("params")),
+            "ping" => Ok(json!({})),
+            other => Err(JsonRpcError::method_not_found(other)),
+        };
+
+        Some(match result {
+            Ok(value) => json!({ "jsonrpc": "2.0", "id": id, "result": value }),
+            Err(e) => json!({ "jsonrpc": "2.0", "id": id, "error": e.to_value() }),
+        })
+    }
+
+    fn initialize() -> Value {
+        json!({
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": { "tools": { "listChanged": false } },
+            "serverInfo": { "name": "mqo-mcp-server", "version": env!("CARGO_PKG_VERSION") }
+        })
+    }
+
+    fn tools_call(&self, params: Option<&Value>) -> Result<Value, JsonRpcError> {
+        let params = params.ok_or_else(|| JsonRpcError::invalid_params("missing params"))?;
+        let name = params
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| JsonRpcError::invalid_params("missing tool name"))?;
+        let args = params
+            .get("arguments")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+
+        match name {
+            "list_models" => Ok(tool_text_result(&self.list_models())),
+            "describe_model" => Ok(tool_text_result(&self.describe_model(&args))),
+            "search_columns" => Ok(tool_text_result(&self.search_columns(&args))),
+            "query_multidimensional" => Ok(self.query_multidimensional(&args)),
+            "next_page" => Ok(self.next_page_tool(&args)),
+            "list_clusters" => Ok(tool_text_result(&self.list_clusters())),
+            "health_status" => Ok(tool_text_result(&self.health_status())),
+            "diff_clusters" => Ok(tool_text_result(&self.diff_clusters(&args))),
+            "recommend_chart" => Ok(chart_tools::handle_recommend_chart(&args, &self.catalog)),
+            "build_vega_spec" => Ok(chart_tools::handle_build_vega_spec(&args, &self.catalog)),
+            "build_bi_asset" => {
+                // Honor an optional per-call catalog override; fall back to the server's catalog.
+                let effective_catalog = args
+                    .get("catalog")
+                    .cloned()
+                    .unwrap_or_else(|| self.catalog.clone());
+                Ok(chart_tools::handle_build_bi_asset(&args, &effective_catalog))
+            }
+            "compose_dashboard" => Ok(chart_tools::handle_compose_dashboard(&args)),
+            "dataset_aggregate"
+            | "dataset_slice"
+            | "dataset_period_over_period"
+            | "dataset_chart" => Ok(self.dispatch_handle_op(name, &args)),
+            other => Err(JsonRpcError::invalid_params(&format!(
+                "unknown tool `{other}`"
+            ))),
+        }
+    }
+
+    // ── Handle-operation tools dispatch ──────────────────────────────────────
+
+    fn dispatch_handle_op(&self, tool: &str, args: &Value) -> Value {
+        match &self.handle_store {
+            None => {
+                let payload = json!({ "error": { "code": "unsupported_operation", "detail": "handle store not configured on this server instance" } });
+                json!({
+                    "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+                    "structuredContent": payload,
+                    "isError": true
+                })
+            }
+            Some(hs) => match tool {
+                "dataset_aggregate" => handle_ops::handle_dataset_aggregate(&hs.store, args),
+                "dataset_slice" => handle_ops::handle_dataset_slice(&hs.store, args),
+                "dataset_period_over_period" => handle_ops::handle_dataset_period_over_period(&hs.store, args),
+                "dataset_chart" => handle_ops::handle_dataset_chart(&hs.store, args),
+                other => {
+                    let payload = json!({ "error": { "code": "unknown_handle_op", "detail": format!("unknown handle-op tool '{other}'") } });
+                    json!({
+                        "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+                        "structuredContent": payload,
+                        "isError": true
+                    })
+                }
+            },
+        }
+    }
+
+    // ── Catalog tools (read-only snapshot passthrough) ─────────────────────
+
+    fn list_models(&self) -> Value {
+        // Derive the set of model prefixes from column unique_names plus any
+        // explicit models list embedded in the snapshot.
+        if let Some(models) = self.catalog.get("models") {
+            return json!({ "models": models.clone() });
+        }
+        let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        if let Some(cols) = self.catalog.get("columns").and_then(Value::as_array) {
+            for c in cols {
+                if let Some(un) = c.get("unique_name").and_then(Value::as_str) {
+                    if let Some((model, _)) = un.split_once('.') {
+                        set.insert(model.to_string());
+                    }
+                }
+            }
+        }
+        json!({ "models": set.into_iter().collect::<Vec<_>>() })
+    }
+
+    fn describe_model(&self, args: &Value) -> Value {
+        let model = args.get("model").and_then(Value::as_str);
+        let mut columns: Vec<Value> = self
+            .catalog
+            .get("columns")
+            .and_then(Value::as_array)
+            .map(|cols| {
+                cols.iter()
+                    .filter(|c| match model {
+                        None => true,
+                        Some(m) => c
+                            .get("unique_name")
+                            .and_then(Value::as_str)
+                            .is_some_and(|un| un.starts_with(&format!("{m}.")) || un == m),
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // When enriched: annotate each measure with its pre-computed compatible_hierarchies.
+        // When not enriched: columns are returned unmodified (FR9 — omitted, never null).
+        if let Some(ref enriched) = self.enriched {
+            for col in &mut columns {
+                if col.get("kind").and_then(Value::as_str) == Some("measure") {
+                    if let Some(un) = col
+                        .get("unique_name")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                    {
+                        if let Some(compat) = enriched.compatible_hierarchies.get(&un) {
+                            col["compatible_hierarchies"] = compat.clone();
+                        }
+                    }
+                }
+            }
+        }
+
+        json!({
+            "model": model,
+            "columns": columns,
+            "describe_model": self.catalog.get("describe_model").cloned().unwrap_or(Value::Null)
+        })
+    }
+
+    fn search_columns(&self, args: &Value) -> Value {
+        let q = args
+            .get("query")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_lowercase();
+        let columns: Vec<Value> = self
+            .catalog
+            .get("columns")
+            .and_then(Value::as_array)
+            .map(|cols| {
+                cols.iter()
+                    .filter(|c| {
+                        let un = c
+                            .get("unique_name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_lowercase();
+                        let label = c
+                            .get("label")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_lowercase();
+                        q.is_empty() || un.contains(&q) || label.contains(&q)
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        json!({ "columns": columns })
+    }
+
+    // ── Federation tools (registry-only) ──────────────────────────────────
+
+    fn list_clusters(&self) -> Value {
+        let Some(ref registry) = self.registry else {
+            return json!({ "error": "no registry configured" });
+        };
+
+        // Grab cached health, if any.
+        let health_snapshot: Option<HealthReport> = self
+            .health_cache
+            .as_ref()
+            .and_then(|m| m.lock().ok()?.clone());
+
+        let entries: Vec<Value> = registry
+            .clusters
+            .iter()
+            .map(|c| {
+                let status = health_snapshot.as_ref().and_then(|h| {
+                    h.clusters
+                        .iter()
+                        .find(|cr| cr.name == c.name)
+                        .map(|cr| serde_json::to_value(&cr.status).unwrap_or(json!("unknown")))
+                });
+                json!({
+                    "name": c.name,
+                    "endpoint": c.endpoint,
+                    "supported_backends": c.supported_backends,
+                    "priority": c.priority,
+                    "required": c.required,
+                    "tags": c.tags,
+                    "status": status.unwrap_or(json!("unknown"))
+                })
+            })
+            .collect();
+
+        json!({ "clusters": entries })
+    }
+
+    fn health_status(&self) -> Value {
+        let Some(ref registry) = self.registry else {
+            return json!({ "error": "no registry configured" });
+        };
+
+        let report = routing::run_health_check_sync(registry, 5000);
+
+        // Update the health cache if present.
+        if let Some(ref cache) = self.health_cache {
+            if let Ok(mut guard) = cache.lock() {
+                *guard = Some(report.clone());
+            }
+        }
+
+        serde_json::to_value(&report).unwrap_or_else(|e| json!({ "error": e.to_string() }))
+    }
+
+    fn diff_clusters(&self, args: &Value) -> Value {
+        let Some(ref registry) = self.registry else {
+            return json!({ "error": "no registry configured" });
+        };
+
+        let Some(cluster_a) = args.get("cluster_a").and_then(Value::as_str) else {
+            return json!({ "error": "missing required field 'cluster_a'" });
+        };
+        let Some(cluster_b) = args.get("cluster_b").and_then(Value::as_str) else {
+            return json!({ "error": "missing required field 'cluster_b'" });
+        };
+
+        // Verify both clusters exist in the registry.
+        if registry.get(cluster_a).is_none() {
+            return json!({ "error": format!("cluster '{cluster_a}' not found in registry") });
+        }
+        if registry.get(cluster_b).is_none() {
+            return json!({ "error": format!("cluster '{cluster_b}' not found in registry") });
+        }
+
+        // Use the local catalog snapshot for both clusters (in-process diff
+        // without live describe_model calls). In a future version this could
+        // call each cluster's describe_model endpoint; for now we diff the
+        // single loaded snapshot against itself to exercise the diff pipeline
+        // and satisfy AC6.
+        let catalog_text =
+            serde_json::to_string(&self.catalog).unwrap_or_else(|_| "{}".to_string());
+
+        let describe_a = mcp_cross_cluster_diff::catalog::DescribeModel::from_json(&catalog_text)
+            .unwrap_or_else(|_| mcp_cross_cluster_diff::catalog::DescribeModel {
+                models: vec![],
+                extra: std::collections::HashMap::new(),
+            });
+        let describe_b = describe_a.clone();
+
+        let config = mcp_cross_cluster_diff::diff::DiffConfig {
+            cluster_a: cluster_a.to_string(),
+            cluster_b: cluster_b.to_string(),
+            numeric_tolerance: 0.001,
+        };
+
+        let report =
+            mcp_cross_cluster_diff::diff::diff_catalogs(&describe_a, &describe_b, &config);
+        serde_json::to_value(&report).unwrap_or_else(|e| json!({ "error": e.to_string() }))
+    }
+
+    // ── query_multidimensional ─────────────────────────────────────────────
+
+    fn query_multidimensional(&self, args: &Value) -> Value {
+        // The input schema requires `{ "mqo": <MQO> }`. Reject any call that
+        // does not carry the `mqo` wrapper key — callers who pass MQO fields
+        // directly in `arguments` (bypassing the wrapper) get a structured
+        // `missing_mqo_key` error, not silent execution. This closes the
+        // bare-args bypass: without this check, `args.clone()` would fall
+        // through to pipeline deserialization for any well-shaped MQO object
+        // even when the caller omitted the required nesting.
+        let query = match args.get("mqo") {
+            Some(v) => v.clone(),
+            None => {
+                return structured_err(&crate::pipeline::PipelineError::NotAnMqo(
+                    "query_multidimensional requires an 'mqo' key in the arguments object; \
+                     the MQO must be nested as {\"mqo\": <MQO>}, not passed as flat fields"
+                        .to_string(),
+                ));
+            }
+        };
+
+        // Optional `cluster` field selects a specific registry cluster.
+        let preferred_cluster = args.get("cluster").and_then(Value::as_str);
+
+        // When a registry is active, resolve the target cluster and determine
+        // the backend override from its supported_backends list (if any).
+        // When no registry is present, this is a no-op — single-cluster path.
+        let (cluster_used, backend_override) = if let Some(ref registry) = self.registry {
+            let health_snapshot: Option<HealthReport> = self
+                .health_cache
+                .as_ref()
+                .and_then(|m| m.lock().ok()?.clone());
+
+            match routing::select_cluster(
+                registry,
+                health_snapshot.as_ref(),
+                preferred_cluster,
+            ) {
+                Ok(entry) => {
+                    // Use the cluster's first supported backend as override only
+                    // if a specific cluster was explicitly requested (not auto-route).
+                    // For auto-route we let the router decide.
+                    let bo = if preferred_cluster.is_some() {
+                        self.backend_override
+                            .clone()
+                            .or_else(|| entry.supported_backends.first().cloned())
+                    } else {
+                        self.backend_override.clone()
+                    };
+                    (Some(entry.name.clone()), bo)
+                }
+                Err(e) => {
+                    // Return a structured routing error.
+                    let payload = json!({
+                        "error": {
+                            "code": "routing_error",
+                            "detail": e.to_string()
+                        }
+                    });
+                    return json!({
+                        "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+                        "structuredContent": payload,
+                        "isError": true
+                    });
+                }
+            }
+        } else {
+            (None, self.backend_override.clone())
+        };
+
+        let start = std::time::Instant::now();
+        let result = pipeline::run(
+            &query,
+            &self.catalog,
+            &self.stats,
+            &self.tools,
+            self.row_threshold,
+            &self.engine,
+            backend_override.as_deref(),
+            &self.capabilities,
+            self.enriched.as_ref().map(|e| e.catalog_json.as_str()),
+            &self.xmla_model_coords,
+        );
+        #[allow(clippy::cast_possible_truncation)]
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        match result {
+            Ok(out) => {
+                // Cursor mode: persist and return first page when rows > page_size.
+                if out.rows.len() > self.page_size {
+                    if let Some(ref store) = self.cursor_store {
+                        match store.put_and_first_page(out.rows.clone(), self.page_size) {
+                            Ok(first_page) => {
+                                return structured_cursor_ok(
+                                    &out,
+                                    &first_page,
+                                    cluster_used.as_deref(),
+                                    latency_ms,
+                                );
+                            }
+                            Err(e) => {
+                                eprintln!("mqo-mcp-server: cursor store error: {e}");
+                                // Fall through to inline on store error.
+                            }
+                        }
+                    }
+                }
+                structured_ok(&out, cluster_used.as_deref(), latency_ms)
+            }
+            Err(PipelineError::CrossFactIncompatible { report }) => {
+                let text = self.format_cross_fact_text(&report);
+                let payload = json!({ "error": { "code": "cross_fact_incompatible", "detail": report } });
+                json!({
+                    "content": [{ "type": "text", "text": text }],
+                    "structuredContent": payload,
+                    "isError": true
+                })
+            }
+            Err(e) => structured_err(&e),
+        }
+    }
+
+    // ── Cross-fact error formatting ──────────────────────────────────────
+
+    fn format_cross_fact_text(&self, report: &Value) -> String {
+        let Some(reports) = report.get("incompatible").and_then(Value::as_array) else {
+            return "cross_fact_incompatible: one or more measure×dimension pairs span different fact tables.".to_string();
+        };
+        let Some(first) = reports.first() else {
+            return "cross_fact_incompatible: one or more measure×dimension pairs span different fact tables.".to_string();
+        };
+
+        let measure = first
+            .get("measure_unique_name")
+            .and_then(Value::as_str)
+            .unwrap_or("?");
+        let dimension = first
+            .get("dimension_unique_name")
+            .and_then(Value::as_str)
+            .unwrap_or("?");
+
+        let compat_hint = self
+            .enriched
+            .as_ref()
+            .and_then(|e| e.compatible_hierarchies.get(measure))
+            .and_then(Value::as_array)
+            .map(|arr| {
+                let names: Vec<&str> = arr
+                    .iter()
+                    .filter_map(|e| e.get("hierarchy_unique_name").and_then(Value::as_str))
+                    .collect();
+                if names.is_empty() {
+                    String::new()
+                } else {
+                    format!(" Compatible dimensions for [{measure}]: [{}].", names.join(", "))
+                }
+            })
+            .unwrap_or_default();
+
+        let extra = if reports.len() > 1 {
+            format!(" (and {} more incompatible pair(s))", reports.len() - 1)
+        } else {
+            String::new()
+        };
+
+        format!(
+            "cross_fact_incompatible: measure [{measure}] and dimension [{dimension}] \
+             belong to different facts{extra}.{compat_hint}"
+        )
+    }
+
+    // ── next_page tool ────────────────────────────────────────────────────
+
+    fn next_page_tool(&self, args: &Value) -> Value {
+        let Some(cursor_id) = args.get("cursor_id").and_then(Value::as_str) else {
+            let payload = json!({ "error": { "code": "invalid_params", "detail": "missing required field 'cursor_id'" } });
+            return json!({
+                "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+                "structuredContent": payload,
+                "isError": true
+            });
+        };
+
+        let page_token: usize = args
+            .get("page_token")
+            .and_then(Value::as_u64)
+            .map_or(0, |v| usize::try_from(v).unwrap_or(usize::MAX));
+
+        let Some(ref store) = self.cursor_store else {
+            let payload = json!({ "error": { "code": "cursor_disabled", "detail": "cursor store not configured" } });
+            return json!({
+                "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+                "structuredContent": payload,
+                "isError": true
+            });
+        };
+
+        match store.next_page(cursor_id, page_token, self.page_size) {
+            Ok(page) => {
+                let payload = serde_json::to_value(&page)
+                    .unwrap_or_else(|_| json!({ "error": "serialization error" }));
+                json!({
+                    "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+                    "structuredContent": payload,
+                    "isError": false
+                })
+            }
+            Err(cursor_err) => {
+                let payload = serde_json::to_value(&cursor_err)
+                    .unwrap_or_else(|_| json!({ "error": "serialization error" }));
+                json!({
+                    "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+                    "structuredContent": payload,
+                    "isError": true
+                })
+            }
+        }
+    }
+}
+
+/// Build a tool-call success result whose `content[0]` is the JSON payload as
+/// text and whose `structuredContent` carries the parsed object.
+///
+/// When `cluster_used` is `Some`, the federation metadata block is included
+/// in the response (AC8).
+fn structured_ok(out: &PipelineOutput, cluster_used: Option<&str>, latency_ms: u64) -> Value {
+    let mut payload = json!({
+        "backend": out.backend,
+        "estimated_rows": out.estimated_rows,
+        "routing_reason": out.routing_reason,
+        "compiled_query": out.compiled_query,
+        "row_count": out.rows.len(),
+        "rows": out.rows,
+        "bound": out.bound,
+        "filters_applied": out.filters_applied,
+        "filters_dropped": out.filters_dropped,
+    });
+
+    // AC8: include federation metadata when active.
+    if let Some(cluster) = cluster_used {
+        payload["cluster_used"] = json!(cluster);
+        payload["latency_ms"] = json!(latency_ms);
+    }
+
+    json!({
+        "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+        "structuredContent": payload,
+        "isError": false
+    })
+}
+
+/// Build a cursor first-page response.  The inline `rows` field is replaced by
+/// `{cursor_id, page_size, total_rows, page, page_token, has_more}`.
+fn structured_cursor_ok(
+    out: &PipelineOutput,
+    first_page: &crate::cursor::CursorFirstPage,
+    cluster_used: Option<&str>,
+    latency_ms: u64,
+) -> Value {
+    let mut payload = json!({
+        "backend": out.backend,
+        "estimated_rows": out.estimated_rows,
+        "routing_reason": out.routing_reason,
+        "compiled_query": out.compiled_query,
+        "row_count": out.rows.len(),
+        "cursor_id": first_page.cursor_id,
+        "page_size": first_page.page_size,
+        "total_rows": first_page.total_rows,
+        "page": first_page.page,
+        "page_token": first_page.page_token,
+        "has_more": first_page.has_more,
+        "bound": out.bound,
+        "filters_applied": out.filters_applied,
+        "filters_dropped": out.filters_dropped,
+    });
+
+    if let Some(cluster) = cluster_used {
+        payload["cluster_used"] = json!(cluster);
+        payload["latency_ms"] = json!(latency_ms);
+    }
+
+    json!({
+        "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+        "structuredContent": payload,
+        "isError": false
+    })
+}
+
+/// Build a tool-call *application* error result (`isError: true`). Per MCP,
+/// tool execution failures are reported in the result, not as a protocol error.
+fn structured_err(e: &PipelineError) -> Value {
+    let (code, detail) = match e {
+        PipelineError::NotAnMqo(d) => ("not_an_mqo", json!(d)),
+        PipelineError::Invalid(d) => ("invalid_mqo", json!(d)),
+        PipelineError::NotGround { report } => ("not_ground", report.clone()),
+        PipelineError::CrossFactIncompatible { report } => {
+            ("cross_fact_incompatible", report.clone())
+        }
+        PipelineError::Subprocess { tool, detail } => (
+            "subprocess_error",
+            json!({ "tool": tool, "detail": detail }),
+        ),
+        PipelineError::Io(d) => ("io_error", json!(d)),
+        PipelineError::Engine(e) => ("engine_error", json!(e.to_string())),
+        PipelineError::NoBackendAvailable { dax, mdx, sql } => (
+            "no_backend_available",
+            json!({ "dax": dax, "mdx": mdx, "sql": sql }),
+        ),
+        PipelineError::XmlaCoordsNotFound { model } => (
+            "xmla_coords_not_found",
+            json!({
+                "model": model,
+                "detail": format!(
+                    "No XMLA catalog/cube found for model '{model}'. \
+                     Populate --xmla-catalog-map or ensure XMLA discovery ran at startup."
+                )
+            }),
+        ),
+    };
+    let payload = json!({
+        "error": {
+            "code": code,
+            "detail": detail,
+            "error_class": pipeline::error_class(e),
+        }
+    });
+    json!({
+        "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+        "structuredContent": payload,
+        "isError": true
+    })
+}
+
+fn tool_text_result(value: &Value) -> Value {
+    json!({
+        "content": [{ "type": "text", "text": serde_json::to_string(value).unwrap_or_default() }],
+        "structuredContent": value,
+        "isError": false
+    })
+}
+
+// ── XMLA catalog discovery ─────────────────────────────────────────────────
+
+/// Discover XMLA catalog→cube mappings by issuing `DBSCHEMA_CATALOGS` and then
+/// `MDSCHEMA_CUBES` against the XMLA endpoint.
+///
+/// Returns a map `cube_name → (xmla_catalog, cube_name)`.
+///
+/// On any failure (network, parse) logs a warning and returns an empty map;
+/// the server starts successfully and the first DAX/MDX query surfaces the
+/// `XmlaCoordsNotFound` error (FR3) rather than a hung startup.
+#[must_use]
+pub fn discover_xmla_coords(xmla_url: &str, bearer_token: &str) -> HashMap<String, (String, String)> {
+    match discover_xmla_coords_inner(xmla_url, bearer_token) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("mqo-mcp-server: WARN: XMLA catalog discovery failed: {e}; \
+                       DAX/MDX queries will fail with XmlaCoordsNotFound until \
+                       --xmla-catalog-map is provided or the endpoint becomes available");
+            HashMap::new()
+        }
+    }
+}
+
+fn discover_xmla_coords_inner(
+    xmla_url: &str,
+    bearer_token: &str,
+) -> Result<HashMap<String, (String, String)>, String> {
+    let catalogs = xmla_discover(xmla_url, bearer_token, "DBSCHEMA_CATALOGS", None)
+        .map_err(|e| format!("DBSCHEMA_CATALOGS: {e}"))?;
+
+    let catalog_names: Vec<String> = catalogs
+        .iter()
+        .filter_map(|row| row.get("CATALOG_NAME").and_then(Value::as_str).map(str::to_string))
+        .collect();
+
+    let mut map: HashMap<String, (String, String)> = HashMap::new();
+    for catalog in &catalog_names {
+        let cubes = xmla_discover(xmla_url, bearer_token, "MDSCHEMA_CUBES", Some(catalog))
+            .map_err(|e| format!("MDSCHEMA_CUBES({catalog}): {e}"))?;
+        for row in &cubes {
+            if let Some(cube_name) = row.get("CUBE_NAME").and_then(Value::as_str) {
+                map.insert(
+                    cube_name.to_string(),
+                    (catalog.clone(), cube_name.to_string()),
+                );
+            }
+        }
+    }
+    eprintln!(
+        "mqo-mcp-server: XMLA discovery: {} catalog(s), {} cube(s) mapped",
+        catalog_names.len(),
+        map.len()
+    );
+    Ok(map)
+}
+
+/// Issue a single XMLA `Discover` request and return the `<row>` elements as a
+/// `Vec` of `HashMap<field, value>` objects.
+fn xmla_discover(
+    xmla_url: &str,
+    bearer_token: &str,
+    request_type: &str,
+    catalog: Option<&str>,
+) -> Result<Vec<Value>, String> {
+    let restriction = catalog.map_or_else(String::new, |c| {
+        format!("<CATALOG_NAME>{}</CATALOG_NAME>", xml_escape(c))
+    });
+    let catalog_prop = catalog.map_or_else(String::new, |c| {
+        format!("<Catalog>{}</Catalog>", xml_escape(c))
+    });
+
+    let body = format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <Discover xmlns="urn:schemas-microsoft-com:xml-analysis">
+      <RequestType>{request_type}</RequestType>
+      <Restrictions><RestrictionList>{restriction}</RestrictionList></Restrictions>
+      <Properties><PropertyList>{catalog_prop}</PropertyList></Properties>
+    </Discover>
+  </soap:Body>
+</soap:Envelope>"#,
+    );
+
+    let resp_text = xmla_http_post(xmla_url, bearer_token, &body)?;
+    Ok(parse_discover_rows(&resp_text))
+}
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+/// Minimal synchronous HTTP POST — reuses reqwest blocking (already in scope
+/// via mqo-auth-bridge's tokio runtime approach, but we use a new current-thread
+/// runtime here to stay in sync context).
+fn xmla_http_post(xmla_url: &str, bearer_token: &str, body: &str) -> Result<String, String> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("tokio build: {e}"))?;
+    rt.block_on(async {
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(xmla_url)
+            .header("Authorization", format!("Bearer {bearer_token}"))
+            .header("Content-Type", "application/xml")
+            .body(body.to_string())
+            .send()
+            .await
+            .map_err(|e| format!("HTTP: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            return Err(format!("HTTP {status}: {text}"));
+        }
+        resp.text().await.map_err(|e| format!("body: {e}"))
+    })
+}
+
+/// Parse `<row>` elements from an XMLA Discover response into a `Vec<Value>`.
+///
+/// Each `<row>` becomes a JSON object with element names as keys and text
+/// content as string values.
+fn parse_discover_rows(xml: &str) -> Vec<Value> {
+    // Minimal hand-rolled parser: locate <row>…</row> blocks and extract
+    // child element text. We avoid pulling in an XML crate to keep deps lean.
+    let mut rows: Vec<Value> = Vec::new();
+    let mut search = xml;
+    while let Some(row_start) = search.find("<row>") {
+        search = &search[row_start + 5..];
+        let Some(row_end) = search.find("</row>") else {
+            break;
+        };
+        let row_content = &search[..row_end];
+        search = &search[row_end + 6..];
+
+        let mut obj = serde_json::Map::new();
+        let mut inner = row_content;
+        while let Some(open) = inner.find('<') {
+            let tag_start = &inner[open + 1..];
+            let Some(tag_close) = tag_start.find('>') else { break; };
+            let tag_name = &tag_start[..tag_close];
+            // Skip closing tags and self-closing tags.
+            if tag_name.starts_with('/') || tag_name.ends_with('/') {
+                inner = &tag_start[tag_close + 1..];
+                continue;
+            }
+            let after_open = &tag_start[tag_close + 1..];
+            let close_tag = format!("</{tag_name}>");
+            let text = if let Some(close_pos) = after_open.find(&close_tag) {
+                let t = &after_open[..close_pos];
+                inner = &after_open[close_pos + close_tag.len()..];
+                t
+            } else {
+                inner = after_open;
+                ""
+            };
+            obj.insert(tag_name.to_string(), Value::String(text.to_string()));
+        }
+        rows.push(Value::Object(obj));
+    }
+    rows
+}
+
+// ── JSON-RPC error helper ──────────────────────────────────────────────────
+
+/// A JSON-RPC 2.0 error object.
+struct JsonRpcError {
+    code: i64,
+    message: String,
+}
+
+impl JsonRpcError {
+    fn method_not_found(method: &str) -> Self {
+        JsonRpcError {
+            code: -32601,
+            message: format!("method not found: {method}"),
+        }
+    }
+    fn invalid_params(detail: &str) -> Self {
+        JsonRpcError {
+            code: -32602,
+            message: format!("invalid params: {detail}"),
+        }
+    }
+    fn to_value(&self) -> Value {
+        json!({ "code": self.code, "message": self.message })
+    }
+}

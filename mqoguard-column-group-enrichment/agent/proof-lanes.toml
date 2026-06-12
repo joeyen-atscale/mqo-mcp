@@ -1,0 +1,31 @@
+# proof-lanes.toml — every changed path must route to ≥1 lane.
+
+[lanes.unit]
+description = "Unit tests in src/**"
+paths = ["src/**"]
+commands = ["cargo test --workspace"]
+confidence = 0.85
+
+[lanes.acceptance]
+description = "Acceptance tests in tests/acceptance_*.rs"
+paths = ["tests/acceptance_*.rs", "src/**"]
+commands = ["cargo test --workspace --no-fail-fast"]
+confidence = 0.90
+
+[lanes.proptest]
+description = "Property-based invariants"
+paths = ["tests/proptest_invariants.rs", "src/**"]
+commands = ["cargo test proptest"]
+confidence = 0.80
+
+[lanes.audit]
+description = "BAD_RUST audit"
+paths = ["src/**"]
+commands = ["bash scripts/audit.sh"]
+confidence = 0.75
+
+[lanes.clippy]
+description = "Clippy lints"
+paths = ["src/**", "tests/**", "Cargo.toml"]
+commands = ["cargo clippy --workspace --all-targets -- -D warnings"]
+confidence = 0.85

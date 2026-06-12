@@ -1,0 +1,32 @@
+[
+  {
+    "task_id": "q001",
+    "arm": "raw_json",
+    "payload_summary": "Full rows: [{region:North,revenue:1500000},{region:South,revenue:1750000},{region:West,revenue:2100000}]",
+    "reported_answer": 5555000.0,
+    "error": null,
+    "n_retries": 0,
+    "latency_ms": 420,
+    "tokens": 1200
+  },
+  {
+    "task_id": "q002",
+    "arm": "raw_json",
+    "payload_summary": "Full rows: [{order_id:1,value:210.00},{order_id:2,value:281.00},...] (100 rows)",
+    "reported_answer": 251.75,
+    "error": null,
+    "n_retries": 1,
+    "latency_ms": 680,
+    "tokens": 2400
+  },
+  {
+    "task_id": "q003",
+    "arm": "raw_json",
+    "payload_summary": "Full rows: [{product:Widget A,units:98000},{product:Widget B,units:75000},...]",
+    "reported_answer": {"product": "Widget B", "units": 75000},
+    "error": null,
+    "n_retries": 0,
+    "latency_ms": 390,
+    "tokens": 1100
+  }
+]

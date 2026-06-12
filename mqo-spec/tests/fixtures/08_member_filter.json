@@ -1,0 +1,20 @@
+{
+  "model": "sales",
+  "measures": [
+    { "unique_name": "sales.revenue" }
+  ],
+  "dimensions": [
+    { "hierarchy": "product.category", "level": "category" }
+  ],
+  "filters": [
+    {
+      "type": "member",
+      "hierarchy": "product.category",
+      "members": ["Electronics", "Appliances", "Furniture"]
+    }
+  ],
+  "time_intelligence": [],
+  "order": [{ "key": "sales.revenue", "direction": "desc" }],
+  "limit": 50,
+  "non_empty": true
+}

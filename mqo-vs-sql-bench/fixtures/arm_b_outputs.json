@@ -1,0 +1,49 @@
+[
+  {
+    "task_id": "q001",
+    "arm": "mqo_multidimensional",
+    "query": "{\"model\":\"sales\",\"measures\":[{\"unique_name\":\"sales.revenue\"}],\"dimensions\":[{\"hierarchy\":\"time\",\"level\":\"year\"}],\"filters\":[],\"time_intelligence\":[],\"order\":null,\"limit\":null,\"non_empty\":true}",
+    "rows": [
+      {"year": 2022, "total_revenue": 1500000.0},
+      {"year": 2023, "total_revenue": 1750000.0},
+      {"year": 2024, "total_revenue": 2100000.0}
+    ],
+    "error": null,
+    "n_retries": 0,
+    "latency_ms": 210,
+    "tokens": 620,
+    "invalid_entity": false
+  },
+  {
+    "task_id": "q002",
+    "arm": "mqo_multidimensional",
+    "query": "{\"model\":\"sales\",\"measures\":[{\"unique_name\":\"sales.customer_count\"}],\"dimensions\":[{\"hierarchy\":\"geography\",\"level\":\"region\"}],\"filters\":[],\"time_intelligence\":[],\"order\":null,\"limit\":null,\"non_empty\":true}",
+    "rows": [
+      {"region": "North", "customer_count": 4200},
+      {"region": "South", "customer_count": 3800},
+      {"region": "West", "customer_count": 5100}
+    ],
+    "error": null,
+    "n_retries": 0,
+    "latency_ms": 190,
+    "tokens": 590,
+    "invalid_entity": false
+  },
+  {
+    "task_id": "q003",
+    "arm": "mqo_multidimensional",
+    "query": "{\"model\":\"sales\",\"measures\":[{\"unique_name\":\"sales.units_sold\"}],\"dimensions\":[{\"hierarchy\":\"product\",\"level\":\"product_name\"}],\"filters\":[],\"time_intelligence\":[],\"order\":[{\"key\":\"sales.units_sold\",\"direction\":\"desc\"}],\"limit\":5,\"non_empty\":true}",
+    "rows": [
+      {"product_name": "Widget A", "total_units": 98000},
+      {"product_name": "Widget B", "total_units": 75000},
+      {"product_name": "Gadget X", "total_units": 62000},
+      {"product_name": "Gadget Y", "total_units": 55000},
+      {"product_name": "Thing Z", "total_units": 48000}
+    ],
+    "error": null,
+    "n_retries": 0,
+    "latency_ms": 175,
+    "tokens": 610,
+    "invalid_entity": false
+  }
+]

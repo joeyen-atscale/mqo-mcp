@@ -1,0 +1,12 @@
+[
+  {"state": "California", "month": "2023-01", "web_sales": 120000.0, "year": 2023},
+  {"state": "California", "month": "2023-02", "web_sales": 115000.0, "year": 2023},
+  {"state": "California", "month": "2022-01", "web_sales": 105000.0, "year": 2022},
+  {"state": "California", "month": "2022-02", "web_sales": 98000.0,  "year": 2022},
+  {"state": "Texas",      "month": "2023-01", "web_sales": 95000.0,  "year": 2023},
+  {"state": "Texas",      "month": "2023-02", "web_sales": 90000.0,  "year": 2023},
+  {"state": "Texas",      "month": "2022-01", "web_sales": 80000.0,  "year": 2022},
+  {"state": "Texas",      "month": "2022-02", "web_sales": 78000.0,  "year": 2022},
+  {"state": "New York",   "month": "2023-01", "web_sales": 88000.0,  "year": 2023},
+  {"state": "New York",   "month": "2022-01", "web_sales": 75000.0,  "year": 2022}
+]

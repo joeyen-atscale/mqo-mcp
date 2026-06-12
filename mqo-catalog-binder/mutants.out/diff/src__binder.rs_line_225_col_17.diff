@@ -1,0 +1,29 @@
+--- src/binder.rs
++++ delete match arm 1 in bind
+@@ -217,25 +217,17 @@
+                 .iter()
+                 .filter(|e| {
+                     e.group_name.to_lowercase() == group_key
+                         && e.member_name.to_lowercase() == member_key
+                 })
+                 .collect();
+ 
+             match matches.len() {
+-                1 => {
+-                    let e = matches[0];
+-                    bound_calc_group_members.push(BoundCalcGroupMember {
+-                        calc_group: calc_group.clone(),
+-                        member: member.clone(),
+-                        unique_name: e.unique_name.clone(),
+-                        mdx: e.mdx.clone(),
+-                    });
+-                }
++                 /* ~ changed by cargo-mutants ~ */
+                 0 => {
+                     not_found.push(format!("calc_group_member {calc_group}::{member}"));
+                 }
+                 _ => {
+                     ambiguous.push(serde_json::json!({
+                         "ref": format!("calc_group_member {calc_group}::{member}"),
+                         "candidates": matches.iter().map(|e| &e.unique_name).collect::<Vec<_>>(),
+                     }));

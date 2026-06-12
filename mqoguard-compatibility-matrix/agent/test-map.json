@@ -1,0 +1,20 @@
+{
+  "schema": "autobuilder.test_map.v1",
+  "crate": "mqoguard-compatibility-matrix",
+  "ac_to_test": {
+    "AC1": "tests/acceptance_ac1.rs::acceptance_ac1_measure_excludes_incompatible_hierarchy",
+    "AC2": "tests/acceptance_ac2.rs::acceptance_ac2_conformed_dimension_compatible_with_both_facts",
+    "AC3": "tests/acceptance_ac3.rs::acceptance_ac3_symmetry_always_holds (proptest)",
+    "AC4a": "tests/acceptance_ac4.rs::acceptance_ac4_inventory_qty_incompatible_with_promotions",
+    "AC4b": "tests/acceptance_ac4.rs::acceptance_ac4_inventory_qty_compatible_with_inventory_calendar",
+    "AC5a": "tests/acceptance_ac5.rs::acceptance_ac5_budget_exceeded_drops_inverse_index",
+    "AC5b": "tests/acceptance_ac5.rs::acceptance_ac5_inverse_reconstructable_from_forward_map",
+    "AC6a": "tests/acceptance_ac6.rs::acceptance_ac6_empty_column_groups_returns_empty_matrix",
+    "AC6b": "tests/acceptance_ac6.rs::acceptance_ac6_not_all_compatible",
+    "AC7": "cargo clippy --all-targets -- -D warnings && cargo test"
+  },
+  "invariants": {
+    "symmetry": "tests/proptest_invariants.rs::prop_always_symmetric",
+    "no_phantom_measures": "tests/proptest_invariants.rs::prop_no_phantom_measures"
+  }
+}

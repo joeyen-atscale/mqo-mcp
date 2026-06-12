@@ -1,0 +1,15 @@
+{
+  "mqo": {
+    "model": "sales",
+    "measures": [],
+    "dimensions": [],
+    "filters": [],
+    "time_intelligence": [],
+    "order": null,
+    "limit": null,
+    "non_empty": false
+  },
+  "measures": [],
+  "dimensions": [],
+  "calc_group_members": []
+}

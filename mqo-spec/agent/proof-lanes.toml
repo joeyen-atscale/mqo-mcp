@@ -1,0 +1,39 @@
+# proof-lanes.toml — path-to-lane routing for mqo-spec
+# Every changed path in src/ must resolve to >= 1 lane below.
+# All lanes must be green to advance in the iterate-and-prove loop.
+
+[lanes.types]
+description = "Core type definitions — serde/schemars derivations"
+paths = ["src/lib.rs"]
+checks = ["cargo test --release --workspace", "cargo clippy --workspace -- -D warnings"]
+confidence = 0.95
+
+[lanes.validation]
+description = "validate() function and MqoError enum"
+paths = ["src/lib.rs"]
+checks = ["cargo test --release --workspace"]
+confidence = 0.95
+
+[lanes.binary]
+description = "CLI binary — schema/validate subcommands"
+paths = ["src/main.rs"]
+checks = ["cargo test --release --workspace", "cargo build --release"]
+confidence = 0.90
+
+[lanes.fixtures]
+description = "Golden JSON fixtures"
+paths = ["tests/fixtures/"]
+checks = ["cargo test --release --workspace"]
+confidence = 0.90
+
+[lanes.acceptance]
+description = "Acceptance test files"
+paths = ["tests/acceptance_*.rs"]
+checks = ["cargo test --release --workspace"]
+confidence = 0.90
+
+[lanes.deps]
+description = "Dependency configuration"
+paths = ["Cargo.toml", "Cargo.lock", "deny.toml"]
+checks = ["cargo deny check licenses bans", "cargo build --release"]
+confidence = 0.85

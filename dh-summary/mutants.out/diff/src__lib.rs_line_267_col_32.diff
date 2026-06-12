@@ -1,0 +1,21 @@
+--- src/lib.rs
++++ replace - with + in stats_float
+@@ -259,17 +259,17 @@
+                 .filter_map(|s| s.parse::<f64>().ok())
+                 .collect();
+             let nulls = v.iter().filter(|o| o.is_none()).count() as u64;
+             let tot = v.len() as u64;
+             (non_null, nulls, tot)
+         }
+         _ => (vec![], 0, 0),
+     };
+-    let non_null_count = total - null_count;
++    let non_null_count = total + /* ~ changed by cargo-mutants ~ */ null_count;
+     if vals.is_empty() {
+         return ColStats {
+             min: None,
+             max: None,
+             sum: None,
+             mean: None,
+             distinct: Some(null_count.min(1)),
+             top_k: None,

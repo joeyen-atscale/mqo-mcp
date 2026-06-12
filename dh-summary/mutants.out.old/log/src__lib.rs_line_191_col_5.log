@@ -1,0 +1,256 @@
+
+*** src/lib.rs:191:5: replace compute_stats -> HashMap<String, ColStats> with HashMap::new()
+
+*** mutation diff:
+--- src/lib.rs
++++ replace compute_stats -> HashMap<String, ColStats> with HashMap::new()
+@@ -183,22 +183,17 @@
+             .and_then(|o| *o)
+             .map_or(Value::Null, Value::Bool),
+         _ => Value::Null,
+     }
+ }
+ 
+ /// Compute per-column statistics keyed by `unique_name`.
+ fn compute_stats(dataset: &Dataset, topk: usize) -> HashMap<String, ColStats> {
+-    let mut stats = HashMap::new();
+-    for (col, data) in dataset.columns.iter().zip(dataset.data.iter()) {
+-        let s = compute_col_stats(data, col.dtype, topk);
+-        stats.insert(col.unique_name.clone(), s);
+-    }
+-    stats
++    HashMap::new() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn compute_col_stats(data: &ColumnData, dtype: DType, topk: usize) -> ColStats {
+     match dtype {
+         DType::Int => stats_int(data),
+         DType::Float | DType::Decimal => stats_float(data),
+         DType::Str => stats_str(data, topk),
+         DType::Bool => stats_bool(data),
+
+
+*** /Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo test --no-run --verbose --package=dh-summary@0.1.0
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+       Fresh unicode-ident v1.0.24
+       Fresh proc-macro2 v1.0.106
+       Fresh quote v1.0.45
+       Fresh syn v2.0.117
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh serde_derive v1.0.228
+       Fresh serde_derive_internals v0.29.1
+       Fresh memchr v2.8.1
+       Fresh itoa v1.0.18
+       Fresh serde_json v1.0.150
+       Fresh schemars_derive v0.8.22
+       Fresh serde v1.0.228
+       Fresh libc v0.2.186
+       Fresh dyn-clone v1.0.20
+       Fresh cfg-if v1.0.4
+       Fresh getrandom v0.4.2
+       Fresh schemars v0.8.22
+       Fresh dh-spec v0.1.0 (/Users/jsy/Documents/projects/dh-spec)
+       Fresh uuid v1.23.2
+       Fresh dh-store v0.1.0 (/Users/jsy/Documents/projects/dh-store)
+       Dirty dh-summary v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp): the file `src/lib.rs` has changed (1780953624.851596026s, 3s after last build at 1780953621.541873328s)
+   Compiling dh-summary v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp)
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name dh_summary --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=78d698b9a149721f -C extra-filename=-bd59e07e1bc4c303 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rmeta --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rmeta --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rmeta`
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name dh_summary --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=343947f4240e2b9c -C extra-filename=-5243533f63ef4209 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rlib --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib`
+warning: unused variable: `dataset`
+   --> src/lib.rs:190:18
+    |
+190 | fn compute_stats(dataset: &Dataset, topk: usize) -> HashMap<String, ColStats> {
+    |                  ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_dataset`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `topk`
+   --> src/lib.rs:190:37
+    |
+190 | fn compute_stats(dataset: &Dataset, topk: usize) -> HashMap<String, ColStats> {
+    |                                     ^^^^ help: if this is intentional, prefix it with an underscore: `_topk`
+
+warning: function `compute_col_stats` is never used
+   --> src/lib.rs:194:4
+    |
+194 | fn compute_col_stats(data: &ColumnData, dtype: DType, topk: usize) -> ColStats {
+    |    ^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: function `stats_int` is never used
+   --> src/lib.rs:205:4
+    |
+205 | fn stats_int(data: &ColumnData) -> ColStats {
+    |    ^^^^^^^^^
+
+warning: function `stats_float` is never used
+   --> src/lib.rs:242:4
+    |
+242 | fn stats_float(data: &ColumnData) -> ColStats {
+    |    ^^^^^^^^^^^
+
+warning: function `stats_str` is never used
+   --> src/lib.rs:293:4
+    |
+293 | fn stats_str(data: &ColumnData, topk: usize) -> ColStats {
+    |    ^^^^^^^^^
+
+warning: function `stats_bool` is never used
+   --> src/lib.rs:324:4
+    |
+324 | fn stats_bool(data: &ColumnData) -> ColStats {
+    |    ^^^^^^^^^^
+
+warning: function `stats_date` is never used
+   --> src/lib.rs:352:4
+    |
+352 | fn stats_date(data: &ColumnData) -> ColStats {
+    |    ^^^^^^^^^^
+
+warning: function `count_distinct_int` is never used
+   --> src/lib.rs:388:4
+    |
+388 | fn count_distinct_int(vals: &[i64]) -> u64 {
+    |    ^^^^^^^^^^^^^^^^^^
+
+warning: `dh-summary` (lib) generated 9 warnings
+warning: `dh-summary` (lib test) generated 9 warnings (9 duplicates)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.41s
+  Executable `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps/dh_summary-5243533f63ef4209`
+
+*** result: Success
+
+*** /Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo test --verbose --package=dh-summary@0.1.0
+       Fresh unicode-ident v1.0.24
+       Fresh proc-macro2 v1.0.106
+       Fresh memchr v2.8.1
+       Fresh itoa v1.0.18
+       Fresh quote v1.0.45
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh libc v0.2.186
+       Fresh dyn-clone v1.0.20
+       Fresh cfg-if v1.0.4
+       Fresh syn v2.0.117
+       Fresh serde_json v1.0.150
+       Fresh getrandom v0.4.2
+       Fresh serde_derive v1.0.228
+       Fresh serde_derive_internals v0.29.1
+       Fresh uuid v1.23.2
+       Fresh serde v1.0.228
+       Fresh schemars_derive v0.8.22
+       Fresh schemars v0.8.22
+       Fresh dh-spec v0.1.0 (/Users/jsy/Documents/projects/dh-spec)
+       Fresh dh-store v0.1.0 (/Users/jsy/Documents/projects/dh-store)
+warning: unused variable: `dataset`
+   --> src/lib.rs:190:18
+    |
+190 | fn compute_stats(dataset: &Dataset, topk: usize) -> HashMap<String, ColStats> {
+    |                  ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_dataset`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `topk`
+   --> src/lib.rs:190:37
+    |
+190 | fn compute_stats(dataset: &Dataset, topk: usize) -> HashMap<String, ColStats> {
+    |                                     ^^^^ help: if this is intentional, prefix it with an underscore: `_topk`
+
+warning: function `compute_col_stats` is never used
+   --> src/lib.rs:194:4
+    |
+194 | fn compute_col_stats(data: &ColumnData, dtype: DType, topk: usize) -> ColStats {
+    |    ^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: function `stats_int` is never used
+   --> src/lib.rs:205:4
+    |
+205 | fn stats_int(data: &ColumnData) -> ColStats {
+    |    ^^^^^^^^^
+
+warning: function `stats_float` is never used
+   --> src/lib.rs:242:4
+    |
+242 | fn stats_float(data: &ColumnData) -> ColStats {
+    |    ^^^^^^^^^^^
+
+warning: function `stats_str` is never used
+   --> src/lib.rs:293:4
+    |
+293 | fn stats_str(data: &ColumnData, topk: usize) -> ColStats {
+    |    ^^^^^^^^^
+
+warning: function `stats_bool` is never used
+   --> src/lib.rs:324:4
+    |
+324 | fn stats_bool(data: &ColumnData) -> ColStats {
+    |    ^^^^^^^^^^
+
+warning: function `stats_date` is never used
+   --> src/lib.rs:352:4
+    |
+352 | fn stats_date(data: &ColumnData) -> ColStats {
+    |    ^^^^^^^^^^
+
+warning: function `count_distinct_int` is never used
+   --> src/lib.rs:388:4
+    |
+388 | fn count_distinct_int(vals: &[i64]) -> u64 {
+    |    ^^^^^^^^^^^^^^^^^^
+
+warning: `dh-summary` (lib) generated 9 warnings
+warning: `dh-summary` (lib test) generated 9 warnings (9 duplicates)
+       Fresh dh-summary v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-CIVCVI.tmp/target/debug/deps/dh_summary-5243533f63ef4209`
+
+running 7 tests
+test tests::ac4_capabilities_pivot_rule ... ok
+test tests::ac7_round_trip_serialization ... ok
+test tests::ac2_numeric_stats_golden ... FAILED
+test tests::ac3_categorical_topk_and_date_span ... FAILED
+test tests::ac1_large_dataset_sample_and_size_bounds ... ok
+test tests::ac5_notes_nulls_and_dominant_group ... FAILED
+test tests::ac6_max_bytes_truncates_sample_not_stats ... FAILED
+
+failures:
+
+---- tests::ac2_numeric_stats_golden stdout ----
+
+thread 'tests::ac2_numeric_stats_golden' panicked at src/lib.rs:610:51:
+stats present
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- tests::ac3_categorical_topk_and_date_span stdout ----
+
+thread 'tests::ac3_categorical_topk_and_date_span' panicked at src/lib.rs:661:61:
+cat stats
+
+---- tests::ac5_notes_nulls_and_dominant_group stdout ----
+
+thread 'tests::ac5_notes_nulls_and_dominant_group' panicked at src/lib.rs:772:9:
+expected a dominant-group note, got: []
+
+---- tests::ac6_max_bytes_truncates_sample_not_stats stdout ----
+
+thread 'tests::ac6_max_bytes_truncates_sample_not_stats' panicked at src/lib.rs:831:9:
+revenue stats must be preserved
+
+
+failures:
+    tests::ac2_numeric_stats_golden
+    tests::ac3_categorical_topk_and_date_span
+    tests::ac5_notes_nulls_and_dominant_group
+    tests::ac6_max_bytes_truncates_sample_not_stats
+
+test result: FAILED. 3 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p dh-summary --lib`
+
+*** result: Failure(101)

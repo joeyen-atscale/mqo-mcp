@@ -1,0 +1,31 @@
+[package]
+name = "dh-mcp-server"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75.0"
+description = "Dataset-handle MCP server — query_multidimensional runs the MQO pipeline, stores the result in dh-store, and returns {summary, handle, capabilities}; a dataset_* tool family works the data in place. Read-only by construction."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/joeyen-atscale/dh-mcp-server"
+keywords = ["semantic-layer", "olap", "mcp", "dataset-handle", "atscale"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "dh-mcp-server"
+path = "src/main.rs"
+
+[lib]
+name = "dh_mcp_server"
+path = "src/lib.rs"
+
+[dependencies]
+dh-spec = { path = "../dh-spec" }
+dh-store = { path = "../dh-store" }
+dh-ops = { path = "../dh-ops" }
+dh-summary = { path = "../dh-summary" }
+dh-export = { path = "../dh-export" }
+mqo-mcp-server = { path = "../mqo-mcp-server" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]

@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "mappings": [
+    {
+      "source_path": "src/lib.rs",
+      "tests": [
+        "tests::ac1_aggregate_sum",
+        "tests::ac1_aggregate_mean",
+        "tests::ac1_aggregate_min",
+        "tests::ac1_aggregate_max",
+        "tests::ac1_aggregate_count",
+        "tests::ac1_aggregate_count_distinct",
+        "tests::ac2_filter_compound_predicate",
+        "tests::ac2_filter_string_predicate",
+        "tests::ac2_filter_or_predicate",
+        "tests::ac3_sort_multi_key",
+        "tests::ac3_top_n_deterministic_tiebreak",
+        "tests::ac4_pivot_crosstab",
+        "tests::ac5_compare_delta_and_pct_change",
+        "tests::ac6_drill_expands_to_detail",
+        "tests::ac7_new_handle_and_sample_cap",
+        "tests::ac8_determinism_byte_identical",
+        "tests::ac9_describe_per_column_stats",
+        "tests::mk_filter_ne_excludes_matching",
+        "tests::mk_filter_null_checks",
+        "tests::mk_top_n_tiebreak_order_is_index",
+        "tests::mk_pivot_mean_agg_correct",
+        "tests::mk_drill_requires_strictly_more_rows_in_parent",
+        "tests::mk_sort_key_negative_integers_before_positive",
+        "tests::mk_sort_key_negative_floats_before_positive",
+        "tests::mk_col_val_int_and_bool_arms",
+        "tests::mk_op_error_display_non_empty",
+        "tests::mk_select_col_rows_all_types",
+        "tests::mk_eval_predicate_eq_ne_distinction",
+        "tests::mk_top_n_no_tie_returns_correct_row",
+        "tests::mk_sort_key_i64_extremes",
+        "tests::mk_sort_key_f64_bit_flip",
+        "tests::mk_drill_same_row_count_parent_not_qualifiable",
+        "tests::mk_as_f64_decimal_arm"
+      ],
+      "acceptance_criteria": ["AC1", "AC2", "AC3", "AC4", "AC5", "AC6", "AC7", "AC8", "AC9"]
+    }
+  ]
+}

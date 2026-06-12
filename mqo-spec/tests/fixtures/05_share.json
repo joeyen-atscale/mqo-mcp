@@ -1,0 +1,16 @@
+{
+  "model": "sales",
+  "measures": [
+    { "unique_name": "sales.revenue" }
+  ],
+  "dimensions": [
+    { "hierarchy": "product.category", "level": "subcategory" }
+  ],
+  "filters": [],
+  "time_intelligence": [
+    { "op": "share", "of_level": "product.category.category" }
+  ],
+  "order": [{ "key": "sales.revenue", "direction": "desc" }],
+  "limit": 20,
+  "non_empty": true
+}

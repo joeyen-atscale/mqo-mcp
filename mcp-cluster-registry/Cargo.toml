@@ -1,0 +1,22 @@
+[package]
+name = "mcp-cluster-registry"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70.0"
+description = "Typed TOML/JSON multi-cluster configuration registry for the AtScale federation gateway"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/joeyen-atscale/mcp-cluster-registry"
+keywords = ["semantic-layer", "olap", "federation", "cluster", "atscale"]
+categories = ["configuration", "data-structures"]
+
+[lib]
+name = "mcp_cluster_registry"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "1"
+
+[dev-dependencies]

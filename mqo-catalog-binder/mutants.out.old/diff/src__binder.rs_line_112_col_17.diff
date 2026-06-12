@@ -1,0 +1,21 @@
+--- src/binder.rs
++++ replace && with || in resolve_level
+@@ -104,17 +104,17 @@
+ ) -> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>> {
+     let hier_key = sel.hierarchy.to_lowercase();
+     let level_key = sel.level.to_lowercase();
+ 
+     let candidates: Vec<&ColumnEntry> = columns
+         .iter()
+         .filter(|c| {
+             c.kind == "level"
+-                && c.hierarchy
++                || /* ~ changed by cargo-mutants ~ */ c.hierarchy
+                     .as_deref()
+                     .is_some_and(|h| h.to_lowercase() == hier_key)
+                 && c.level
+                     .as_deref()
+                     .is_some_and(|l| l.to_lowercase() == level_key)
+         })
+         .collect();
+ 

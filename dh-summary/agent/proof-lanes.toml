@@ -1,0 +1,43 @@
+# proof-lanes.toml — every changed path must route to ≥1 lane, all lanes green
+
+[lanes.unit_tests]
+description = "All unit + doc tests via cargo test"
+command = "cargo test --release"
+paths = ["src/**/*.rs"]
+required = true
+
+[lanes.clippy]
+description = "Clippy with -D warnings"
+command = "cargo clippy --release -- -D warnings"
+paths = ["src/**/*.rs", "Cargo.toml"]
+required = true
+
+[lanes.stats_correctness]
+description = "Numeric/categorical/date stat golden tests"
+command = "cargo test --release ac2 ac3"
+paths = ["src/**/*.rs"]
+required = true
+
+[lanes.bounds_enforcement]
+description = "sample_cap and max_bytes boundary tests"
+command = "cargo test --release ac1 ac6"
+paths = ["src/**/*.rs"]
+required = true
+
+[lanes.capabilities]
+description = "Pivot rule and capability advertisement"
+command = "cargo test --release ac4"
+paths = ["src/**/*.rs"]
+required = true
+
+[lanes.notes]
+description = "Deterministic notes generation"
+command = "cargo test --release ac5"
+paths = ["src/**/*.rs"]
+required = true
+
+[lanes.serialization]
+description = "Round-trip serialization"
+command = "cargo test --release ac7"
+paths = ["src/**/*.rs", "Cargo.toml"]
+required = true

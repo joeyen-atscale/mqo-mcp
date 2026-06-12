@@ -1,0 +1,16 @@
+{
+  "schema": "autobuilder.owner_map.v1",
+  "crate": "mqoguard-compatibility-matrix",
+  "owners": {
+    "src/lib.rs": "joe.yen@atscale.com",
+    "tests/acceptance_ac1.rs": "joe.yen@atscale.com",
+    "tests/acceptance_ac2.rs": "joe.yen@atscale.com",
+    "tests/acceptance_ac3.rs": "joe.yen@atscale.com",
+    "tests/acceptance_ac4.rs": "joe.yen@atscale.com",
+    "tests/acceptance_ac5.rs": "joe.yen@atscale.com",
+    "tests/acceptance_ac6.rs": "joe.yen@atscale.com",
+    "tests/proptest_invariants.rs": "joe.yen@atscale.com",
+    "Cargo.toml": "joe.yen@atscale.com",
+    "agent/intent-card.json": "joe.yen@atscale.com"
+  }
+}

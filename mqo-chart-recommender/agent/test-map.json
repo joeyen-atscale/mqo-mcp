@@ -1,0 +1,12 @@
+{
+  "schema": "autobuilder.test_map.v1",
+  "entries": [
+    { "ac_id": "AC1", "test_file": "tests/ac1_line_for_temporal.rs",   "test_fn": "ac1_line_for_temporal" },
+    { "ac_id": "AC2", "test_file": "tests/ac2_bar_for_nominal.rs",      "test_fn": "ac2_bar_for_nominal" },
+    { "ac_id": "AC3", "test_file": "tests/ac3_scatter_two_measures.rs", "test_fn": "ac3_scatter_two_measures" },
+    { "ac_id": "AC4", "test_file": "tests/ac4_kpi_single_measure.rs",   "test_fn": "ac4_kpi_single_measure" },
+    { "ac_id": "AC5", "test_file": "tests/ac5_high_cardinality_alt.rs", "test_fn": "ac5_high_cardinality_alt" },
+    { "ac_id": "AC6", "test_file": "tests/ac6_table_no_measures.rs",    "test_fn": "ac6_table_no_measures" },
+    { "ac_id": "AC7", "test_file": "tests/ac7_rationale_deterministic.rs", "test_fn": "ac7_rationale_deterministic + ac7_deterministic_alternatives_ordering" }
+  ]
+}

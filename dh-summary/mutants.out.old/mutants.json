@@ -1,0 +1,3572 @@
+[
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "summarize",
+      "return_type": "-> DatasetSummary",
+      "span": {
+        "start": {
+          "line": 59,
+          "column": 1
+        },
+        "end": {
+          "line": 97,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 74,
+        "column": 5
+      },
+      "end": {
+        "line": 96,
+        "column": 59
+      }
+    },
+    "replacement": "Default::default()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "capabilities",
+      "return_type": "-> Vec<Capability>",
+      "span": {
+        "start": {
+          "line": 99,
+          "column": 1
+        },
+        "end": {
+          "line": 125,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 106,
+        "column": 5
+      },
+      "end": {
+        "line": 124,
+        "column": 9
+      }
+    },
+    "replacement": "vec![]",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "capabilities",
+      "return_type": "-> Vec<Capability>",
+      "span": {
+        "start": {
+          "line": 99,
+          "column": 1
+        },
+        "end": {
+          "line": 125,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 106,
+        "column": 5
+      },
+      "end": {
+        "line": 124,
+        "column": 9
+      }
+    },
+    "replacement": "vec![Default::default()]",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "capabilities",
+      "return_type": "-> Vec<Capability>",
+      "span": {
+        "start": {
+          "line": 99,
+          "column": 1
+        },
+        "end": {
+          "line": 125,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 109,
+        "column": 28
+      },
+      "end": {
+        "line": 109,
+        "column": 30
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "capabilities",
+      "return_type": "-> Vec<Capability>",
+      "span": {
+        "start": {
+          "line": 99,
+          "column": 1
+        },
+        "end": {
+          "line": 125,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 117,
+        "column": 15
+      },
+      "end": {
+        "line": 117,
+        "column": 17
+      }
+    },
+    "replacement": "<",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "build_sample",
+      "return_type": "-> Vec<Row>",
+      "span": {
+        "start": {
+          "line": 129,
+          "column": 1
+        },
+        "end": {
+          "line": 152,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 131,
+        "column": 5
+      },
+      "end": {
+        "line": 151,
+        "column": 74
+      }
+    },
+    "replacement": "vec![]",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "build_sample",
+      "return_type": "-> Vec<Row>",
+      "span": {
+        "start": {
+          "line": 129,
+          "column": 1
+        },
+        "end": {
+          "line": 152,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 131,
+        "column": 5
+      },
+      "end": {
+        "line": 151,
+        "column": 74
+      }
+    },
+    "replacement": "vec![Default::default()]",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "build_sample",
+      "return_type": "-> Vec<Row>",
+      "span": {
+        "start": {
+          "line": 129,
+          "column": 1
+        },
+        "end": {
+          "line": 152,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 132,
+        "column": 15
+      },
+      "end": {
+        "line": 132,
+        "column": 17
+      }
+    },
+    "replacement": "&&",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "build_sample",
+      "return_type": "-> Vec<Row>",
+      "span": {
+        "start": {
+          "line": 129,
+          "column": 1
+        },
+        "end": {
+          "line": 152,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 132,
+        "column": 10
+      },
+      "end": {
+        "line": 132,
+        "column": 12
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "build_sample",
+      "return_type": "-> Vec<Row>",
+      "span": {
+        "start": {
+          "line": 129,
+          "column": 1
+        },
+        "end": {
+          "line": 152,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 132,
+        "column": 29
+      },
+      "end": {
+        "line": 132,
+        "column": 31
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "build_sample",
+      "return_type": "-> Vec<Row>",
+      "span": {
+        "start": {
+          "line": 129,
+          "column": 1
+        },
+        "end": {
+          "line": 152,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 136,
+        "column": 39
+      },
+      "end": {
+        "line": 136,
+        "column": 40
+      }
+    },
+    "replacement": "%",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "build_sample",
+      "return_type": "-> Vec<Row>",
+      "span": {
+        "start": {
+          "line": 129,
+          "column": 1
+        },
+        "end": {
+          "line": 152,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 136,
+        "column": 39
+      },
+      "end": {
+        "line": 136,
+        "column": 40
+      }
+    },
+    "replacement": "*",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "build_sample",
+      "return_type": "-> Vec<Row>",
+      "span": {
+        "start": {
+          "line": 129,
+          "column": 1
+        },
+        "end": {
+          "line": 152,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 136,
+        "column": 34
+      },
+      "end": {
+        "line": 136,
+        "column": 35
+      }
+    },
+    "replacement": "-",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "build_sample",
+      "return_type": "-> Vec<Row>",
+      "span": {
+        "start": {
+          "line": 129,
+          "column": 1
+        },
+        "end": {
+          "line": 152,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 136,
+        "column": 34
+      },
+      "end": {
+        "line": 136,
+        "column": 35
+      }
+    },
+    "replacement": "*",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "build_sample",
+      "return_type": "-> Vec<Row>",
+      "span": {
+        "start": {
+          "line": 129,
+          "column": 1
+        },
+        "end": {
+          "line": 152,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 137,
+        "column": 33
+      },
+      "end": {
+        "line": 137,
+        "column": 34
+      }
+    },
+    "replacement": "%",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "build_sample",
+      "return_type": "-> Vec<Row>",
+      "span": {
+        "start": {
+          "line": 129,
+          "column": 1
+        },
+        "end": {
+          "line": 152,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 137,
+        "column": 33
+      },
+      "end": {
+        "line": 137,
+        "column": 34
+      }
+    },
+    "replacement": "*",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "build_sample",
+      "return_type": "-> Vec<Row>",
+      "span": {
+        "start": {
+          "line": 129,
+          "column": 1
+        },
+        "end": {
+          "line": 152,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 144,
+        "column": 19
+      },
+      "end": {
+        "line": 144,
+        "column": 20
+      }
+    },
+    "replacement": "==",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "build_sample",
+      "return_type": "-> Vec<Row>",
+      "span": {
+        "start": {
+          "line": 129,
+          "column": 1
+        },
+        "end": {
+          "line": 152,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 144,
+        "column": 19
+      },
+      "end": {
+        "line": 144,
+        "column": 20
+      }
+    },
+    "replacement": "<",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "build_sample",
+      "return_type": "-> Vec<Row>",
+      "span": {
+        "start": {
+          "line": 129,
+          "column": 1
+        },
+        "end": {
+          "line": 152,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 144,
+        "column": 19
+      },
+      "end": {
+        "line": 144,
+        "column": 20
+      }
+    },
+    "replacement": ">=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "row_to_map",
+      "return_type": "-> Row",
+      "span": {
+        "start": {
+          "line": 154,
+          "column": 1
+        },
+        "end": {
+          "line": 162,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 156,
+        "column": 5
+      },
+      "end": {
+        "line": 161,
+        "column": 8
+      }
+    },
+    "replacement": "Default::default()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "extract_value",
+      "return_type": "-> Value",
+      "span": {
+        "start": {
+          "line": 164,
+          "column": 1
+        },
+        "end": {
+          "line": 187,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 166,
+        "column": 5
+      },
+      "end": {
+        "line": 186,
+        "column": 6
+      }
+    },
+    "replacement": "Default::default()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "extract_value",
+      "return_type": "-> Value",
+      "span": {
+        "start": {
+          "line": 164,
+          "column": 1
+        },
+        "end": {
+          "line": 187,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 167,
+        "column": 9
+      },
+      "end": {
+        "line": 170,
+        "column": 47
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "extract_value",
+      "return_type": "-> Value",
+      "span": {
+        "start": {
+          "line": 164,
+          "column": 1
+        },
+        "end": {
+          "line": 187,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 171,
+        "column": 9
+      },
+      "end": {
+        "line": 175,
+        "column": 49
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "extract_value",
+      "return_type": "-> Value",
+      "span": {
+        "start": {
+          "line": 164,
+          "column": 1
+        },
+        "end": {
+          "line": 187,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 176,
+        "column": 9
+      },
+      "end": {
+        "line": 180,
+        "column": 68
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "extract_value",
+      "return_type": "-> Value",
+      "span": {
+        "start": {
+          "line": 164,
+          "column": 1
+        },
+        "end": {
+          "line": 187,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 181,
+        "column": 9
+      },
+      "end": {
+        "line": 184,
+        "column": 47
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "compute_stats",
+      "return_type": "-> HashMap<String, ColStats>",
+      "span": {
+        "start": {
+          "line": 189,
+          "column": 1
+        },
+        "end": {
+          "line": 197,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 191,
+        "column": 5
+      },
+      "end": {
+        "line": 196,
+        "column": 10
+      }
+    },
+    "replacement": "HashMap::new()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "compute_stats",
+      "return_type": "-> HashMap<String, ColStats>",
+      "span": {
+        "start": {
+          "line": 189,
+          "column": 1
+        },
+        "end": {
+          "line": 197,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 191,
+        "column": 5
+      },
+      "end": {
+        "line": 196,
+        "column": 10
+      }
+    },
+    "replacement": "HashMap::from_iter([(String::new(), Default::default())])",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "compute_stats",
+      "return_type": "-> HashMap<String, ColStats>",
+      "span": {
+        "start": {
+          "line": 189,
+          "column": 1
+        },
+        "end": {
+          "line": 197,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 191,
+        "column": 5
+      },
+      "end": {
+        "line": 196,
+        "column": 10
+      }
+    },
+    "replacement": "HashMap::from_iter([(\"xyzzy\".into(), Default::default())])",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "compute_col_stats",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 199,
+          "column": 1
+        },
+        "end": {
+          "line": 207,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 200,
+        "column": 5
+      },
+      "end": {
+        "line": 206,
+        "column": 6
+      }
+    },
+    "replacement": "Default::default()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_int",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 209,
+          "column": 1
+        },
+        "end": {
+          "line": 244,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 211,
+        "column": 5
+      },
+      "end": {
+        "line": 243,
+        "column": 6
+      }
+    },
+    "replacement": "Default::default()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_int",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 209,
+          "column": 1
+        },
+        "end": {
+          "line": 244,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 212,
+        "column": 9
+      },
+      "end": {
+        "line": 217,
+        "column": 10
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_int",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 209,
+          "column": 1
+        },
+        "end": {
+          "line": 244,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 227,
+        "column": 37
+      },
+      "end": {
+        "line": 227,
+        "column": 38
+      }
+    },
+    "replacement": "-",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_int",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 209,
+          "column": 1
+        },
+        "end": {
+          "line": 244,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 227,
+        "column": 37
+      },
+      "end": {
+        "line": 227,
+        "column": 38
+      }
+    },
+    "replacement": "*",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_int",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 209,
+          "column": 1
+        },
+        "end": {
+          "line": 244,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 234,
+        "column": 32
+      },
+      "end": {
+        "line": 234,
+        "column": 33
+      }
+    },
+    "replacement": "+",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_int",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 209,
+          "column": 1
+        },
+        "end": {
+          "line": 244,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 234,
+        "column": 32
+      },
+      "end": {
+        "line": 234,
+        "column": 33
+      }
+    },
+    "replacement": "/",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_int",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 209,
+          "column": 1
+        },
+        "end": {
+          "line": 244,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 235,
+        "column": 20
+      },
+      "end": {
+        "line": 235,
+        "column": 21
+      }
+    },
+    "replacement": "%",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_int",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 209,
+          "column": 1
+        },
+        "end": {
+          "line": 244,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 235,
+        "column": 20
+      },
+      "end": {
+        "line": 235,
+        "column": 21
+      }
+    },
+    "replacement": "*",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_int",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 209,
+          "column": 1
+        },
+        "end": {
+          "line": 244,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 241,
+        "column": 33
+      },
+      "end": {
+        "line": 241,
+        "column": 34
+      }
+    },
+    "replacement": "-",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_int",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 209,
+          "column": 1
+        },
+        "end": {
+          "line": 244,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 241,
+        "column": 33
+      },
+      "end": {
+        "line": 241,
+        "column": 34
+      }
+    },
+    "replacement": "*",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_float",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 246,
+          "column": 1
+        },
+        "end": {
+          "line": 295,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 248,
+        "column": 5
+      },
+      "end": {
+        "line": 294,
+        "column": 6
+      }
+    },
+    "replacement": "Default::default()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_float",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 246,
+          "column": 1
+        },
+        "end": {
+          "line": 295,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 249,
+        "column": 9
+      },
+      "end": {
+        "line": 254,
+        "column": 10
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_float",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 246,
+          "column": 1
+        },
+        "end": {
+          "line": 295,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 255,
+        "column": 9
+      },
+      "end": {
+        "line": 264,
+        "column": 10
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_float",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 246,
+          "column": 1
+        },
+        "end": {
+          "line": 295,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 267,
+        "column": 32
+      },
+      "end": {
+        "line": 267,
+        "column": 33
+      }
+    },
+    "replacement": "+",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_float",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 246,
+          "column": 1
+        },
+        "end": {
+          "line": 295,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 267,
+        "column": 32
+      },
+      "end": {
+        "line": 267,
+        "column": 33
+      }
+    },
+    "replacement": "/",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_float",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 246,
+          "column": 1
+        },
+        "end": {
+          "line": 295,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 281,
+        "column": 20
+      },
+      "end": {
+        "line": 281,
+        "column": 21
+      }
+    },
+    "replacement": "%",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_float",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 246,
+          "column": 1
+        },
+        "end": {
+          "line": 295,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 281,
+        "column": 20
+      },
+      "end": {
+        "line": 281,
+        "column": 21
+      }
+    },
+    "replacement": "*",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_float",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 246,
+          "column": 1
+        },
+        "end": {
+          "line": 295,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 285,
+        "column": 40
+      },
+      "end": {
+        "line": 285,
+        "column": 42
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_float",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 246,
+          "column": 1
+        },
+        "end": {
+          "line": 295,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 286,
+        "column": 40
+      },
+      "end": {
+        "line": 286,
+        "column": 41
+      }
+    },
+    "replacement": "-",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_float",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 246,
+          "column": 1
+        },
+        "end": {
+          "line": 295,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 286,
+        "column": 40
+      },
+      "end": {
+        "line": 286,
+        "column": 41
+      }
+    },
+    "replacement": "*",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_str",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 297,
+          "column": 1
+        },
+        "end": {
+          "line": 327,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 299,
+        "column": 5
+      },
+      "end": {
+        "line": 326,
+        "column": 6
+      }
+    },
+    "replacement": "Default::default()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_str",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 297,
+          "column": 1
+        },
+        "end": {
+          "line": 327,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 300,
+        "column": 9
+      },
+      "end": {
+        "line": 304,
+        "column": 10
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_str",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 297,
+          "column": 1
+        },
+        "end": {
+          "line": 327,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 309,
+        "column": 37
+      },
+      "end": {
+        "line": 309,
+        "column": 39
+      }
+    },
+    "replacement": "-=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_str",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 297,
+          "column": 1
+        },
+        "end": {
+          "line": 327,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 309,
+        "column": 37
+      },
+      "end": {
+        "line": 309,
+        "column": 39
+      }
+    },
+    "replacement": "*=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_str",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 297,
+          "column": 1
+        },
+        "end": {
+          "line": 327,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 311,
+        "column": 38
+      },
+      "end": {
+        "line": 311,
+        "column": 39
+      }
+    },
+    "replacement": "-",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_str",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 297,
+          "column": 1
+        },
+        "end": {
+          "line": 327,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 311,
+        "column": 38
+      },
+      "end": {
+        "line": 311,
+        "column": 39
+      }
+    },
+    "replacement": "*",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 330,
+        "column": 5
+      },
+      "end": {
+        "line": 354,
+        "column": 6
+      }
+    },
+    "replacement": "Default::default()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 331,
+        "column": 9
+      },
+      "end": {
+        "line": 336,
+        "column": 10
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 339,
+        "column": 65
+      },
+      "end": {
+        "line": 339,
+        "column": 66
+      }
+    },
+    "replacement": "-",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 339,
+        "column": 65
+      },
+      "end": {
+        "line": 339,
+        "column": 66
+      }
+    },
+    "replacement": "*",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 339,
+        "column": 41
+      },
+      "end": {
+        "line": 339,
+        "column": 42
+      }
+    },
+    "replacement": "-",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 339,
+        "column": 41
+      },
+      "end": {
+        "line": 339,
+        "column": 42
+      }
+    },
+    "replacement": "*",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 339,
+        "column": 36
+      },
+      "end": {
+        "line": 339,
+        "column": 37
+      }
+    },
+    "replacement": "==",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 339,
+        "column": 36
+      },
+      "end": {
+        "line": 339,
+        "column": 37
+      }
+    },
+    "replacement": "<",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 339,
+        "column": 36
+      },
+      "end": {
+        "line": 339,
+        "column": 37
+      }
+    },
+    "replacement": ">=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 339,
+        "column": 60
+      },
+      "end": {
+        "line": 339,
+        "column": 61
+      }
+    },
+    "replacement": "==",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 339,
+        "column": 60
+      },
+      "end": {
+        "line": 339,
+        "column": 61
+      }
+    },
+    "replacement": "<",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 339,
+        "column": 60
+      },
+      "end": {
+        "line": 339,
+        "column": 61
+      }
+    },
+    "replacement": ">=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 339,
+        "column": 83
+      },
+      "end": {
+        "line": 339,
+        "column": 84
+      }
+    },
+    "replacement": "==",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 339,
+        "column": 83
+      },
+      "end": {
+        "line": 339,
+        "column": 84
+      }
+    },
+    "replacement": "<",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 339,
+        "column": 83
+      },
+      "end": {
+        "line": 339,
+        "column": 84
+      }
+    },
+    "replacement": ">=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 341,
+        "column": 14
+      },
+      "end": {
+        "line": 341,
+        "column": 15
+      }
+    },
+    "replacement": "==",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 341,
+        "column": 14
+      },
+      "end": {
+        "line": 341,
+        "column": 15
+      }
+    },
+    "replacement": "<",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 341,
+        "column": 14
+      },
+      "end": {
+        "line": 341,
+        "column": 15
+      }
+    },
+    "replacement": ">=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 344,
+        "column": 15
+      },
+      "end": {
+        "line": 344,
+        "column": 16
+      }
+    },
+    "replacement": "==",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 344,
+        "column": 15
+      },
+      "end": {
+        "line": 344,
+        "column": 16
+      }
+    },
+    "replacement": "<",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_bool",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 329,
+          "column": 1
+        },
+        "end": {
+          "line": 355,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 344,
+        "column": 15
+      },
+      "end": {
+        "line": 344,
+        "column": 16
+      }
+    },
+    "replacement": ">=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_date",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 357,
+          "column": 1
+        },
+        "end": {
+          "line": 391,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 358,
+        "column": 5
+      },
+      "end": {
+        "line": 390,
+        "column": 6
+      }
+    },
+    "replacement": "Default::default()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_date",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 357,
+          "column": 1
+        },
+        "end": {
+          "line": 391,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 359,
+        "column": 9
+      },
+      "end": {
+        "line": 363,
+        "column": 10
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_date",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 357,
+          "column": 1
+        },
+        "end": {
+          "line": 391,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 373,
+        "column": 24
+      },
+      "end": {
+        "line": 373,
+        "column": 25
+      }
+    },
+    "replacement": "-",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_date",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 357,
+          "column": 1
+        },
+        "end": {
+          "line": 391,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 373,
+        "column": 24
+      },
+      "end": {
+        "line": 373,
+        "column": 25
+      }
+    },
+    "replacement": "*",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "stats_date",
+      "return_type": "-> ColStats",
+      "span": {
+        "start": {
+          "line": 357,
+          "column": 1
+        },
+        "end": {
+          "line": 391,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 377,
+        "column": 9
+      },
+      "end": {
+        "line": 380,
+        "column": 12
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "count_distinct_int",
+      "return_type": "-> u64",
+      "span": {
+        "start": {
+          "line": 393,
+          "column": 1
+        },
+        "end": {
+          "line": 398,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 394,
+        "column": 5
+      },
+      "end": {
+        "line": 397,
+        "column": 19
+      }
+    },
+    "replacement": "0",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "count_distinct_int",
+      "return_type": "-> u64",
+      "span": {
+        "start": {
+          "line": 393,
+          "column": 1
+        },
+        "end": {
+          "line": 398,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 394,
+        "column": 5
+      },
+      "end": {
+        "line": 397,
+        "column": 19
+      }
+    },
+    "replacement": "1",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 403,
+        "column": 5
+      },
+      "end": {
+        "line": 465,
+        "column": 10
+      }
+    },
+    "replacement": "vec![]",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 403,
+        "column": 5
+      },
+      "end": {
+        "line": 465,
+        "column": 10
+      }
+    },
+    "replacement": "vec![String::new()]",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 403,
+        "column": 5
+      },
+      "end": {
+        "line": 465,
+        "column": 10
+      }
+    },
+    "replacement": "vec![\"xyzzy\".into()]",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 405,
+        "column": 19
+      },
+      "end": {
+        "line": 405,
+        "column": 21
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 413,
+        "column": 23
+      },
+      "end": {
+        "line": 413,
+        "column": 24
+      }
+    },
+    "replacement": "==",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 413,
+        "column": 23
+      },
+      "end": {
+        "line": 413,
+        "column": 24
+      }
+    },
+    "replacement": "<",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 413,
+        "column": 23
+      },
+      "end": {
+        "line": 413,
+        "column": 24
+      }
+    },
+    "replacement": ">=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 421,
+        "column": 22
+      },
+      "end": {
+        "line": 421,
+        "column": 24
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 426,
+        "column": 72
+      },
+      "end": {
+        "line": 426,
+        "column": 73
+      }
+    },
+    "replacement": "+",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 426,
+        "column": 72
+      },
+      "end": {
+        "line": 426,
+        "column": 73
+      }
+    },
+    "replacement": "/",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 426,
+        "column": 52
+      },
+      "end": {
+        "line": 426,
+        "column": 53
+      }
+    },
+    "replacement": "%",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 426,
+        "column": 52
+      },
+      "end": {
+        "line": 426,
+        "column": 53
+      }
+    },
+    "replacement": "*",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 427,
+        "column": 36
+      },
+      "end": {
+        "line": 427,
+        "column": 38
+      }
+    },
+    "replacement": "<",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 444,
+        "column": 37
+      },
+      "end": {
+        "line": 444,
+        "column": 39
+      }
+    },
+    "replacement": "&&",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 444,
+        "column": 22
+      },
+      "end": {
+        "line": 444,
+        "column": 24
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 444,
+        "column": 50
+      },
+      "end": {
+        "line": 444,
+        "column": 52
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 449,
+        "column": 74
+      },
+      "end": {
+        "line": 449,
+        "column": 76
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "generate_notes",
+      "return_type": "-> Vec<String>",
+      "span": {
+        "start": {
+          "line": 400,
+          "column": 1
+        },
+        "end": {
+          "line": 466,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 454,
+        "column": 74
+      },
+      "end": {
+        "line": 454,
+        "column": 76
+      }
+    },
+    "replacement": "!=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "count_nulls",
+      "return_type": "-> u64",
+      "span": {
+        "start": {
+          "line": 468,
+          "column": 1
+        },
+        "end": {
+          "line": 479,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 469,
+        "column": 5
+      },
+      "end": {
+        "line": 478,
+        "column": 6
+      }
+    },
+    "replacement": "0",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "count_nulls",
+      "return_type": "-> u64",
+      "span": {
+        "start": {
+          "line": 468,
+          "column": 1
+        },
+        "end": {
+          "line": 479,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 469,
+        "column": 5
+      },
+      "end": {
+        "line": 478,
+        "column": 6
+      }
+    },
+    "replacement": "1",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "count_nulls",
+      "return_type": "-> u64",
+      "span": {
+        "start": {
+          "line": 468,
+          "column": 1
+        },
+        "end": {
+          "line": 479,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 470,
+        "column": 9
+      },
+      "end": {
+        "line": 470,
+        "column": 79
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "count_nulls",
+      "return_type": "-> u64",
+      "span": {
+        "start": {
+          "line": 468,
+          "column": 1
+        },
+        "end": {
+          "line": 479,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 471,
+        "column": 9
+      },
+      "end": {
+        "line": 471,
+        "column": 81
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "count_nulls",
+      "return_type": "-> u64",
+      "span": {
+        "start": {
+          "line": 468,
+          "column": 1
+        },
+        "end": {
+          "line": 479,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 472,
+        "column": 9
+      },
+      "end": {
+        "line": 472,
+        "column": 80
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "count_nulls",
+      "return_type": "-> u64",
+      "span": {
+        "start": {
+          "line": 468,
+          "column": 1
+        },
+        "end": {
+          "line": 479,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 473,
+        "column": 9
+      },
+      "end": {
+        "line": 476,
+        "column": 82
+      }
+    },
+    "replacement": "",
+    "genre": "MatchArm"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "enforce_max_bytes",
+      "return_type": "-> DatasetSummary",
+      "span": {
+        "start": {
+          "line": 481,
+          "column": 1
+        },
+        "end": {
+          "line": 520,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 492,
+        "column": 5
+      },
+      "end": {
+        "line": 519,
+        "column": 12
+      }
+    },
+    "replacement": "Default::default()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "enforce_max_bytes",
+      "return_type": "-> DatasetSummary",
+      "span": {
+        "start": {
+          "line": 481,
+          "column": 1
+        },
+        "end": {
+          "line": 520,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 492,
+        "column": 33
+      },
+      "end": {
+        "line": 492,
+        "column": 35
+      }
+    },
+    "replacement": ">",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "enforce_max_bytes",
+      "return_type": "-> DatasetSummary",
+      "span": {
+        "start": {
+          "line": 481,
+          "column": 1
+        },
+        "end": {
+          "line": 520,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 498,
+        "column": 38
+      },
+      "end": {
+        "line": 498,
+        "column": 40
+      }
+    },
+    "replacement": "||",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "enforce_max_bytes",
+      "return_type": "-> DatasetSummary",
+      "span": {
+        "start": {
+          "line": 481,
+          "column": 1
+        },
+        "end": {
+          "line": 520,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 498,
+        "column": 11
+      },
+      "end": {
+        "line": 498,
+        "column": 12
+      }
+    },
+    "replacement": "",
+    "genre": "UnaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "enforce_max_bytes",
+      "return_type": "-> DatasetSummary",
+      "span": {
+        "start": {
+          "line": 481,
+          "column": 1
+        },
+        "end": {
+          "line": 520,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 498,
+        "column": 66
+      },
+      "end": {
+        "line": 498,
+        "column": 67
+      }
+    },
+    "replacement": "==",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "enforce_max_bytes",
+      "return_type": "-> DatasetSummary",
+      "span": {
+        "start": {
+          "line": 481,
+          "column": 1
+        },
+        "end": {
+          "line": 520,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 498,
+        "column": 66
+      },
+      "end": {
+        "line": 498,
+        "column": 67
+      }
+    },
+    "replacement": "<",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "enforce_max_bytes",
+      "return_type": "-> DatasetSummary",
+      "span": {
+        "start": {
+          "line": 481,
+          "column": 1
+        },
+        "end": {
+          "line": 520,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 498,
+        "column": 66
+      },
+      "end": {
+        "line": 498,
+        "column": 67
+      }
+    },
+    "replacement": ">=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "enforce_max_bytes",
+      "return_type": "-> DatasetSummary",
+      "span": {
+        "start": {
+          "line": 481,
+          "column": 1
+        },
+        "end": {
+          "line": 520,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 504,
+        "column": 23
+      },
+      "end": {
+        "line": 504,
+        "column": 24
+      }
+    },
+    "replacement": "==",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "enforce_max_bytes",
+      "return_type": "-> DatasetSummary",
+      "span": {
+        "start": {
+          "line": 481,
+          "column": 1
+        },
+        "end": {
+          "line": 520,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 504,
+        "column": 23
+      },
+      "end": {
+        "line": 504,
+        "column": 24
+      }
+    },
+    "replacement": ">",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "enforce_max_bytes",
+      "return_type": "-> DatasetSummary",
+      "span": {
+        "start": {
+          "line": 481,
+          "column": 1
+        },
+        "end": {
+          "line": 520,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 504,
+        "column": 23
+      },
+      "end": {
+        "line": 504,
+        "column": 24
+      }
+    },
+    "replacement": "<=",
+    "genre": "BinaryOperator"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "serialized_len",
+      "return_type": "-> usize",
+      "span": {
+        "start": {
+          "line": 522,
+          "column": 1
+        },
+        "end": {
+          "line": 526,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 523,
+        "column": 5
+      },
+      "end": {
+        "line": 525,
+        "column": 15
+      }
+    },
+    "replacement": "0",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-summary",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "serialized_len",
+      "return_type": "-> usize",
+      "span": {
+        "start": {
+          "line": 522,
+          "column": 1
+        },
+        "end": {
+          "line": 526,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 523,
+        "column": 5
+      },
+      "end": {
+        "line": 525,
+        "column": 15
+      }
+    },
+    "replacement": "1",
+    "genre": "FnValue"
+  }
+]

@@ -1,0 +1,173 @@
+
+*** src/lib.rs:156:5: replace row_to_map -> Row with Default::default()
+
+*** mutation diff:
+--- src/lib.rs
++++ replace row_to_map -> Row with Default::default()
+@@ -148,22 +148,17 @@
+         }
+     }
+ 
+     indices.iter().map(|&row_idx| row_to_map(dataset, row_idx)).collect()
+ }
+ 
+ /// Convert a single row index into a `Row` (`HashMap`<String, Value>).
+ fn row_to_map(dataset: &Dataset, row_idx: usize) -> Row {
+-    let mut map = Row::new();
+-    for (col, data) in dataset.columns.iter().zip(dataset.data.iter()) {
+-        let val = extract_value(data, row_idx);
+-        map.insert(col.name.clone(), val);
+-    }
+-    map
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Extract the JSON `Value` at position `row_idx` from [`ColumnData`].
+ fn extract_value(data: &ColumnData, row_idx: usize) -> Value {
+     match data {
+         ColumnData::Int(v) => v
+             .get(row_idx)
+             .and_then(|o| *o)
+
+
+*** /Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo test --no-run --verbose --package=dh-summary@0.1.0
+       Fresh unicode-ident v1.0.24
+       Fresh memchr v2.8.1
+       Fresh itoa v1.0.18
+       Fresh proc-macro2 v1.0.106
+       Fresh cfg-if v1.0.4
+       Fresh dyn-clone v1.0.20
+       Fresh quote v1.0.45
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh libc v0.2.186
+       Fresh syn v2.0.117
+       Fresh serde_json v1.0.150
+       Fresh getrandom v0.4.2
+       Fresh serde_derive v1.0.228
+       Fresh serde_derive_internals v0.29.1
+       Fresh uuid v1.23.2
+       Fresh schemars_derive v0.8.22
+       Fresh serde v1.0.228
+       Fresh schemars v0.8.22
+       Fresh dh-spec v0.1.0 (/Users/jsy/Documents/projects/dh-spec)
+       Fresh dh-store v0.1.0 (/Users/jsy/Documents/projects/dh-store)
+       Dirty dh-summary v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp): the file `src/lib.rs` has changed (1780953891.776243388s, 653334359ns after last build at 1780953891.122909029s)
+   Compiling dh-summary v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp)
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name dh_summary --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=343947f4240e2b9c -C extra-filename=-5243533f63ef4209 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rlib --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib`
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name dh_summary --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=78d698b9a149721f -C extra-filename=-bd59e07e1bc4c303 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rmeta --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rmeta --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rmeta`
+warning: unused variable: `dataset`
+   --> src/lib.rs:155:15
+    |
+155 | fn row_to_map(dataset: &Dataset, row_idx: usize) -> Row {
+    |               ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_dataset`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `row_idx`
+   --> src/lib.rs:155:34
+    |
+155 | fn row_to_map(dataset: &Dataset, row_idx: usize) -> Row {
+    |                                  ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_row_idx`
+
+warning: function `extract_value` is never used
+   --> src/lib.rs:160:4
+    |
+160 | fn extract_value(data: &ColumnData, row_idx: usize) -> Value {
+    |    ^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: `dh-summary` (lib) generated 3 warnings
+warning: `dh-summary` (lib test) generated 3 warnings (3 duplicates)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.36s
+  Executable `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/dh_summary-5243533f63ef4209`
+
+*** result: Success
+
+*** /Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo test --verbose --package=dh-summary@0.1.0
+       Fresh unicode-ident v1.0.24
+       Fresh memchr v2.8.1
+       Fresh proc-macro2 v1.0.106
+       Fresh itoa v1.0.18
+       Fresh cfg-if v1.0.4
+       Fresh quote v1.0.45
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh libc v0.2.186
+       Fresh dyn-clone v1.0.20
+       Fresh syn v2.0.117
+       Fresh serde_json v1.0.150
+       Fresh getrandom v0.4.2
+       Fresh serde_derive v1.0.228
+       Fresh serde_derive_internals v0.29.1
+       Fresh uuid v1.23.2
+       Fresh schemars_derive v0.8.22
+       Fresh serde v1.0.228
+       Fresh schemars v0.8.22
+       Fresh dh-spec v0.1.0 (/Users/jsy/Documents/projects/dh-spec)
+       Fresh dh-store v0.1.0 (/Users/jsy/Documents/projects/dh-store)
+warning: unused variable: `dataset`
+   --> src/lib.rs:155:15
+    |
+155 | fn row_to_map(dataset: &Dataset, row_idx: usize) -> Row {
+    |               ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_dataset`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: unused variable: `row_idx`
+   --> src/lib.rs:155:34
+    |
+155 | fn row_to_map(dataset: &Dataset, row_idx: usize) -> Row {
+    |                                  ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_row_idx`
+
+warning: function `extract_value` is never used
+   --> src/lib.rs:160:4
+    |
+160 | fn extract_value(data: &ColumnData, row_idx: usize) -> Value {
+    |    ^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` on by default
+
+warning: `dh-summary` (lib) generated 3 warnings
+warning: `dh-summary` (lib test) generated 3 warnings (3 duplicates)
+       Fresh dh-summary v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/dh_summary-5243533f63ef4209`
+
+running 17 tests
+test tests::ac4_capabilities_pivot_rule ... ok
+test tests::max_bytes_exact_fit_no_truncation ... ok
+test tests::ac3_categorical_topk_and_date_span ... ok
+test tests::ac2_numeric_stats_golden ... ok
+test tests::max_bytes_one_over_triggers_truncation ... ok
+test tests::notes_date_span_format ... ok
+test tests::ac7_round_trip_serialization ... ok
+test tests::count_nulls_per_variant ... ok
+test tests::ac5_notes_nulls_and_dominant_group ... ok
+test tests::stats_bool_all_false ... ok
+test tests::stats_bool_all_null ... ok
+test tests::notes_dominance_threshold_boundary ... ok
+test tests::stats_bool_counts_and_top_k ... ok
+test tests::stats_float_golden ... ok
+test tests::stats_int_all_null ... ok
+test tests::ac1_large_dataset_sample_and_size_bounds ... ok
+test tests::ac6_max_bytes_truncates_sample_not_stats ... FAILED
+
+failures:
+
+---- tests::ac6_max_bytes_truncates_sample_not_stats stdout ----
+
+thread 'tests::ac6_max_bytes_truncates_sample_not_stats' panicked at src/lib.rs:508:5:
+even the zero-sample summary exceeds max_bytes=973 — increase max_bytes
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::ac6_max_bytes_truncates_sample_not_stats
+
+test result: FAILED. 16 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p dh-summary --lib`
+
+*** result: Failure(101)

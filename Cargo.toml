@@ -1,0 +1,104 @@
+[workspace]
+resolver = "2"
+
+# MQO/MCP + dataset-handle cluster
+# Crates outside this directory (e.g. ~/builds/) are separate projects.
+# *-port crates (wintermute agent integration ports) are not members — different concern.
+exclude = []
+
+members = [
+    # ── Foundation ───────────────────────────────────────────────────────────
+    "mqo-spec",              # MQO type system + JSON Schema; everything else depends on this
+    "mqo-auth-bridge",       # Engine trait + LiveExecutor (PGWire/XMLA) + FixtureEngine
+
+    # ── Pipeline tools (subprocess-called, not linked) ────────────────────
+    # These are separate binaries on $PATH invoked via ToolPaths.
+    # They share the workspace for consistent build settings and `cargo test --workspace`.
+    "mqo-catalog-binder",    # MQO → BoundMqo (resolves unique_names against CatalogSnapshot)
+    "mqo-dax-compiler",      # BoundMqo → DAX EVALUATE statement
+    "mqo-mdx-compiler",      # BoundMqo → MDX SELECT statement
+    "mqo-backend-router",    # BoundMqo + stats → backend choice (dax/mdx/sql) + sql_projection
+
+    # ── Chart / visualization ─────────────────────────────────────────────
+    "mqo-result-profiler",   # EngineResult → ResultProfile (schema analysis for chart picking)
+    "mqo-chart-recommender", # ResultProfile → ChartRecommendation
+    "mqo-vega-emitter",      # ChartRecommendation + data → Vega-Lite v5 JSON spec
+
+    # ── Handle store ──────────────────────────────────────────────────────
+    "mqo-duckdb-handle-store", # ResultStore trait: MemStore (default) + DuckStore (feature-gated)
+
+    # ── Capstone MCP server ───────────────────────────────────────────────
+    "mqo-mcp-server",        # stdio MCP server: all tools, cursor, handle ops
+
+    # ── Related CLIs / harnesses ──────────────────────────────────────────
+    "mqo-from-sql",          # AtScale SQL → BoundMqo JSON (golden-case generator)
+    "mqo-vs-sql-bench",      # MQO vs text-to-SQL accuracy benchmark
+    "mqo-backend-live-harness",
+    "mqo-cross-backend-parity",
+    "mqo-bi-asset-bundle",
+    "mqo-dashboard-composer",
+
+    # ── Validation + measurement ──────────────────────────────────────────
+    "mqo-param-validator",         # validate(mqo, catalog) → Vec<ParamRejection> with nearest-match
+    "mqo-paramq-bench",            # offline replay bench: free-form vs structured, pass@k per failure mode
+    "mqo-session-footprint-meter", # session token class profiler (system_prompt/catalog/tool_call/rows/dialogue)
+    "mqo-handle-walkthrough",      # scripted 4-turn POC: 1 AtScale round-trip, rest handle ops
+
+    # ── Federation ────────────────────────────────────────────────────────
+    "mcp-cluster-registry",        # clusters.toml loader + lookup
+    "mcp-cluster-health-monitor",  # per-cluster backend capability probes
+    "mcp-cross-cluster-diff",      # diff tool across two clusters' model surfaces
+
+    # ── Evidence bundle ───────────────────────────────────────────────────
+    "mcp-spike-evidence-bundle",   # capstone: map ATSCALE-49212..49215 ACs to artifact verdicts
+
+    # ── Dataset-handle (dh-*) cluster ────────────────────────────────────
+    # Vision: dataset-handle-mcp.md; dh-mcp-server links to mqo-mcp-server
+    "dh-spec",    # DatasetHandle, DatasetSummary, ColumnSchema, OpRequest/OpResult
+    "dh-store",   # in-memory columnar store: TTL + LRU eviction, immutable derive-new semantics
+    "dh-ops",     # deterministic op kernel: aggregate/filter/sort/top_n/pivot/compare/drill
+    "dh-summary", # bounded summarizer the LLM actually sees (head/tail sample ≤K rows + stats)
+    "dh-export",  # deliberate materialization boundary: handle → CSV/Parquet/bounded-JSON
+    "dh-mcp-server",   # MCP server exposing dataset_* tools; integrates dh-* + mqo-mcp-server
+    "dh-vs-json-bench", # LLM-as-calculator failure rate: raw-JSON arm vs handle arm
+
+    # ── MQO guard ─────────────────────────────────────────────────────────
+    "mqoguard-column-group-enrichment",
+    "mqoguard-compatibility-matrix",
+    "mqoguard-regression-harness",
+    "mqoguard-filter-bind-report",
+    "mqoguard-null-path-detector",
+
+    # ── Parity coverage tracker + brief ──────────────────────────────────
+    "mqo-parity-coverage-tracker", # JSONL history store + coverage/delta CLI
+    "mqo-parity-brief", "mqo-chart-caption", "mqo-chart-vocab",        # offline Markdown brief from parity-coverage-tracker JSONL history
+]
+
+# Shared dependency versions — member crates may opt in with `dep = { workspace = true }`.
+# New crates should use these rather than pinning independently.
+[workspace.dependencies]
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+clap        = { version = "4", features = ["derive"] }
+thiserror   = "1"
+tokio       = { version = "1", features = ["rt-multi-thread", "net", "time", "macros"] }
+uuid        = { version = "1", features = ["v4", "serde"] }
+duckdb      = "1"
+reqwest     = { version = "0.12", features = ["json"] }
+tokio-postgres = "0.7"
+native-tls  = "0.2"
+postgres-native-tls = "0.5"
+strsim      = "0.11"
+sqlparser   = "0.44"
+chrono      = { version = "0.4", features = ["serde"] }
+
+[profile.release]
+opt-level     = 3
+lto           = "thin"   # link-time optimisation without the full-program LTO compile-time cost
+codegen-units = 1        # single codegen unit for better inlining across crate boundaries
+strip         = "symbols"
+
+[profile.dev]
+# Fast incremental builds in dev; no stripping so debuggers work
+opt-level = 0
+debug     = true

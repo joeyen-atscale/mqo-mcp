@@ -1,0 +1,10 @@
+{
+  "round_trip_ok": true,
+  "handle": "demo-handle-uuid-1234",
+  "row_count": 3,
+  "schema": [
+    {"name": "state", "ty": "string"},
+    {"name": "web_sales", "ty": "float"}
+  ],
+  "backend": "mem"
+}

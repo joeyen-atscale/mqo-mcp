@@ -1,0 +1,44 @@
+{
+  "task_001": [
+    {
+      "resolved_measures": ["[Total Sales Lookalike]"],
+      "resolved_dimensions": ["[Date]"],
+      "mqo": {
+        "measures": [{ "unique_name": "[Total Sales Lookalike Nonexistent]" }],
+        "dimensions": [{ "unique_name": "[Date]" }],
+        "filters": []
+      }
+    },
+    {
+      "resolved_measures": ["[Total Sales]"],
+      "resolved_dimensions": ["[Date]"],
+      "mqo": {
+        "measures": [{ "unique_name": "[Total Sales]" }],
+        "dimensions": [{ "unique_name": "[Date]" }],
+        "filters": []
+      }
+    }
+  ],
+  "task_002": [
+    {
+      "resolved_measures": ["[Total Sales]"],
+      "resolved_dimensions": ["[Customer]"],
+      "mqo": {
+        "measures": [{ "unique_name": "[Total Sales]" }],
+        "dimensions": [{ "unique_name": "[Customer]" }],
+        "filters": []
+      }
+    }
+  ],
+  "task_003": [
+    {
+      "resolved_measures": ["[Total Cost]"],
+      "resolved_dimensions": ["[Product]"],
+      "mqo": {
+        "measures": [{ "unique_name": "[Total Cost]" }],
+        "dimensions": [{ "unique_name": "[Product]" }],
+        "filters": []
+      }
+    }
+  ]
+}

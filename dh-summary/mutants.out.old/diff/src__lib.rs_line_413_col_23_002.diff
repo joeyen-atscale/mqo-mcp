@@ -1,0 +1,21 @@
+--- src/lib.rs
++++ replace > with >= in generate_notes
+@@ -405,17 +405,17 @@
+     if total_rows == 0 {
+         notes.push("Dataset is empty.".to_string());
+         return notes;
+     }
+ 
+     for (col, data) in dataset.columns.iter().zip(dataset.data.iter()) {
+         // Null note
+         let null_count = count_nulls(data);
+-        if null_count > 0 {
++        if null_count >= /* ~ changed by cargo-mutants ~ */ 0 {
+             notes.push(format!(
+                 "{} of {} {} values are null",
+                 null_count, total_rows, col.name
+             ));
+         }
+ 
+         // Dominant group note for categoricals
+         if col.dtype == DType::Str {

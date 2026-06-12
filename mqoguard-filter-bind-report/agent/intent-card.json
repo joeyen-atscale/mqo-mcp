@@ -1,0 +1,125 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "intent_slug": "mqoguard-filter-bind-report",
+  "prd_source": "/Users/jsy/Documents/PRDs/PRD-mqoguard-filter-bind-report.md",
+  "root_motivation": "Silent filter drops in MQO compilation are invisible to callers — agents and analysts have no way to know their year/member constraints were discarded and the result reflects all data rather than the filtered slice. The root cause is that the server binds filters best-effort and records nothing when one fails; this library makes every binding outcome explicit so the confusion between 'wrong path chosen' and 'right path, filter dropped' is finally attributable.",
+  "user_persona": "AI agents calling query_multidimensional who receive an unfiltered total disguised as a filtered answer; data engineers who want dropped-filter telemetry to diagnose member-key format issues at the engine level; analysts who need assurance that a constraint like 'for 2001' actually constrained the result.",
+  "unfakeable_metric": {
+    "name": "tests_pass_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --workspace 2>&1 | tail -3",
+    "target": 7
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "Given an MQO with two filters where one binds and one does not, report_filters returns applied=[bound] and dropped=[unbound] each typed.",
+      "test": "tests/acceptance_AC1.rs"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "Given any MQO, applied ∪ dropped equals the input filter set with no duplicates or omissions. Property test.",
+      "test": "tests/acceptance_AC2.rs"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "Given the canonical '2001' year filter that the engine drops, it appears in dropped with reason UnbindableMember.",
+      "test": "tests/acceptance_AC3.rs"
+    },
+    {
+      "id": "AC4",
+      "level": "SHOULD",
+      "description": "Given an unbindable member where the catalog defines the level's key shape, the dropped entry includes the expected member-key shape as a suggestion.",
+      "test": "tests/acceptance_AC4.rs"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "SQL string-matching fallback marks entries as heuristic confidence; exact compiler binding record marks entries as exact.",
+      "test": "tests/acceptance_AC5.rs"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "Malformed MQO or compiled query returns typed error or fully-dropped report — never panics.",
+      "test": "tests/acceptance_AC6.rs"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "cargo test passes; cargo clippy --all-targets -- -D warnings clean; zero unsafe.",
+      "test": "cargo test && cargo clippy --all-targets -- -D warnings"
+    }
+  ],
+  "scope": [
+    "Define BoundMqo and CompiledQuery as owned types matching the PRD interface",
+    "Implement report_filters(mqo: &BoundMqo, compiled: &CompiledQuery) -> FilterBindReport",
+    "Partition every MQO filter into applied or dropped, no filter unaccounted for",
+    "Type dropped filters with DropReason (UnbindableMember, UnknownHierarchy, UnknownLevel, UnsupportedFilterType)",
+    "Mark detection confidence as exact (compiler binding record present) or heuristic (SQL string-match fallback)",
+    "Emit as additive filter_bind_report field on response (serde serializable)",
+    "Property-test the applied∪dropped==input invariant via proptest"
+  ],
+  "non_goals": [
+    "Fixing member-key binding in the AtScale engine",
+    "Validating semantic correctness of filters for the question being asked",
+    "Blocking queries because a filter was dropped (annotation only in v1)",
+    "Re-implementing the engine binding logic",
+    "Network or LLM calls of any kind",
+    "unsafe code"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 4,
+    "msrv": "1.70.0",
+    "additional": {
+      "allowed_deps": "serde,serde_json,proptest",
+      "no_network": true,
+      "no_llm": true,
+      "max_latency_ms": 5
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why do agents report wrong answers on wrong_date_role tasks?",
+      "a": "The agent applied a year filter, but the compiled query silently dropped it, returning all-years data instead of the 2001 slice."
+    },
+    {
+      "why": 2,
+      "q": "Why was the filter silently dropped?",
+      "a": "The engine binds filters best-effort during compilation; an unbindable member (wrong key format or level) is discarded with no record in the response."
+    },
+    {
+      "why": 3,
+      "q": "Why does no record exist in the response?",
+      "a": "The response surface only carries compiled_query SQL and rows; there is no filter-binding outcome field — the API was never designed to report what it bound."
+    },
+    {
+      "why": 4,
+      "q": "Why does that matter for the benchmark scorer?",
+      "a": "The scorer cannot distinguish 'agent chose wrong path' from 'agent chose right path but filter was silently discarded' — wrong_date_role measured at 50.0% path-mean when the true cause was filter drops."
+    },
+    {
+      "why": 5,
+      "q": "Why fix it as a separate library rather than inside the engine?",
+      "a": "The engine fix (OQ2) may be a server-side format bug requiring a different team; the library can be built independently right now, is additive (no behavior change to query execution), and gives agents and operators actionable signal regardless of whether the engine is patched."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Does 'present in compiled query' mean SQL text search or a compiler binding record?",
+      "resolution": "NFR2 says detection must be based on the actual compiled query, not a re-implementation. If the CompiledQuery carries an explicit bound_filter_ids list, use it (exact confidence). If not, fall back to SQL text search of member keys (heuristic confidence). Both cases must be marked."
+    },
+    {
+      "question": "Are BoundMqo and CompiledQuery owned types or references to mqo-mcp-server internals?",
+      "resolution": "Since mqo-mcp-server types are not published as a lib dep, define them as owned types in this crate matching the interface described in the PRD. The crate is the source of truth for the filter-bind-report API surface."
+    }
+  ],
+  "created_at": "2026-06-10T00:00:00Z"
+}

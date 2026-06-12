@@ -1,0 +1,22 @@
+--- src/lib.rs
++++ replace emit_summary_schema -> String with "xyzzy".into()
+@@ -331,18 +331,17 @@
+ /// Emit the JSON Schema for [`DatasetSummary`] as a pretty-printed string.
+ ///
+ /// # Panics
+ ///
+ /// Panics only if `serde_json` fails to serialize the schema, which cannot
+ /// happen in practice for a schema derived from a concrete struct.
+ #[must_use]
+ pub fn emit_summary_schema() -> String {
+-    let schema = schemars::schema_for!(DatasetSummary);
+-    serde_json::to_string_pretty(&schema).expect("schemars schema is always serializable")
++    "xyzzy".into() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Emit the JSON Schema for [`OpResult`] as a pretty-printed string.
+ ///
+ /// # Panics
+ ///
+ /// Panics only if `serde_json` fails to serialize the schema.
+ #[must_use]

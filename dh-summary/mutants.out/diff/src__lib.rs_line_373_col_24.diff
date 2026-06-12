@@ -1,0 +1,21 @@
+--- src/lib.rs
++++ replace + with - in stats_date
+@@ -365,17 +365,17 @@
+     };
+     let mut sorted: Vec<&str> = values.clone();
+     sorted.sort_unstable();
+     let min_s = sorted.first().map(|s| (*s).to_string());
+     let max_s = sorted.last().map(|s| (*s).to_string());
+     let distinct: u64 = {
+         let mut u = sorted.clone();
+         u.dedup();
+-        u.len() as u64 + null_count.min(1)
++        u.len() as u64 - /* ~ changed by cargo-mutants ~ */ null_count.min(1)
+     };
+     // Surface min/max via top_k so notes and tests can read them.
+     let span_entry = match (&min_s, &max_s) {
+         (Some(min), Some(max)) => Some(vec![
+             serde_json::json!({"value": min, "label": "min"}),
+             serde_json::json!({"value": max, "label": "max"}),
+         ]),
+         _ => None,

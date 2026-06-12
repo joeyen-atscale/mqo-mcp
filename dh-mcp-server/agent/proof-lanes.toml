@@ -1,0 +1,38 @@
+# proof-lanes.toml — routes every changed path to one or more proof lanes.
+# Each lane must be green for the advance gate to pass.
+# Confidence >= 0.70 required per the Stage 4 receipt spec.
+
+[[lane]]
+id = "unit"
+description = "Unit tests in src/ (convert.rs, lib.rs)"
+glob = "src/**/*.rs"
+command = "cargo test --workspace --release -- --test-output immediate"
+confidence = 0.95
+
+[[lane]]
+id = "acceptance"
+description = "Acceptance tests in tests/acceptance.rs"
+glob = "tests/acceptance.rs"
+command = "cargo test --workspace --release -- --test-output immediate"
+confidence = 0.95
+
+[[lane]]
+id = "clippy"
+description = "Clippy static analysis"
+glob = "src/**/*.rs"
+command = "cargo clippy --workspace -- -D warnings"
+confidence = 0.90
+
+[[lane]]
+id = "fixtures"
+description = "Fixture changes; re-run acceptance suite"
+glob = "fixtures/**/*"
+command = "cargo test --workspace --release -- --test-output immediate"
+confidence = 0.90
+
+[[lane]]
+id = "cargo-toml"
+description = "Dependency changes; full workspace check + deny"
+glob = "Cargo.toml"
+command = "cargo check --workspace && cargo deny check"
+confidence = 0.85

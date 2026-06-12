@@ -1,0 +1,21 @@
+--- src/lib.rs
++++ replace == with != in capabilities
+@@ -101,17 +101,17 @@
+ /// Rules:
+ /// * `Pivot` requires ≥2 dimension columns.
+ /// * All other capabilities are always advertised.
+ #[must_use]
+ pub fn capabilities(dataset: &Dataset) -> Vec<Capability> {
+     let n_dims = dataset
+         .columns
+         .iter()
+-        .filter(|c| c.role == ColumnRole::Dimension)
++        .filter(|c| c.role != /* ~ changed by cargo-mutants ~ */ ColumnRole::Dimension)
+         .count();
+ 
+     let mut caps = Vec::with_capacity(9);
+     caps.push(Capability::Aggregate);
+     caps.push(Capability::Filter);
+     caps.push(Capability::Sort);
+     caps.push(Capability::TopN);
+     if n_dims >= 2 {

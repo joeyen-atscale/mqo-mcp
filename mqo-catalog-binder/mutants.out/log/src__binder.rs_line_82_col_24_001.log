@@ -1,0 +1,261 @@
+
+*** src/binder.rs:82:24: replace > with < in resolve_measure
+
+*** mutation diff:
+--- src/binder.rs
++++ replace > with < in resolve_measure
+@@ -74,17 +74,17 @@
+     let by_unique: Vec<&ColumnEntry> = columns
+         .iter()
+         .filter(|c| c.kind == "measure" && c.unique_name.to_lowercase() == key)
+         .collect();
+ 
+     if by_unique.len() == 1 {
+         return Ok(by_unique[0]);
+     }
+-    if by_unique.len() > 1 {
++    if by_unique.len() < /* ~ changed by cargo-mutants ~ */ 1 {
+         return Err(by_unique);
+     }
+ 
+     // Second: try label match (case-insensitive)
+     let by_label: Vec<&ColumnEntry> = columns
+         .iter()
+         .filter(|c| c.kind == "measure" && c.label.to_lowercase() == key)
+         .collect();
+
+
+*** /Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo test --no-run --verbose --package=mqo-catalog-binder@0.1.0
+       Fresh unicode-ident v1.0.24
+       Fresh utf8parse v0.2.2
+       Fresh memchr v2.8.1
+       Fresh bitflags v2.13.0
+       Fresh proc-macro2 v1.0.106
+       Fresh anstyle-parse v1.0.0
+       Fresh is_terminal_polyfill v1.70.2
+       Fresh anstyle v1.0.14
+       Fresh quote v1.0.45
+       Fresh libc v0.2.186
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh colorchoice v1.0.5
+       Fresh itoa v1.0.18
+       Fresh anstyle-query v1.1.5
+       Fresh clap_lex v1.1.0
+       Fresh dyn-clone v1.0.20
+       Fresh syn v2.0.117
+       Fresh errno v0.3.14
+       Fresh serde_json v1.0.150
+       Fresh anstream v1.0.0
+       Fresh strsim v0.11.1
+       Fresh heck v0.5.0
+       Fresh cfg-if v1.0.4
+       Fresh serde_derive v1.0.228
+       Fresh serde_derive_internals v0.29.1
+       Fresh thiserror-impl v1.0.69
+       Fresh clap_derive v4.6.1
+       Fresh clap_builder v4.6.0
+       Fresh either v1.16.0
+       Fresh home v0.5.9
+       Fresh fastrand v2.4.1
+       Fresh serde v1.0.228
+       Fresh schemars_derive v0.8.22
+       Fresh thiserror v1.0.69
+       Fresh rustix v1.1.4
+       Fresh clap v4.6.1
+       Fresh getrandom v0.4.2
+       Fresh rustix v0.38.44
+       Fresh once_cell v1.21.4
+       Fresh schemars v0.8.22
+       Fresh tempfile v3.27.0
+       Fresh which v4.4.2
+       Fresh mqo-spec v0.1.0 (/Users/jsy/Documents/projects/mqo-spec)
+       Dirty mqo-catalog-binder v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp): the file `src/binder.rs` has changed (1780953136.248309635s, 1s after last build at 1780953135.573009375s)
+   Compiling mqo-catalog-binder v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp)
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name mqo_bind --edition=2021 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=d7fb12093d750339 -C extra-filename=-15b3bf2cb7ca4e4d --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps --extern clap=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps/libclap-6ef1bb7bc880f55c.rlib --extern mqo_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps/libmqo_spec-7e26b3d78a7ff47c.rlib --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps/libserde-41903c5ca0372620.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib --extern tempfile=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps/libtempfile-ddf7a7aec14428d5.rlib --extern which=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps/libwhich-0d45d2f130598e30.rlib`
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name mqo_bind --edition=2021 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=8707073cd8a39173 -C extra-filename=-fc2049b68e3304bb --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps --extern clap=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps/libclap-6ef1bb7bc880f55c.rlib --extern mqo_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps/libmqo_spec-7e26b3d78a7ff47c.rlib --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps/libserde-41903c5ca0372620.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.33s
+  Executable `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps/mqo_bind-15b3bf2cb7ca4e4d`
+  Executable `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps/integration_cli-9f93dee59aa2e25d`
+
+*** result: Success
+
+*** /Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo test --verbose --package=mqo-catalog-binder@0.1.0
+       Fresh unicode-ident v1.0.24
+       Fresh utf8parse v0.2.2
+       Fresh memchr v2.8.1
+       Fresh itoa v1.0.18
+       Fresh proc-macro2 v1.0.106
+       Fresh anstyle-parse v1.0.0
+       Fresh colorchoice v1.0.5
+       Fresh bitflags v2.13.0
+       Fresh quote v1.0.45
+       Fresh libc v0.2.186
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh anstyle-query v1.1.5
+       Fresh is_terminal_polyfill v1.70.2
+       Fresh anstyle v1.0.14
+       Fresh heck v0.5.0
+       Fresh clap_lex v1.1.0
+       Fresh syn v2.0.117
+       Fresh errno v0.3.14
+       Fresh serde_json v1.0.150
+       Fresh anstream v1.0.0
+       Fresh dyn-clone v1.0.20
+       Fresh strsim v0.11.1
+       Fresh cfg-if v1.0.4
+       Fresh serde_derive_internals v0.29.1
+       Fresh serde_derive v1.0.228
+       Fresh thiserror-impl v1.0.69
+       Fresh clap_builder v4.6.0
+       Fresh clap_derive v4.6.1
+       Fresh fastrand v2.4.1
+       Fresh either v1.16.0
+       Fresh home v0.5.9
+       Fresh schemars_derive v0.8.22
+       Fresh serde v1.0.228
+       Fresh thiserror v1.0.69
+       Fresh getrandom v0.4.2
+       Fresh rustix v0.38.44
+       Fresh clap v4.6.1
+       Fresh rustix v1.1.4
+       Fresh once_cell v1.21.4
+       Fresh schemars v0.8.22
+       Fresh tempfile v3.27.0
+       Fresh which v4.4.2
+       Fresh mqo-spec v0.1.0 (/Users/jsy/Documents/projects/mqo-spec)
+       Fresh mqo-catalog-binder v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-qXZC11.tmp/target/debug/deps/mqo_bind-15b3bf2cb7ca4e4d`
+
+running 29 tests
+test binder::binder_unit_tests::resolve_level_not_found_gives_empty_vec ... ok
+test binder::binder_unit_tests::resolve_level_case_insensitive ... ok
+test binder::binder_unit_tests::bind_calc_group_member_missing_describe_model ... ok
+test binder::binder_unit_tests::resolve_measure_not_found_gives_empty_vec ... ok
+test binder::binder_unit_tests::bind_ambiguous_dimension_is_ambiguous_not_not_found ... ok
+test binder::binder_unit_tests::resolve_measure_exact_unique_name ... ok
+test binder::binder_unit_tests::resolve_measure_not_found_returns_empty_err ... ok
+test binder::binder_unit_tests::resolve_measure_single_unique_name_match_preempts_label_search ... ok
+test binder::binder_unit_tests::resolve_measure_by_label_case_insensitive ... FAILED
+test binder::binder_unit_tests::resolve_measure_ambiguous_returns_candidates ... FAILED
+test binder::binder_unit_tests::resolve_measure_duplicate_unique_name_is_ambiguous ... FAILED
+test binder::binder_unit_tests::bind_semi_additive_flags ... FAILED
+test binder::binder_unit_tests::bind_calc_group_member_found ... FAILED
+test integration_tests::ac1_valid_mqo_binds_and_exits_0 ... FAILED
+test integration_tests::ac1_case_insensitive_resolution ... FAILED
+test integration_tests::ac2_fabricated_measure_not_found ... ok
+test integration_tests::ac2_not_found_no_guess ... ok
+test integration_tests::ac3_ambiguous_label_returns_candidates ... FAILED
+test integration_tests::ac4_missing_calc_group_member_not_found ... ok
+test integration_tests::ac4_calc_group_member_resolved_with_mdx ... FAILED
+test integration_tests::ac5_non_semi_additive_has_empty_triggers ... FAILED
+test integration_tests::ac5_semi_additive_flagged_with_trigger_hierarchies ... FAILED
+test integration_tests::calc_measure_is_calc_flag ... FAILED
+test integration_tests::multiple_not_found_all_reported ... ok
+test integration_tests::not_found_takes_precedence_over_empty ... ok
+test integration_tests::dimension_binding_by_hierarchy_and_level ... FAILED
+test integration_tests::required_dimension_carried_through ... FAILED
+test integration_tests::unique_name_passthrough ... ok
+test integration_tests::unknown_dimension_not_found ... ok
+
+failures:
+
+---- binder::binder_unit_tests::resolve_measure_by_label_case_insensitive stdout ----
+
+thread 'binder::binder_unit_tests::resolve_measure_by_label_case_insensitive' panicked at src/binder.rs:307:9:
+assertion failed: result.is_ok()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- binder::binder_unit_tests::resolve_measure_ambiguous_returns_candidates stdout ----
+
+thread 'binder::binder_unit_tests::resolve_measure_ambiguous_returns_candidates' panicked at src/binder.rs:327:9:
+assertion `left == right` failed
+  left: 0
+ right: 2
+
+---- binder::binder_unit_tests::resolve_measure_duplicate_unique_name_is_ambiguous stdout ----
+
+thread 'binder::binder_unit_tests::resolve_measure_duplicate_unique_name_is_ambiguous' panicked at src/binder.rs:435:9:
+assertion `left == right` failed: must report both candidates
+  left: 0
+ right: 2
+
+---- binder::binder_unit_tests::bind_semi_additive_flags stdout ----
+
+thread 'binder::binder_unit_tests::bind_semi_additive_flags' panicked at src/binder.rs:387:22:
+expected Bound, got NotFound(["Balance"])
+
+---- binder::binder_unit_tests::bind_calc_group_member_found stdout ----
+
+thread 'binder::binder_unit_tests::bind_calc_group_member_found' panicked at src/binder.rs:569:22:
+expected Bound, got NotFound(["Revenue"])
+
+---- integration_tests::ac1_valid_mqo_binds_and_exits_0 stdout ----
+
+thread 'integration_tests::ac1_valid_mqo_binds_and_exits_0' panicked at src/main.rs:196:22:
+expected Bound, got NotFound(["Revenue"])
+
+---- integration_tests::ac1_case_insensitive_resolution stdout ----
+
+thread 'integration_tests::ac1_case_insensitive_resolution' panicked at src/main.rs:210:22:
+expected Bound, got NotFound(["revenue"])
+
+---- integration_tests::ac3_ambiguous_label_returns_candidates stdout ----
+
+thread 'integration_tests::ac3_ambiguous_label_returns_candidates' panicked at src/main.rs:265:22:
+expected Ambiguous, got NotFound(["Revenue"])
+
+---- integration_tests::ac4_calc_group_member_resolved_with_mdx stdout ----
+
+thread 'integration_tests::ac4_calc_group_member_resolved_with_mdx' panicked at src/main.rs:286:22:
+expected Bound, got NotFound(["Revenue"])
+
+---- integration_tests::ac5_non_semi_additive_has_empty_triggers stdout ----
+
+thread 'integration_tests::ac5_non_semi_additive_has_empty_triggers' panicked at src/main.rs:335:22:
+expected Bound, got NotFound(["Revenue"])
+
+---- integration_tests::ac5_semi_additive_flagged_with_trigger_hierarchies stdout ----
+
+thread 'integration_tests::ac5_semi_additive_flagged_with_trigger_hierarchies' panicked at src/main.rs:320:22:
+expected Bound, got NotFound(["Balance"])
+
+---- integration_tests::calc_measure_is_calc_flag stdout ----
+
+thread 'integration_tests::calc_measure_is_calc_flag' panicked at src/main.rs:399:22:
+expected Bound, got NotFound(["Margin %"])
+
+---- integration_tests::dimension_binding_by_hierarchy_and_level stdout ----
+
+thread 'integration_tests::dimension_binding_by_hierarchy_and_level' panicked at src/main.rs:355:22:
+expected Bound, got NotFound(["Revenue"])
+
+---- integration_tests::required_dimension_carried_through stdout ----
+
+thread 'integration_tests::required_dimension_carried_through' panicked at src/main.rs:385:22:
+expected Bound, got NotFound(["Balance"])
+
+
+failures:
+    binder::binder_unit_tests::bind_calc_group_member_found
+    binder::binder_unit_tests::bind_semi_additive_flags
+    binder::binder_unit_tests::resolve_measure_ambiguous_returns_candidates
+    binder::binder_unit_tests::resolve_measure_by_label_case_insensitive
+    binder::binder_unit_tests::resolve_measure_duplicate_unique_name_is_ambiguous
+    integration_tests::ac1_case_insensitive_resolution
+    integration_tests::ac1_valid_mqo_binds_and_exits_0
+    integration_tests::ac3_ambiguous_label_returns_candidates
+    integration_tests::ac4_calc_group_member_resolved_with_mdx
+    integration_tests::ac5_non_semi_additive_has_empty_triggers
+    integration_tests::ac5_semi_additive_flagged_with_trigger_hierarchies
+    integration_tests::calc_measure_is_calc_flag
+    integration_tests::dimension_binding_by_hierarchy_and_level
+    integration_tests::required_dimension_carried_through
+
+test result: FAILED. 15 passed; 14 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p mqo-catalog-binder --bin mqo-bind`
+
+*** result: Failure(101)

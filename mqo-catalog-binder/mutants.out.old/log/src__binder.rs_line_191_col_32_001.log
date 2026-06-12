@@ -1,0 +1,199 @@
+
+*** src/binder.rs:191:32: replace match guard candidates.is_empty() with false in bind
+
+*** mutation diff:
+--- src/binder.rs
++++ replace match guard candidates.is_empty() with false in bind
+@@ -183,17 +183,17 @@
+                 bound_dimensions.push(BoundDimensionExt {
+                     unique_name: entry.unique_name.clone(),
+                     hierarchy: entry
+                         .hierarchy
+                         .clone()
+                         .unwrap_or_else(|| sel.hierarchy.clone()),
+                 });
+             }
+-            Err(candidates) if candidates.is_empty() => {
++            Err(candidates) if false /* ~ changed by cargo-mutants ~ */ => {
+                 not_found.push(format!("dimension {}:{}", sel.hierarchy, sel.level));
+             }
+             Err(candidates) => {
+                 ambiguous.push(serde_json::json!({
+                     "ref": format!("dimension {}:{}", sel.hierarchy, sel.level),
+                     "candidates": candidates.iter().map(|c| &c.unique_name).collect::<Vec<_>>(),
+                 }));
+             }
+
+
+*** /Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo test --no-run --verbose --package=mqo-catalog-binder@0.1.0
+       Fresh unicode-ident v1.0.24
+       Fresh utf8parse v0.2.2
+       Fresh memchr v2.8.1
+       Fresh proc-macro2 v1.0.106
+       Fresh anstyle-parse v1.0.0
+       Fresh is_terminal_polyfill v1.70.2
+       Fresh anstyle v1.0.14
+       Fresh quote v1.0.45
+       Fresh libc v0.2.186
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh anstyle-query v1.1.5
+       Fresh itoa v1.0.18
+       Fresh colorchoice v1.0.5
+       Fresh bitflags v2.13.0
+       Fresh syn v2.0.117
+       Fresh errno v0.3.14
+       Fresh serde_json v1.0.150
+       Fresh anstream v1.0.0
+       Fresh dyn-clone v1.0.20
+       Fresh clap_lex v1.1.0
+       Fresh serde_derive_internals v0.29.1
+       Fresh serde_derive v1.0.228
+       Fresh thiserror-impl v1.0.69
+       Fresh strsim v0.11.1
+       Fresh heck v0.5.0
+       Fresh cfg-if v1.0.4
+       Fresh fastrand v2.4.1
+       Fresh schemars_derive v0.8.22
+       Fresh serde v1.0.228
+       Fresh clap_derive v4.6.1
+       Fresh thiserror v1.0.69
+       Fresh clap_builder v4.6.0
+       Fresh getrandom v0.4.2
+       Fresh rustix v1.1.4
+       Fresh home v0.5.9
+       Fresh either v1.16.0
+       Fresh schemars v0.8.22
+       Fresh rustix v0.38.44
+       Fresh clap v4.6.1
+       Fresh once_cell v1.21.4
+       Fresh mqo-spec v0.1.0 (/Users/jsy/Documents/projects/mqo-spec)
+       Fresh which v4.4.2
+       Fresh tempfile v3.27.0
+       Dirty mqo-catalog-binder v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp): the file `src/binder.rs` has changed (1780953111.195206456s, 2s after last build at 1780953109.925498466s)
+   Compiling mqo-catalog-binder v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp)
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name mqo_bind --edition=2021 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=d7fb12093d750339 -C extra-filename=-15b3bf2cb7ca4e4d --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps --extern clap=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps/libclap-6ef1bb7bc880f55c.rlib --extern mqo_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps/libmqo_spec-7e26b3d78a7ff47c.rlib --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps/libserde-41903c5ca0372620.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib --extern tempfile=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps/libtempfile-ddf7a7aec14428d5.rlib --extern which=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps/libwhich-0d45d2f130598e30.rlib`
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name mqo_bind --edition=2021 src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=8707073cd8a39173 -C extra-filename=-fc2049b68e3304bb --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps --extern clap=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps/libclap-6ef1bb7bc880f55c.rlib --extern mqo_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps/libmqo_spec-7e26b3d78a7ff47c.rlib --extern serde=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps/libserde-41903c5ca0372620.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib`
+warning: unused variable: `candidates`
+   --> src/binder.rs:191:17
+    |
+191 |             Err(candidates) if false /* ~ changed by cargo-mutants ~ */ => {
+    |                 ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_candidates`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+warning: `mqo-catalog-binder` (bin "mqo-bind" test) generated 1 warning
+warning: `mqo-catalog-binder` (bin "mqo-bind") generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.39s
+  Executable `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps/mqo_bind-15b3bf2cb7ca4e4d`
+  Executable `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps/integration_cli-9f93dee59aa2e25d`
+
+*** result: Success
+
+*** /Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo test --verbose --package=mqo-catalog-binder@0.1.0
+       Fresh unicode-ident v1.0.24
+       Fresh utf8parse v0.2.2
+       Fresh proc-macro2 v1.0.106
+       Fresh anstyle-parse v1.0.0
+       Fresh is_terminal_polyfill v1.70.2
+       Fresh quote v1.0.45
+       Fresh libc v0.2.186
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh bitflags v2.13.0
+       Fresh anstyle v1.0.14
+       Fresh memchr v2.8.1
+       Fresh colorchoice v1.0.5
+       Fresh syn v2.0.117
+       Fresh errno v0.3.14
+       Fresh itoa v1.0.18
+       Fresh anstyle-query v1.1.5
+       Fresh heck v0.5.0
+       Fresh serde_derive_internals v0.29.1
+       Fresh serde_derive v1.0.228
+       Fresh anstream v1.0.0
+       Fresh thiserror-impl v1.0.69
+       Fresh serde_json v1.0.150
+       Fresh clap_lex v1.1.0
+       Fresh dyn-clone v1.0.20
+       Fresh schemars_derive v0.8.22
+       Fresh serde v1.0.228
+       Fresh strsim v0.11.1
+       Fresh thiserror v1.0.69
+       Fresh clap_derive v4.6.1
+       Fresh cfg-if v1.0.4
+       Fresh schemars v0.8.22
+       Fresh clap_builder v4.6.0
+       Fresh rustix v0.38.44
+       Fresh rustix v1.1.4
+       Fresh getrandom v0.4.2
+       Fresh either v1.16.0
+       Fresh once_cell v1.21.4
+       Fresh fastrand v2.4.1
+       Fresh home v0.5.9
+       Fresh mqo-spec v0.1.0 (/Users/jsy/Documents/projects/mqo-spec)
+       Fresh clap v4.6.1
+       Fresh which v4.4.2
+       Fresh tempfile v3.27.0
+warning: unused variable: `candidates`
+   --> src/binder.rs:191:17
+    |
+191 |             Err(candidates) if false /* ~ changed by cargo-mutants ~ */ => {
+    |                 ^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_candidates`
+    |
+    = note: `#[warn(unused_variables)]` on by default
+
+       Fresh mqo-catalog-binder v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp)
+warning: `mqo-catalog-binder` (bin "mqo-bind" test) generated 1 warning
+warning: `mqo-catalog-binder` (bin "mqo-bind") generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-mqo-catalog-binder-dHkXGr.tmp/target/debug/deps/mqo_bind-15b3bf2cb7ca4e4d`
+
+running 29 tests
+test binder::binder_unit_tests::bind_ambiguous_dimension_is_ambiguous_not_not_found ... ok
+test binder::binder_unit_tests::bind_calc_group_member_found ... ok
+test binder::binder_unit_tests::bind_calc_group_member_missing_describe_model ... ok
+test binder::binder_unit_tests::bind_semi_additive_flags ... ok
+test binder::binder_unit_tests::resolve_level_not_found_gives_empty_vec ... ok
+test binder::binder_unit_tests::resolve_level_case_insensitive ... ok
+test binder::binder_unit_tests::resolve_measure_by_label_case_insensitive ... ok
+test binder::binder_unit_tests::resolve_measure_ambiguous_returns_candidates ... ok
+test binder::binder_unit_tests::resolve_measure_duplicate_unique_name_is_ambiguous ... ok
+test binder::binder_unit_tests::resolve_measure_exact_unique_name ... ok
+test binder::binder_unit_tests::resolve_measure_not_found_gives_empty_vec ... ok
+test binder::binder_unit_tests::resolve_measure_single_unique_name_match_preempts_label_search ... ok
+test integration_tests::ac1_case_insensitive_resolution ... ok
+test integration_tests::ac1_valid_mqo_binds_and_exits_0 ... ok
+test integration_tests::ac2_fabricated_measure_not_found ... ok
+test integration_tests::ac2_not_found_no_guess ... ok
+test integration_tests::ac3_ambiguous_label_returns_candidates ... ok
+test integration_tests::ac4_calc_group_member_resolved_with_mdx ... ok
+test integration_tests::ac4_missing_calc_group_member_not_found ... ok
+test binder::binder_unit_tests::resolve_measure_not_found_returns_empty_err ... ok
+test integration_tests::ac5_non_semi_additive_has_empty_triggers ... ok
+test integration_tests::ac5_semi_additive_flagged_with_trigger_hierarchies ... ok
+test integration_tests::calc_measure_is_calc_flag ... ok
+test integration_tests::dimension_binding_by_hierarchy_and_level ... ok
+test integration_tests::multiple_not_found_all_reported ... ok
+test integration_tests::not_found_takes_precedence_over_empty ... ok
+test integration_tests::required_dimension_carried_through ... ok
+test integration_tests::unique_name_passthrough ... ok
+test integration_tests::unknown_dimension_not_found ... FAILED
+
+failures:
+
+---- integration_tests::unknown_dimension_not_found stdout ----
+
+thread 'integration_tests::unknown_dimension_not_found' panicked at src/main.rs:369:9:
+assertion failed: matches!(result, BindResult::NotFound(_))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    integration_tests::unknown_dimension_not_found
+
+test result: FAILED. 28 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p mqo-catalog-binder --bin mqo-bind`
+
+*** result: Failure(101)

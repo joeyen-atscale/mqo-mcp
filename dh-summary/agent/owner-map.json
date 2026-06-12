@@ -1,0 +1,9 @@
+{
+  "crate": "dh-summary",
+  "owner": "Joe Yen <joe.yen@atscale.com>",
+  "reviewers": [],
+  "intent_slug": "dh-summary",
+  "prd": "/Users/jsy/Documents/PRDs/ARCHIVE/PRD-dh-summary.md",
+  "intent_card": "agent/intent-card.json",
+  "git_remote": "https://github.com/joeyen-atscale/dh-summary"
+}

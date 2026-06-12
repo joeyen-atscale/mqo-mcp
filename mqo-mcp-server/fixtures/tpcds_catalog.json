@@ -1,0 +1,2806 @@
+{
+  "catalog": "atscale_catalogs",
+  "schema": "tpcds_Snowflake",
+  "columns": [
+    {
+      "unique_name": "customer_dimension.[Birth Country]",
+      "label": "Birth Country",
+      "kind": "level",
+      "hierarchy": "customer_dimension",
+      "level": "Birth Country",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_mode.[Carrier]",
+      "label": "Carrier",
+      "kind": "level",
+      "hierarchy": "ship_mode",
+      "level": "Carrier",
+      "is_calc": false
+    },
+    {
+      "unique_name": "catalog_preferred.[Catalog Preferred]",
+      "label": "Catalog Preferred",
+      "kind": "level",
+      "hierarchy": "catalog_preferred",
+      "level": "Catalog Preferred",
+      "is_calc": false
+    },
+    {
+      "unique_name": "catalog_sales_price_tier.[Catalog Sales Price Tier]",
+      "label": "Catalog Sales Price Tier",
+      "kind": "level",
+      "hierarchy": "catalog_sales_price_tier",
+      "level": "Catalog Sales Price Tier",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotions.[Channel Catalog]",
+      "label": "Channel Catalog",
+      "kind": "level",
+      "hierarchy": "promotions",
+      "level": "Channel Catalog",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotions.[Channel Direct Mail]",
+      "label": "Channel Direct Mail",
+      "kind": "level",
+      "hierarchy": "promotions",
+      "level": "Channel Direct Mail",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotions.[Channel Email]",
+      "label": "Channel Email",
+      "kind": "level",
+      "hierarchy": "promotions",
+      "level": "Channel Email",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotions.[Channel Event]",
+      "label": "Channel Event",
+      "kind": "level",
+      "hierarchy": "promotions",
+      "level": "Channel Event",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotions.[Channel Press]",
+      "label": "Channel Press",
+      "kind": "level",
+      "hierarchy": "promotions",
+      "level": "Channel Press",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotions.[Channel Radio]",
+      "label": "Channel Radio",
+      "kind": "level",
+      "hierarchy": "promotions",
+      "level": "Channel Radio",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotions.[Channel TV]",
+      "label": "Channel TV",
+      "kind": "level",
+      "hierarchy": "promotions",
+      "level": "Channel TV",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_demographics.[Credit Rating]",
+      "label": "Credit Rating",
+      "kind": "level",
+      "hierarchy": "customer_demographics",
+      "level": "Credit Rating",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_dimension.[Customer Address]",
+      "label": "Customer Address",
+      "kind": "level",
+      "hierarchy": "customer_dimension",
+      "level": "Customer Address",
+      "is_calc": false
+    },
+    {
+      "unique_name": "household_demographics.[Customer Buy Potential]",
+      "label": "Customer Buy Potential",
+      "kind": "level",
+      "hierarchy": "household_demographics",
+      "level": "Customer Buy Potential",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_address.[Customer City]",
+      "label": "Customer City",
+      "kind": "level",
+      "hierarchy": "customer_address",
+      "level": "Customer City",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_address.[Customer Country]",
+      "label": "Customer Country",
+      "kind": "level",
+      "hierarchy": "customer_address",
+      "level": "Customer Country",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_address.[Customer County]",
+      "label": "Customer County",
+      "kind": "level",
+      "hierarchy": "customer_address",
+      "level": "Customer County",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_demographics.[Customer Demographics]",
+      "label": "Customer Demographics",
+      "kind": "level",
+      "hierarchy": "customer_demographics",
+      "level": "Customer Demographics",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_demographics.[Customer Dependent Count]",
+      "label": "Customer Dependent Count",
+      "kind": "level",
+      "hierarchy": "customer_demographics",
+      "level": "Customer Dependent Count",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_dimension.[Customer Dimension]",
+      "label": "Customer Dimension",
+      "kind": "level",
+      "hierarchy": "customer_dimension",
+      "level": "Customer Dimension",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_dimension.[Customer Email Address]",
+      "label": "Customer Email Address",
+      "kind": "level",
+      "hierarchy": "customer_dimension",
+      "level": "Customer Email Address",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_dimension.[Customer First Name]",
+      "label": "Customer First Name",
+      "kind": "level",
+      "hierarchy": "customer_dimension",
+      "level": "Customer First Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_address.[Customer GMT Offset]",
+      "label": "Customer GMT Offset",
+      "kind": "level",
+      "hierarchy": "customer_address",
+      "level": "Customer GMT Offset",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_dimension.[Customer ID]",
+      "label": "Customer ID",
+      "kind": "level",
+      "hierarchy": "customer_dimension",
+      "level": "Customer ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_dimension.[Customer Last Name]",
+      "label": "Customer Last Name",
+      "kind": "level",
+      "hierarchy": "customer_dimension",
+      "level": "Customer Last Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_dimension.[Customer Login]",
+      "label": "Customer Login",
+      "kind": "level",
+      "hierarchy": "customer_dimension",
+      "level": "Customer Login",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_dimension.[Customer Preferred Flag]",
+      "label": "Customer Preferred Flag",
+      "kind": "level",
+      "hierarchy": "customer_dimension",
+      "level": "Customer Preferred Flag",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_address.[Customer State]",
+      "label": "Customer State",
+      "kind": "level",
+      "hierarchy": "customer_address",
+      "level": "Customer State",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_address.[Customer State Name]",
+      "label": "Customer State Name",
+      "kind": "level",
+      "hierarchy": "customer_address",
+      "level": "Customer State Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_address.[Customer Zip Code]",
+      "label": "Customer Zip Code",
+      "kind": "level",
+      "hierarchy": "customer_address",
+      "level": "Customer Zip Code",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_demographics.[Education Status]",
+      "label": "Education Status",
+      "kind": "level",
+      "hierarchy": "customer_demographics",
+      "level": "Education Status",
+      "is_calc": false
+    },
+    {
+      "unique_name": "fulfilling_warehouse.[Fulfilling Warehouse]",
+      "label": "Fulfilling Warehouse",
+      "kind": "level",
+      "hierarchy": "fulfilling_warehouse",
+      "level": "Fulfilling Warehouse",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_demographics.[Gender]",
+      "label": "Gender",
+      "kind": "level",
+      "hierarchy": "customer_demographics",
+      "level": "Gender",
+      "is_calc": false
+    },
+    {
+      "unique_name": "household_demographics.[Household Demographics]",
+      "label": "Household Demographics",
+      "kind": "level",
+      "hierarchy": "household_demographics",
+      "level": "Household Demographics",
+      "is_calc": false
+    },
+    {
+      "unique_name": "household_demographics.[Household Dependents Count]",
+      "label": "Household Dependents Count",
+      "kind": "level",
+      "hierarchy": "household_demographics",
+      "level": "Household Dependents Count",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotions.[In Promotion]",
+      "label": "In Promotion",
+      "kind": "level",
+      "hierarchy": "promotions",
+      "level": "In Promotion",
+      "is_calc": false
+    },
+    {
+      "unique_name": "household_demographics.[Income Band]",
+      "label": "Income Band",
+      "kind": "level",
+      "hierarchy": "household_demographics",
+      "level": "Income Band",
+      "is_calc": false
+    },
+    {
+      "unique_name": "income_band.[Income Band Lower Bound]",
+      "label": "Income Band Lower Bound",
+      "kind": "level",
+      "hierarchy": "income_band",
+      "level": "Income Band Lower Bound",
+      "is_calc": false
+    },
+    {
+      "unique_name": "income_band.[Income Band Upper Bound]",
+      "label": "Income Band Upper Bound",
+      "kind": "level",
+      "hierarchy": "income_band",
+      "level": "Income Band Upper Bound",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_dimensions.[Inventory Calendar Date]",
+      "label": "Inventory Calendar Date",
+      "kind": "level",
+      "hierarchy": "inventory_date_dimensions",
+      "level": "Inventory Calendar Date",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_week_hierarchy.[Inventory Calendar Date Week]",
+      "label": "Inventory Calendar Date Week",
+      "kind": "level",
+      "hierarchy": "inventory_date_week_hierarchy",
+      "level": "Inventory Calendar Date Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_dimensions.[Inventory Calendar Month]",
+      "label": "Inventory Calendar Month",
+      "kind": "level",
+      "hierarchy": "inventory_date_dimensions",
+      "level": "Inventory Calendar Month",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_dimensions.[Inventory Calendar Quarter]",
+      "label": "Inventory Calendar Quarter",
+      "kind": "level",
+      "hierarchy": "inventory_date_dimensions",
+      "level": "Inventory Calendar Quarter",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_week_hierarchy.[Inventory Calendar Week]",
+      "label": "Inventory Calendar Week",
+      "kind": "level",
+      "hierarchy": "inventory_date_week_hierarchy",
+      "level": "Inventory Calendar Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_dimensions.[Inventory Calendar Year]",
+      "label": "Inventory Calendar Year",
+      "kind": "level",
+      "hierarchy": "inventory_date_dimensions",
+      "level": "Inventory Calendar Year",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_week_hierarchy.[Inventory Calendar Year Week]",
+      "label": "Inventory Calendar Year Week",
+      "kind": "level",
+      "hierarchy": "inventory_date_week_hierarchy",
+      "level": "Inventory Calendar Year Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_dimensions.[Inventory Day Name]",
+      "label": "Inventory Day Name",
+      "kind": "level",
+      "hierarchy": "inventory_date_dimensions",
+      "level": "Inventory Day Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_week_hierarchy.[Inventory Day Name Week]",
+      "label": "Inventory Day Name Week",
+      "kind": "level",
+      "hierarchy": "inventory_date_week_hierarchy",
+      "level": "Inventory Day Name Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_dimensions.[Inventory Day of Week]",
+      "label": "Inventory Day of Week",
+      "kind": "level",
+      "hierarchy": "inventory_date_dimensions",
+      "level": "Inventory Day of Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_dimensions.[Inventory Following Holiday Indicator]",
+      "label": "Inventory Following Holiday Indicator",
+      "kind": "level",
+      "hierarchy": "inventory_date_dimensions",
+      "level": "Inventory Following Holiday Indicator",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_dimensions.[Inventory Holiday Indicator]",
+      "label": "Inventory Holiday Indicator",
+      "kind": "level",
+      "hierarchy": "inventory_date_dimensions",
+      "level": "Inventory Holiday Indicator",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_dimensions.[Inventory Month Name]",
+      "label": "Inventory Month Name",
+      "kind": "level",
+      "hierarchy": "inventory_date_dimensions",
+      "level": "Inventory Month Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_dimensions.[Inventory Month Sequence]",
+      "label": "Inventory Month Sequence",
+      "kind": "level",
+      "hierarchy": "inventory_date_dimensions",
+      "level": "Inventory Month Sequence",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_dimensions.[Inventory Month of Year]",
+      "label": "Inventory Month of Year",
+      "kind": "level",
+      "hierarchy": "inventory_date_dimensions",
+      "level": "Inventory Month of Year",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_dimensions.[Inventory Quarter of Year]",
+      "label": "Inventory Quarter of Year",
+      "kind": "level",
+      "hierarchy": "inventory_date_dimensions",
+      "level": "Inventory Quarter of Year",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_week_hierarchy.[Inventory Week Sequence]",
+      "label": "Inventory Week Sequence",
+      "kind": "level",
+      "hierarchy": "inventory_date_week_hierarchy",
+      "level": "Inventory Week Sequence",
+      "is_calc": false
+    },
+    {
+      "unique_name": "inventory_date_dimensions.[Inventory Weekend Indicator]",
+      "label": "Inventory Weekend Indicator",
+      "kind": "level",
+      "hierarchy": "inventory_date_dimensions",
+      "level": "Inventory Weekend Indicator",
+      "is_calc": false
+    },
+    {
+      "unique_name": "product_dimension.[Item Product Name]",
+      "label": "Item Product Name",
+      "kind": "level",
+      "hierarchy": "product_dimension",
+      "level": "Item Product Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_demographics.[Marital Status]",
+      "label": "Marital Status",
+      "kind": "level",
+      "hierarchy": "customer_demographics",
+      "level": "Marital Status",
+      "is_calc": false
+    },
+    {
+      "unique_name": "net_profit_tier.[Net Profit Tier]",
+      "label": "Net Profit Tier",
+      "kind": "level",
+      "hierarchy": "net_profit_tier",
+      "level": "Net Profit Tier",
+      "is_calc": false
+    },
+    {
+      "unique_name": "customer_dimension.[Preferred Customer Ind]",
+      "label": "Preferred Customer Ind",
+      "kind": "level",
+      "hierarchy": "customer_dimension",
+      "level": "Preferred Customer Ind",
+      "is_calc": false
+    },
+    {
+      "unique_name": "product_dimension.[Product Brand ID]",
+      "label": "Product Brand ID",
+      "kind": "level",
+      "hierarchy": "product_dimension",
+      "level": "Product Brand ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "product_dimension.[Product Brand Name]",
+      "label": "Product Brand Name",
+      "kind": "level",
+      "hierarchy": "product_dimension",
+      "level": "Product Brand Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "product_dimension.[Product Category]",
+      "label": "Product Category",
+      "kind": "level",
+      "hierarchy": "product_dimension",
+      "level": "Product Category",
+      "is_calc": false
+    },
+    {
+      "unique_name": "product_dimension.[Product Class ID]",
+      "label": "Product Class ID",
+      "kind": "level",
+      "hierarchy": "product_dimension",
+      "level": "Product Class ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "product_dimension.[Product Class Name]",
+      "label": "Product Class Name",
+      "kind": "level",
+      "hierarchy": "product_dimension",
+      "level": "Product Class Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "product_dimension.[Product Color]",
+      "label": "Product Color",
+      "kind": "level",
+      "hierarchy": "product_dimension",
+      "level": "Product Color",
+      "is_calc": false
+    },
+    {
+      "unique_name": "product_dimension.[Product Current Price]",
+      "label": "Product Current Price",
+      "kind": "level",
+      "hierarchy": "product_dimension",
+      "level": "Product Current Price",
+      "is_calc": false
+    },
+    {
+      "unique_name": "product_dimension.[Product Dimension]",
+      "label": "Product Dimension",
+      "kind": "level",
+      "hierarchy": "product_dimension",
+      "level": "Product Dimension",
+      "is_calc": false
+    },
+    {
+      "unique_name": "product_dimension.[Product Item ID]",
+      "label": "Product Item ID",
+      "kind": "level",
+      "hierarchy": "product_dimension",
+      "level": "Product Item ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "product_dimension.[Product Manager ID]",
+      "label": "Product Manager ID",
+      "kind": "level",
+      "hierarchy": "product_dimension",
+      "level": "Product Manager ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "product_dimension.[Product Manufacturer ID]",
+      "label": "Product Manufacturer ID",
+      "kind": "level",
+      "hierarchy": "product_dimension",
+      "level": "Product Manufacturer ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "product_dimension.[Product Manufacturer Name]",
+      "label": "Product Manufacturer Name",
+      "kind": "level",
+      "hierarchy": "product_dimension",
+      "level": "Product Manufacturer Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "product_dimension.[Product Size]",
+      "label": "Product Size",
+      "kind": "level",
+      "hierarchy": "product_dimension",
+      "level": "Product Size",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotions.[Promotion Name]",
+      "label": "Promotion Name",
+      "kind": "level",
+      "hierarchy": "promotions",
+      "level": "Promotion Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotion_product_item_product_dimension.[Promotion Product Item Item Product Name]",
+      "label": "Promotion Product Item Item Product Name",
+      "kind": "level",
+      "hierarchy": "promotion_product_item_product_dimension",
+      "level": "Promotion Product Item Item Product Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotion_product_item_product_dimension.[Promotion Product Item Product Brand ID]",
+      "label": "Promotion Product Item Product Brand ID",
+      "kind": "level",
+      "hierarchy": "promotion_product_item_product_dimension",
+      "level": "Promotion Product Item Product Brand ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotion_product_item_product_dimension.[Promotion Product Item Product Brand Name]",
+      "label": "Promotion Product Item Product Brand Name",
+      "kind": "level",
+      "hierarchy": "promotion_product_item_product_dimension",
+      "level": "Promotion Product Item Product Brand Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotion_product_item_product_dimension.[Promotion Product Item Product Category]",
+      "label": "Promotion Product Item Product Category",
+      "kind": "level",
+      "hierarchy": "promotion_product_item_product_dimension",
+      "level": "Promotion Product Item Product Category",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotion_product_item_product_dimension.[Promotion Product Item Product Class ID]",
+      "label": "Promotion Product Item Product Class ID",
+      "kind": "level",
+      "hierarchy": "promotion_product_item_product_dimension",
+      "level": "Promotion Product Item Product Class ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotion_product_item_product_dimension.[Promotion Product Item Product Class Name]",
+      "label": "Promotion Product Item Product Class Name",
+      "kind": "level",
+      "hierarchy": "promotion_product_item_product_dimension",
+      "level": "Promotion Product Item Product Class Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotion_product_item_product_dimension.[Promotion Product Item Product Color]",
+      "label": "Promotion Product Item Product Color",
+      "kind": "level",
+      "hierarchy": "promotion_product_item_product_dimension",
+      "level": "Promotion Product Item Product Color",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotion_product_item_product_dimension.[Promotion Product Item Product Current Price]",
+      "label": "Promotion Product Item Product Current Price",
+      "kind": "level",
+      "hierarchy": "promotion_product_item_product_dimension",
+      "level": "Promotion Product Item Product Current Price",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotion_product_item_product_dimension.[Promotion Product Item Product Dimension]",
+      "label": "Promotion Product Item Product Dimension",
+      "kind": "level",
+      "hierarchy": "promotion_product_item_product_dimension",
+      "level": "Promotion Product Item Product Dimension",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotion_product_item_product_dimension.[Promotion Product Item Product Item ID]",
+      "label": "Promotion Product Item Product Item ID",
+      "kind": "level",
+      "hierarchy": "promotion_product_item_product_dimension",
+      "level": "Promotion Product Item Product Item ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotion_product_item_product_dimension.[Promotion Product Item Product Manager ID]",
+      "label": "Promotion Product Item Product Manager ID",
+      "kind": "level",
+      "hierarchy": "promotion_product_item_product_dimension",
+      "level": "Promotion Product Item Product Manager ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotion_product_item_product_dimension.[Promotion Product Item Product Manufacturer ID]",
+      "label": "Promotion Product Item Product Manufacturer ID",
+      "kind": "level",
+      "hierarchy": "promotion_product_item_product_dimension",
+      "level": "Promotion Product Item Product Manufacturer ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotion_product_item_product_dimension.[Promotion Product Item Product Manufacturer Name]",
+      "label": "Promotion Product Item Product Manufacturer Name",
+      "kind": "level",
+      "hierarchy": "promotion_product_item_product_dimension",
+      "level": "Promotion Product Item Product Manufacturer Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotion_product_item_product_dimension.[Promotion Product Item Product Size]",
+      "label": "Promotion Product Item Product Size",
+      "kind": "level",
+      "hierarchy": "promotion_product_item_product_dimension",
+      "level": "Promotion Product Item Product Size",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotions.[Promotion Sent Via Email]",
+      "label": "Promotion Sent Via Email",
+      "kind": "level",
+      "hierarchy": "promotions",
+      "level": "Promotion Sent Via Email",
+      "is_calc": false
+    },
+    {
+      "unique_name": "promotions.[Promotions]",
+      "label": "Promotions",
+      "kind": "level",
+      "hierarchy": "promotions",
+      "level": "Promotions",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_dimensions.[Return Calendar Date]",
+      "label": "Return Calendar Date",
+      "kind": "level",
+      "hierarchy": "return_date_dimensions",
+      "level": "Return Calendar Date",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_week_hierarchy.[Return Calendar Date Week]",
+      "label": "Return Calendar Date Week",
+      "kind": "level",
+      "hierarchy": "return_date_week_hierarchy",
+      "level": "Return Calendar Date Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_dimensions.[Return Calendar Month]",
+      "label": "Return Calendar Month",
+      "kind": "level",
+      "hierarchy": "return_date_dimensions",
+      "level": "Return Calendar Month",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_dimensions.[Return Calendar Quarter]",
+      "label": "Return Calendar Quarter",
+      "kind": "level",
+      "hierarchy": "return_date_dimensions",
+      "level": "Return Calendar Quarter",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_week_hierarchy.[Return Calendar Week]",
+      "label": "Return Calendar Week",
+      "kind": "level",
+      "hierarchy": "return_date_week_hierarchy",
+      "level": "Return Calendar Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_dimensions.[Return Calendar Year]",
+      "label": "Return Calendar Year",
+      "kind": "level",
+      "hierarchy": "return_date_dimensions",
+      "level": "Return Calendar Year",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_week_hierarchy.[Return Calendar Year Week]",
+      "label": "Return Calendar Year Week",
+      "kind": "level",
+      "hierarchy": "return_date_week_hierarchy",
+      "level": "Return Calendar Year Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_customer_address.[Return Customer Address]",
+      "label": "Return Customer Address",
+      "kind": "level",
+      "hierarchy": "return_customer_address",
+      "level": "Return Customer Address",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_customer_address.[Return Customer City]",
+      "label": "Return Customer City",
+      "kind": "level",
+      "hierarchy": "return_customer_address",
+      "level": "Return Customer City",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_customer_address.[Return Customer Country]",
+      "label": "Return Customer Country",
+      "kind": "level",
+      "hierarchy": "return_customer_address",
+      "level": "Return Customer Country",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_customer_address.[Return Customer County]",
+      "label": "Return Customer County",
+      "kind": "level",
+      "hierarchy": "return_customer_address",
+      "level": "Return Customer County",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_customer_address.[Return Customer GMT Offset]",
+      "label": "Return Customer GMT Offset",
+      "kind": "level",
+      "hierarchy": "return_customer_address",
+      "level": "Return Customer GMT Offset",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_customer_address.[Return Customer State]",
+      "label": "Return Customer State",
+      "kind": "level",
+      "hierarchy": "return_customer_address",
+      "level": "Return Customer State",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_customer_address.[Return Customer State Name]",
+      "label": "Return Customer State Name",
+      "kind": "level",
+      "hierarchy": "return_customer_address",
+      "level": "Return Customer State Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_customer_address.[Return Customer Zip Code]",
+      "label": "Return Customer Zip Code",
+      "kind": "level",
+      "hierarchy": "return_customer_address",
+      "level": "Return Customer Zip Code",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_dimensions.[Return Day Name]",
+      "label": "Return Day Name",
+      "kind": "level",
+      "hierarchy": "return_date_dimensions",
+      "level": "Return Day Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_week_hierarchy.[Return Day Name Week]",
+      "label": "Return Day Name Week",
+      "kind": "level",
+      "hierarchy": "return_date_week_hierarchy",
+      "level": "Return Day Name Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_dimensions.[Return Day of Week]",
+      "label": "Return Day of Week",
+      "kind": "level",
+      "hierarchy": "return_date_dimensions",
+      "level": "Return Day of Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_dimensions.[Return Following Holiday Indicator]",
+      "label": "Return Following Holiday Indicator",
+      "kind": "level",
+      "hierarchy": "return_date_dimensions",
+      "level": "Return Following Holiday Indicator",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_dimensions.[Return Holiday Indicator]",
+      "label": "Return Holiday Indicator",
+      "kind": "level",
+      "hierarchy": "return_date_dimensions",
+      "level": "Return Holiday Indicator",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_time_dimension.[Return Hour]",
+      "label": "Return Hour",
+      "kind": "level",
+      "hierarchy": "return_time_dimension",
+      "level": "Return Hour",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_time_dimension.[Return Meal Time]",
+      "label": "Return Meal Time",
+      "kind": "level",
+      "hierarchy": "return_time_dimension",
+      "level": "Return Meal Time",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_time_dimension.[Return Minute]",
+      "label": "Return Minute",
+      "kind": "level",
+      "hierarchy": "return_time_dimension",
+      "level": "Return Minute",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_dimensions.[Return Month Name]",
+      "label": "Return Month Name",
+      "kind": "level",
+      "hierarchy": "return_date_dimensions",
+      "level": "Return Month Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_dimensions.[Return Month Sequence]",
+      "label": "Return Month Sequence",
+      "kind": "level",
+      "hierarchy": "return_date_dimensions",
+      "level": "Return Month Sequence",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_dimensions.[Return Month of Year]",
+      "label": "Return Month of Year",
+      "kind": "level",
+      "hierarchy": "return_date_dimensions",
+      "level": "Return Month of Year",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_time_dimension.[Return Morning Time Tier]",
+      "label": "Return Morning Time Tier",
+      "kind": "level",
+      "hierarchy": "return_time_dimension",
+      "level": "Return Morning Time Tier",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_dimensions.[Return Quarter of Year]",
+      "label": "Return Quarter of Year",
+      "kind": "level",
+      "hierarchy": "return_date_dimensions",
+      "level": "Return Quarter of Year",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_time_dimension.[Return Second]",
+      "label": "Return Second",
+      "kind": "level",
+      "hierarchy": "return_time_dimension",
+      "level": "Return Second",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_time_dimension.[Return Time AM or PM]",
+      "label": "Return Time AM or PM",
+      "kind": "level",
+      "hierarchy": "return_time_dimension",
+      "level": "Return Time AM or PM",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_time_dimension.[Return Time SK]",
+      "label": "Return Time SK",
+      "kind": "level",
+      "hierarchy": "return_time_dimension",
+      "level": "Return Time SK",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_time_dimension.[Return Time Sequence]",
+      "label": "Return Time Sequence",
+      "kind": "level",
+      "hierarchy": "return_time_dimension",
+      "level": "Return Time Sequence",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_week_hierarchy.[Return Week Sequence]",
+      "label": "Return Week Sequence",
+      "kind": "level",
+      "hierarchy": "return_date_week_hierarchy",
+      "level": "Return Week Sequence",
+      "is_calc": false
+    },
+    {
+      "unique_name": "return_date_dimensions.[Return Weekend Indicator]",
+      "label": "Return Weekend Indicator",
+      "kind": "level",
+      "hierarchy": "return_date_dimensions",
+      "level": "Return Weekend Indicator",
+      "is_calc": false
+    },
+    {
+      "unique_name": "returns_time_tier.[Returns Time Tier]",
+      "label": "Returns Time Tier",
+      "kind": "level",
+      "hierarchy": "returns_time_tier",
+      "level": "Returns Time Tier",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sales_price_tier.[Sales Price Tier]",
+      "label": "Sales Price Tier",
+      "kind": "level",
+      "hierarchy": "sales_price_tier",
+      "level": "Sales Price Tier",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_dimensions.[Ship Calendar Date]",
+      "label": "Ship Calendar Date",
+      "kind": "level",
+      "hierarchy": "ship_date_dimensions",
+      "level": "Ship Calendar Date",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_week_hierarchy.[Ship Calendar Date Week]",
+      "label": "Ship Calendar Date Week",
+      "kind": "level",
+      "hierarchy": "ship_date_week_hierarchy",
+      "level": "Ship Calendar Date Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_dimensions.[Ship Calendar Month]",
+      "label": "Ship Calendar Month",
+      "kind": "level",
+      "hierarchy": "ship_date_dimensions",
+      "level": "Ship Calendar Month",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_dimensions.[Ship Calendar Quarter]",
+      "label": "Ship Calendar Quarter",
+      "kind": "level",
+      "hierarchy": "ship_date_dimensions",
+      "level": "Ship Calendar Quarter",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_week_hierarchy.[Ship Calendar Week]",
+      "label": "Ship Calendar Week",
+      "kind": "level",
+      "hierarchy": "ship_date_week_hierarchy",
+      "level": "Ship Calendar Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_dimensions.[Ship Calendar Year]",
+      "label": "Ship Calendar Year",
+      "kind": "level",
+      "hierarchy": "ship_date_dimensions",
+      "level": "Ship Calendar Year",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_week_hierarchy.[Ship Calendar Year Week]",
+      "label": "Ship Calendar Year Week",
+      "kind": "level",
+      "hierarchy": "ship_date_week_hierarchy",
+      "level": "Ship Calendar Year Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_mode.[Ship Code]",
+      "label": "Ship Code",
+      "kind": "level",
+      "hierarchy": "ship_mode",
+      "level": "Ship Code",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_customer_address.[Ship Customer Address]",
+      "label": "Ship Customer Address",
+      "kind": "level",
+      "hierarchy": "ship_customer_address",
+      "level": "Ship Customer Address",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_customer_address.[Ship Customer City]",
+      "label": "Ship Customer City",
+      "kind": "level",
+      "hierarchy": "ship_customer_address",
+      "level": "Ship Customer City",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_customer_address.[Ship Customer Country]",
+      "label": "Ship Customer Country",
+      "kind": "level",
+      "hierarchy": "ship_customer_address",
+      "level": "Ship Customer Country",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_customer_address.[Ship Customer County]",
+      "label": "Ship Customer County",
+      "kind": "level",
+      "hierarchy": "ship_customer_address",
+      "level": "Ship Customer County",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_customer_address.[Ship Customer GMT Offset]",
+      "label": "Ship Customer GMT Offset",
+      "kind": "level",
+      "hierarchy": "ship_customer_address",
+      "level": "Ship Customer GMT Offset",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_customer_address.[Ship Customer State]",
+      "label": "Ship Customer State",
+      "kind": "level",
+      "hierarchy": "ship_customer_address",
+      "level": "Ship Customer State",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_customer_address.[Ship Customer State Name]",
+      "label": "Ship Customer State Name",
+      "kind": "level",
+      "hierarchy": "ship_customer_address",
+      "level": "Ship Customer State Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_customer_address.[Ship Customer Zip Code]",
+      "label": "Ship Customer Zip Code",
+      "kind": "level",
+      "hierarchy": "ship_customer_address",
+      "level": "Ship Customer Zip Code",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_dimensions.[Ship Day Name]",
+      "label": "Ship Day Name",
+      "kind": "level",
+      "hierarchy": "ship_date_dimensions",
+      "level": "Ship Day Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_week_hierarchy.[Ship Day Name Week]",
+      "label": "Ship Day Name Week",
+      "kind": "level",
+      "hierarchy": "ship_date_week_hierarchy",
+      "level": "Ship Day Name Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_dimensions.[Ship Day of Week]",
+      "label": "Ship Day of Week",
+      "kind": "level",
+      "hierarchy": "ship_date_dimensions",
+      "level": "Ship Day of Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_dimensions.[Ship Following Holiday Indicator]",
+      "label": "Ship Following Holiday Indicator",
+      "kind": "level",
+      "hierarchy": "ship_date_dimensions",
+      "level": "Ship Following Holiday Indicator",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_dimensions.[Ship Holiday Indicator]",
+      "label": "Ship Holiday Indicator",
+      "kind": "level",
+      "hierarchy": "ship_date_dimensions",
+      "level": "Ship Holiday Indicator",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_mode.[Ship Mode Type]",
+      "label": "Ship Mode Type",
+      "kind": "level",
+      "hierarchy": "ship_mode",
+      "level": "Ship Mode Type",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_dimensions.[Ship Month Name]",
+      "label": "Ship Month Name",
+      "kind": "level",
+      "hierarchy": "ship_date_dimensions",
+      "level": "Ship Month Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_dimensions.[Ship Month Sequence]",
+      "label": "Ship Month Sequence",
+      "kind": "level",
+      "hierarchy": "ship_date_dimensions",
+      "level": "Ship Month Sequence",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_dimensions.[Ship Month of Year]",
+      "label": "Ship Month of Year",
+      "kind": "level",
+      "hierarchy": "ship_date_dimensions",
+      "level": "Ship Month of Year",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_dimensions.[Ship Quarter of Year]",
+      "label": "Ship Quarter of Year",
+      "kind": "level",
+      "hierarchy": "ship_date_dimensions",
+      "level": "Ship Quarter of Year",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_week_hierarchy.[Ship Week Sequence]",
+      "label": "Ship Week Sequence",
+      "kind": "level",
+      "hierarchy": "ship_date_week_hierarchy",
+      "level": "Ship Week Sequence",
+      "is_calc": false
+    },
+    {
+      "unique_name": "ship_date_dimensions.[Ship Weekend Indicator]",
+      "label": "Ship Weekend Indicator",
+      "kind": "level",
+      "hierarchy": "ship_date_dimensions",
+      "level": "Ship Weekend Indicator",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_dimensions.[Sold Calendar Date]",
+      "label": "Sold Calendar Date",
+      "kind": "level",
+      "hierarchy": "sold_date_dimensions",
+      "level": "Sold Calendar Date",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_week_hierarchy.[Sold Calendar Date Week]",
+      "label": "Sold Calendar Date Week",
+      "kind": "level",
+      "hierarchy": "sold_date_week_hierarchy",
+      "level": "Sold Calendar Date Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_dimensions.[Sold Calendar Month]",
+      "label": "Sold Calendar Month",
+      "kind": "level",
+      "hierarchy": "sold_date_dimensions",
+      "level": "Sold Calendar Month",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_dimensions.[Sold Calendar Quarter]",
+      "label": "Sold Calendar Quarter",
+      "kind": "level",
+      "hierarchy": "sold_date_dimensions",
+      "level": "Sold Calendar Quarter",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_week_hierarchy.[Sold Calendar Week]",
+      "label": "Sold Calendar Week",
+      "kind": "level",
+      "hierarchy": "sold_date_week_hierarchy",
+      "level": "Sold Calendar Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_dimensions.[Sold Calendar Year]",
+      "label": "Sold Calendar Year",
+      "kind": "level",
+      "hierarchy": "sold_date_dimensions",
+      "level": "Sold Calendar Year",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_week_hierarchy.[Sold Calendar Year Week]",
+      "label": "Sold Calendar Year Week",
+      "kind": "level",
+      "hierarchy": "sold_date_week_hierarchy",
+      "level": "Sold Calendar Year Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_customer_address.[Sold Customer Address]",
+      "label": "Sold Customer Address",
+      "kind": "level",
+      "hierarchy": "sold_customer_address",
+      "level": "Sold Customer Address",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_customer_address.[Sold Customer City]",
+      "label": "Sold Customer City",
+      "kind": "level",
+      "hierarchy": "sold_customer_address",
+      "level": "Sold Customer City",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_customer_address.[Sold Customer Country]",
+      "label": "Sold Customer Country",
+      "kind": "level",
+      "hierarchy": "sold_customer_address",
+      "level": "Sold Customer Country",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_customer_address.[Sold Customer County]",
+      "label": "Sold Customer County",
+      "kind": "level",
+      "hierarchy": "sold_customer_address",
+      "level": "Sold Customer County",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_customer_address.[Sold Customer GMT Offset]",
+      "label": "Sold Customer GMT Offset",
+      "kind": "level",
+      "hierarchy": "sold_customer_address",
+      "level": "Sold Customer GMT Offset",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_customer_address.[Sold Customer State]",
+      "label": "Sold Customer State",
+      "kind": "level",
+      "hierarchy": "sold_customer_address",
+      "level": "Sold Customer State",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_customer_address.[Sold Customer State Name]",
+      "label": "Sold Customer State Name",
+      "kind": "level",
+      "hierarchy": "sold_customer_address",
+      "level": "Sold Customer State Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_customer_address.[Sold Customer Zip Code]",
+      "label": "Sold Customer Zip Code",
+      "kind": "level",
+      "hierarchy": "sold_customer_address",
+      "level": "Sold Customer Zip Code",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_dimensions.[Sold Day Name]",
+      "label": "Sold Day Name",
+      "kind": "level",
+      "hierarchy": "sold_date_dimensions",
+      "level": "Sold Day Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_week_hierarchy.[Sold Day Name Week]",
+      "label": "Sold Day Name Week",
+      "kind": "level",
+      "hierarchy": "sold_date_week_hierarchy",
+      "level": "Sold Day Name Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_dimensions.[Sold Day of Week]",
+      "label": "Sold Day of Week",
+      "kind": "level",
+      "hierarchy": "sold_date_dimensions",
+      "level": "Sold Day of Week",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_dimensions.[Sold Following Holiday Indicator]",
+      "label": "Sold Following Holiday Indicator",
+      "kind": "level",
+      "hierarchy": "sold_date_dimensions",
+      "level": "Sold Following Holiday Indicator",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_dimensions.[Sold Holiday Indicator]",
+      "label": "Sold Holiday Indicator",
+      "kind": "level",
+      "hierarchy": "sold_date_dimensions",
+      "level": "Sold Holiday Indicator",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_time_dimension.[Sold Hour]",
+      "label": "Sold Hour",
+      "kind": "level",
+      "hierarchy": "sold_time_dimension",
+      "level": "Sold Hour",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_time_dimension.[Sold Meal Time]",
+      "label": "Sold Meal Time",
+      "kind": "level",
+      "hierarchy": "sold_time_dimension",
+      "level": "Sold Meal Time",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_time_dimension.[Sold Minute]",
+      "label": "Sold Minute",
+      "kind": "level",
+      "hierarchy": "sold_time_dimension",
+      "level": "Sold Minute",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_dimensions.[Sold Month Name]",
+      "label": "Sold Month Name",
+      "kind": "level",
+      "hierarchy": "sold_date_dimensions",
+      "level": "Sold Month Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_dimensions.[Sold Month Sequence]",
+      "label": "Sold Month Sequence",
+      "kind": "level",
+      "hierarchy": "sold_date_dimensions",
+      "level": "Sold Month Sequence",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_dimensions.[Sold Month of Year]",
+      "label": "Sold Month of Year",
+      "kind": "level",
+      "hierarchy": "sold_date_dimensions",
+      "level": "Sold Month of Year",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_time_dimension.[Sold Morning Time Tier]",
+      "label": "Sold Morning Time Tier",
+      "kind": "level",
+      "hierarchy": "sold_time_dimension",
+      "level": "Sold Morning Time Tier",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_dimensions.[Sold Quarter of Year]",
+      "label": "Sold Quarter of Year",
+      "kind": "level",
+      "hierarchy": "sold_date_dimensions",
+      "level": "Sold Quarter of Year",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_time_dimension.[Sold Second]",
+      "label": "Sold Second",
+      "kind": "level",
+      "hierarchy": "sold_time_dimension",
+      "level": "Sold Second",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_time_dimension.[Sold Time AM or PM]",
+      "label": "Sold Time AM or PM",
+      "kind": "level",
+      "hierarchy": "sold_time_dimension",
+      "level": "Sold Time AM or PM",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_time_dimension.[Sold Time SK]",
+      "label": "Sold Time SK",
+      "kind": "level",
+      "hierarchy": "sold_time_dimension",
+      "level": "Sold Time SK",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_time_dimension.[Sold Time Sequence]",
+      "label": "Sold Time Sequence",
+      "kind": "level",
+      "hierarchy": "sold_time_dimension",
+      "level": "Sold Time Sequence",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_week_hierarchy.[Sold Week Sequence]",
+      "label": "Sold Week Sequence",
+      "kind": "level",
+      "hierarchy": "sold_date_week_hierarchy",
+      "level": "Sold Week Sequence",
+      "is_calc": false
+    },
+    {
+      "unique_name": "sold_date_dimensions.[Sold Weekend Indicator]",
+      "label": "Sold Weekend Indicator",
+      "kind": "level",
+      "hierarchy": "sold_date_dimensions",
+      "level": "Sold Weekend Indicator",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store City]",
+      "label": "Store City",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store City",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store Company ID]",
+      "label": "Store Company ID",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store Company ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store Country]",
+      "label": "Store Country",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store Country",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store County]",
+      "label": "Store County",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store County",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store Floor Space]",
+      "label": "Store Floor Space",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store Floor Space",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store GMT Offset]",
+      "label": "Store GMT Offset",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store GMT Offset",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store Hours]",
+      "label": "Store Hours",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store Hours",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_item_product_dimension.[Store Item Item Product Name]",
+      "label": "Store Item Item Product Name",
+      "kind": "level",
+      "hierarchy": "store_item_product_dimension",
+      "level": "Store Item Item Product Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_item_product_dimension.[Store Item Product Brand ID]",
+      "label": "Store Item Product Brand ID",
+      "kind": "level",
+      "hierarchy": "store_item_product_dimension",
+      "level": "Store Item Product Brand ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_item_product_dimension.[Store Item Product Brand Name]",
+      "label": "Store Item Product Brand Name",
+      "kind": "level",
+      "hierarchy": "store_item_product_dimension",
+      "level": "Store Item Product Brand Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_item_product_dimension.[Store Item Product Category]",
+      "label": "Store Item Product Category",
+      "kind": "level",
+      "hierarchy": "store_item_product_dimension",
+      "level": "Store Item Product Category",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_item_product_dimension.[Store Item Product Class ID]",
+      "label": "Store Item Product Class ID",
+      "kind": "level",
+      "hierarchy": "store_item_product_dimension",
+      "level": "Store Item Product Class ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_item_product_dimension.[Store Item Product Class Name]",
+      "label": "Store Item Product Class Name",
+      "kind": "level",
+      "hierarchy": "store_item_product_dimension",
+      "level": "Store Item Product Class Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_item_product_dimension.[Store Item Product Color]",
+      "label": "Store Item Product Color",
+      "kind": "level",
+      "hierarchy": "store_item_product_dimension",
+      "level": "Store Item Product Color",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_item_product_dimension.[Store Item Product Current Price]",
+      "label": "Store Item Product Current Price",
+      "kind": "level",
+      "hierarchy": "store_item_product_dimension",
+      "level": "Store Item Product Current Price",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_item_product_dimension.[Store Item Product Dimension]",
+      "label": "Store Item Product Dimension",
+      "kind": "level",
+      "hierarchy": "store_item_product_dimension",
+      "level": "Store Item Product Dimension",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_item_product_dimension.[Store Item Product Item ID]",
+      "label": "Store Item Product Item ID",
+      "kind": "level",
+      "hierarchy": "store_item_product_dimension",
+      "level": "Store Item Product Item ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_item_product_dimension.[Store Item Product Manager ID]",
+      "label": "Store Item Product Manager ID",
+      "kind": "level",
+      "hierarchy": "store_item_product_dimension",
+      "level": "Store Item Product Manager ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_item_product_dimension.[Store Item Product Manufacturer ID]",
+      "label": "Store Item Product Manufacturer ID",
+      "kind": "level",
+      "hierarchy": "store_item_product_dimension",
+      "level": "Store Item Product Manufacturer ID",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_item_product_dimension.[Store Item Product Manufacturer Name]",
+      "label": "Store Item Product Manufacturer Name",
+      "kind": "level",
+      "hierarchy": "store_item_product_dimension",
+      "level": "Store Item Product Manufacturer Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_item_product_dimension.[Store Item Product Size]",
+      "label": "Store Item Product Size",
+      "kind": "level",
+      "hierarchy": "store_item_product_dimension",
+      "level": "Store Item Product Size",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store Manager]",
+      "label": "Store Manager",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store Manager",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store Name]",
+      "label": "Store Name",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store Number]",
+      "label": "Store Number",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store Number",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store Number of Employees]",
+      "label": "Store Number of Employees",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store Number of Employees",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_sales_ticket_number.[Store Sales Ticket Number]",
+      "label": "Store Sales Ticket Number",
+      "kind": "level",
+      "hierarchy": "store_sales_ticket_number",
+      "level": "Store Sales Ticket Number",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store State]",
+      "label": "Store State",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store State",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store State Name]",
+      "label": "Store State Name",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store State Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store Street Name]",
+      "label": "Store Street Name",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store Street Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store Street Number]",
+      "label": "Store Street Number",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store Street Number",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store Street Type]",
+      "label": "Store Street Type",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store Street Type",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store Suite Number]",
+      "label": "Store Suite Number",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store Suite Number",
+      "is_calc": false
+    },
+    {
+      "unique_name": "store_dimension.[Store Zip Code]",
+      "label": "Store Zip Code",
+      "kind": "level",
+      "hierarchy": "store_dimension",
+      "level": "Store Zip Code",
+      "is_calc": false
+    },
+    {
+      "unique_name": "household_demographics.[Vehicle Count]",
+      "label": "Vehicle Count",
+      "kind": "level",
+      "hierarchy": "household_demographics",
+      "level": "Vehicle Count",
+      "is_calc": false
+    },
+    {
+      "unique_name": "fulfilling_warehouse.[Warehouse City]",
+      "label": "Warehouse City",
+      "kind": "level",
+      "hierarchy": "fulfilling_warehouse",
+      "level": "Warehouse City",
+      "is_calc": false
+    },
+    {
+      "unique_name": "fulfilling_warehouse.[Warehouse Country]",
+      "label": "Warehouse Country",
+      "kind": "level",
+      "hierarchy": "fulfilling_warehouse",
+      "level": "Warehouse Country",
+      "is_calc": false
+    },
+    {
+      "unique_name": "fulfilling_warehouse.[Warehouse County]",
+      "label": "Warehouse County",
+      "kind": "level",
+      "hierarchy": "fulfilling_warehouse",
+      "level": "Warehouse County",
+      "is_calc": false
+    },
+    {
+      "unique_name": "fulfilling_warehouse.[Warehouse Name]",
+      "label": "Warehouse Name",
+      "kind": "level",
+      "hierarchy": "fulfilling_warehouse",
+      "level": "Warehouse Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "fulfilling_warehouse.[Warehouse Square Feet]",
+      "label": "Warehouse Square Feet",
+      "kind": "level",
+      "hierarchy": "fulfilling_warehouse",
+      "level": "Warehouse Square Feet",
+      "is_calc": false
+    },
+    {
+      "unique_name": "fulfilling_warehouse.[Warehouse State]",
+      "label": "Warehouse State",
+      "kind": "level",
+      "hierarchy": "fulfilling_warehouse",
+      "level": "Warehouse State",
+      "is_calc": false
+    },
+    {
+      "unique_name": "fulfilling_warehouse.[Warehouse State Name]",
+      "label": "Warehouse State Name",
+      "kind": "level",
+      "hierarchy": "fulfilling_warehouse",
+      "level": "Warehouse State Name",
+      "is_calc": false
+    },
+    {
+      "unique_name": "web_site.[Web Site]",
+      "label": "Web Site",
+      "kind": "level",
+      "hierarchy": "web_site",
+      "level": "Web Site",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.average_ext_sales_price",
+      "label": "Average Ext Sales Price",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.average_ext_wholesale_cost",
+      "label": "Average Ext Wholesale Cost",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.average_store_sales_coupon_amount",
+      "label": "Average Store Sales Coupon Amount",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.average_store_sales_list_price",
+      "label": "Average Store Sales List Price",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.average_store_sales_quantity",
+      "label": "Average Store Sales Quantity",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.average_store_sales_sales_price",
+      "label": "Average Store Sales Sales Price",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_customer_count",
+      "label": "Catalog Customer Count",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_ext_discount_amount",
+      "label": "Catalog Ext Discount Amount",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_ext_list_price",
+      "label": "Catalog Ext List Price",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_ext_sales_price",
+      "label": "Catalog Ext Sales Price",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_ext_sales_tax",
+      "label": "Catalog Ext Sales Tax",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_ext_wholesale_cost",
+      "label": "Catalog Ext Wholesale Cost",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_net_paid_amount",
+      "label": "Catalog Net Paid Amount",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_net_paid_inc_tax_amount",
+      "label": "Catalog Net Paid Inc Tax Amount",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_net_profit_amount",
+      "label": "Catalog Net Profit Amount",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_quantity_sold",
+      "label": "Catalog Quantity Sold",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_sales",
+      "label": "Catalog Sales",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_sales_average_coupon_amount",
+      "label": "Catalog Sales Average Coupon Amount",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_sales_average_list_price",
+      "label": "Catalog Sales Average List Price",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_sales_average_quantity_sold",
+      "label": "Catalog Sales Average Quantity Sold",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_sales_average_sales_price",
+      "label": "Catalog Sales Average Sales Price",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_sales_net_paid",
+      "label": "Catalog Sales Net Paid",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_sales_price",
+      "label": "Catalog Sales Price",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_sales_row_counter",
+      "label": "Catalog Sales Row Counter",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.inventory_quantity_on_hand",
+      "label": "Inventory Quantity On Hand",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.purchased_amount_in_catalog",
+      "label": "Purchased Amount In Catalog",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.purchased_amount_in_store",
+      "label": "Purchased Amount In Store",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.purchased_amount_on_web",
+      "label": "Purchased Amount On Web",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_coupon_amount",
+      "label": "Store Coupon Amount",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_customer_count",
+      "label": "Store Customer Count",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_ext_discount_amount",
+      "label": "Store Ext Discount Amount",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_ext_list_price",
+      "label": "Store Ext List Price",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_ext_sales_price",
+      "label": "Store Ext Sales Price",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_ext_sales_price_by_promotion",
+      "label": "Store Ext Sales Price by Promotion",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_ext_sales_tax",
+      "label": "Store Ext Sales Tax",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_ext_wholesale_cost",
+      "label": "Store Ext Wholesale Cost",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_net_paid_amount",
+      "label": "Store Net Paid Amount",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_net_paid_incl_tax",
+      "label": "Store Net Paid Incl Tax",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_net_profit",
+      "label": "Store Net Profit",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_quantity_sold",
+      "label": "Store Quantity Sold",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_returns_count",
+      "label": "Store Returns Count",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_sales_price_by_promotion",
+      "label": "Store Sales Price by Promotion",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_sales_row_counter",
+      "label": "Store Sales Row Counter",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.total_product_count",
+      "label": "Total Product Count",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.total_store_sales",
+      "label": "Total Store Sales",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_customer_count",
+      "label": "Web Customer Count",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_ext_discount_amount",
+      "label": "Web Ext Discount Amount",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_ext_list_price",
+      "label": "Web Ext List Price",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_ext_sales_price",
+      "label": "Web Ext Sales Price",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_ext_sales_tax",
+      "label": "Web Ext Sales Tax",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_ext_ship_cost",
+      "label": "Web Ext Ship Cost",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_ext_wholesale_cost",
+      "label": "Web Ext Wholesale Cost",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_net_paid_amount",
+      "label": "Web Net Paid Amount",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_net_paid_incl_ship",
+      "label": "Web Net Paid Incl Ship",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_net_paid_incl_tax",
+      "label": "Web Net Paid Incl Tax",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_net_paid_incl_tax_and_ship",
+      "label": "Web Net Paid Incl Tax and Ship",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_net_profit",
+      "label": "Web Net Profit",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_quantity_sold",
+      "label": "Web Quantity Sold",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_sales",
+      "label": "Web Sales",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_sales_net_paid",
+      "label": "Web Sales Net Paid",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_sales_row_counter",
+      "label": "Web Sales Row Counter",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.average_catalog_unit_net_profit",
+      "label": "Average Catalog Unit Net Profit",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.average_store_unit_net_profit",
+      "label": "Average Store Unit Net Profit",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.average_web_unit_net_profit",
+      "label": "Average Web Unit Net Profit",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.avg_quarter_sales_ratio",
+      "label": "Avg Quarter Sales Ratio",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.avg_quarterly_store_sales_for_1998_1999",
+      "label": "Avg Quarterly Store Sales for 1998-1999",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_buyer",
+      "label": "Catalog Buyer",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_and_web_sales",
+      "label": "Catalog and Web Sales",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.catalog_and_web_sales_net",
+      "label": "Catalog and Web Sales Net",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.customer_count",
+      "label": "Customer Count",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_revenue_ratio_by_product_class",
+      "label": "Store Revenue Ratio by Product Class",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_sales_increase",
+      "label": "Store Sales Increase",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_sales_by_promotion_ratio",
+      "label": "Store Sales by Promotion Ratio",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.store_and_web_purchased_amount",
+      "label": "Store and Web Purchased Amount",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.total_ext_discount_amount",
+      "label": "Total Ext Discount Amount",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.total_ext_list_price",
+      "label": "Total Ext List Price",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.total_ext_sales_price",
+      "label": "Total Ext Sales Price",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.total_ext_sales_tax",
+      "label": "Total Ext Sales Tax",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.total_ext_wholesale_cost",
+      "label": "Total Ext Wholesale Cost",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.total_net_paid_amount",
+      "label": "Total Net Paid Amount",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.total_net_paid_incl_tax",
+      "label": "Total Net Paid Incl Tax",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.total_net_profit",
+      "label": "Total Net Profit",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.total_quantity_sold",
+      "label": "Total Quantity Sold",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_sales_increase",
+      "label": "Web Sales Increase",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_and_catalog_sales",
+      "label": "Web and Catalog Sales",
+      "kind": "measure",
+      "is_calc": false
+    },
+    {
+      "unique_name": "tpcds_benchmark_model.web_and_catalog_sales_price_growth",
+      "label": "Web and Catalog Sales Price Growth",
+      "kind": "measure",
+      "is_calc": false
+    }
+  ],
+  "describe_model": {
+    "calc_groups": [
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Current",
+        "unique_name": "calc.inventory_date_dimensions.current",
+        "mdx": "([Inventory Date Dimensions].CurrentMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Current vs Last Year",
+        "unique_name": "calc.inventory_date_dimensions.current_vs_last_year",
+        "mdx": "(([Inventory Date Dimensions].CurrentMember, [Measures].currentMember) - (ParallelPeriod([Inventory Date Dimensions].TimeYears, 1, [Inventory Date Dimensions].CurrentMember), [Measures].currentMember ))"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Current vs Last Year Pct",
+        "unique_name": "calc.inventory_date_dimensions.current_vs_last_year_pct",
+        "mdx": "(([Inventory Date Dimensions].CurrentMember, [Measures].currentMember) - (ParallelPeriod([Inventory Date Dimensions].TimeYears, 1, [Inventory Date Dimensions].CurrentMember), [Measures].currentMember )) / (ParallelPeriod([Inventory Date Dimensions].TimeYears, 1, [Inventory Date Dimensions].CurrentMember), [Measures].currentMember)"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Current vs Next",
+        "unique_name": "calc.inventory_date_dimensions.current_vs_next",
+        "mdx": "([Inventory Date Dimensions].CurrentMember, [Measures].currentMember) - ([Inventory Date Dimensions].CurrentMember.nextMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Current vs Next Pct",
+        "unique_name": "calc.inventory_date_dimensions.current_vs_next_pct",
+        "mdx": "(([Inventory Date Dimensions].CurrentMember, [Measures].currentMember) - ([Inventory Date Dimensions].CurrentMember.nextMember, [Measures].currentMember)) / ([Inventory Date Dimensions].CurrentMember.nextMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Current vs Previous",
+        "unique_name": "calc.inventory_date_dimensions.current_vs_previous",
+        "mdx": "([Inventory Date Dimensions].CurrentMember, [Measures].currentMember) - ([Inventory Date Dimensions].CurrentMember.prevMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Current vs Previous Pct",
+        "unique_name": "calc.inventory_date_dimensions.current_vs_previous_pct",
+        "mdx": "(([Inventory Date Dimensions].CurrentMember, [Measures].currentMember) - ([Inventory Date Dimensions].CurrentMember.prevMember, [Measures].currentMember)) / ([Inventory Date Dimensions].CurrentMember.prevMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Last Year",
+        "unique_name": "calc.inventory_date_dimensions.last_year",
+        "mdx": "(ParallelPeriod([Inventory Date Dimensions].TimeYears, 1, [Inventory Date Dimensions].CurrentMember), [Measures].currentMember)"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Month Moving Average 3 Month",
+        "unique_name": "calc.inventory_date_dimensions.month_moving_average_3_month",
+        "mdx": "Avg(ParallelPeriod([Inventory Date Dimensions].TimeMonths, 2, [Inventory Date Dimensions].CurrentMember):[Inventory Date Dimensions].CurrentMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Month to Date",
+        "unique_name": "calc.inventory_date_dimensions.month_to_date",
+        "mdx": "Aggregate(PeriodsToDate([Inventory Date Dimensions].TimeMonths, [Inventory Date Dimensions].CurrentMember),[Measures].currentMember)"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Moving Average 30 Period",
+        "unique_name": "calc.inventory_date_dimensions.moving_average_30_period",
+        "mdx": "Avg([Inventory Date Dimensions].CurrentMember.Lag(29):[Inventory Date Dimensions].CurrentMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Moving Average 5 Period",
+        "unique_name": "calc.inventory_date_dimensions.moving_average_5_period",
+        "mdx": "Avg([Inventory Date Dimensions].CurrentMember.Lag(4):[Inventory Date Dimensions].CurrentMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Next",
+        "unique_name": "calc.inventory_date_dimensions.next",
+        "mdx": "([Inventory Date Dimensions].CurrentMember.nextMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Pct of Parent",
+        "unique_name": "calc.inventory_date_dimensions.pct_of_parent",
+        "mdx": "([Inventory Date Dimensions].CurrentMember, [Measures].currentMember) / ([Inventory Date Dimensions].CurrentMember.parent, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Pct of Total",
+        "unique_name": "calc.inventory_date_dimensions.pct_of_total",
+        "mdx": "([Inventory Date Dimensions].CurrentMember, [Measures].currentMember) / ([Inventory Date Dimensions].[All], [Measures].currentMember)"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Previous",
+        "unique_name": "calc.inventory_date_dimensions.previous",
+        "mdx": "([Inventory Date Dimensions].CurrentMember.prevMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Quarter to Date",
+        "unique_name": "calc.inventory_date_dimensions.quarter_to_date",
+        "mdx": "Aggregate(PeriodsToDate([Inventory Date Dimensions].TimeQuarters, [Inventory Date Dimensions].CurrentMember),[Measures].currentMember)"
+      },
+      {
+        "group_name": "Inventory Date Dimensions",
+        "member_name": "Year to Date",
+        "unique_name": "calc.inventory_date_dimensions.year_to_date",
+        "mdx": "Aggregate(PeriodsToDate([Inventory Date Dimensions].TimeYears, [Inventory Date Dimensions].CurrentMember),[Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Current",
+        "unique_name": "calc.return_date_dimensions.current",
+        "mdx": "([Return Date Dimensions].CurrentMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Current vs Last Year",
+        "unique_name": "calc.return_date_dimensions.current_vs_last_year",
+        "mdx": "(([Return Date Dimensions].CurrentMember, [Measures].currentMember) - (ParallelPeriod([Return Date Dimensions].TimeYears, 1, [Return Date Dimensions].CurrentMember), [Measures].currentMember ))"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Current vs Last Year Pct",
+        "unique_name": "calc.return_date_dimensions.current_vs_last_year_pct",
+        "mdx": "(([Return Date Dimensions].CurrentMember, [Measures].currentMember) - (ParallelPeriod([Return Date Dimensions].TimeYears, 1, [Return Date Dimensions].CurrentMember), [Measures].currentMember )) / (ParallelPeriod([Return Date Dimensions].TimeYears, 1, [Return Date Dimensions].CurrentMember), [Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Current vs Next",
+        "unique_name": "calc.return_date_dimensions.current_vs_next",
+        "mdx": "([Return Date Dimensions].CurrentMember, [Measures].currentMember) - ([Return Date Dimensions].CurrentMember.nextMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Current vs Next Pct",
+        "unique_name": "calc.return_date_dimensions.current_vs_next_pct",
+        "mdx": "(([Return Date Dimensions].CurrentMember, [Measures].currentMember) - ([Return Date Dimensions].CurrentMember.nextMember, [Measures].currentMember)) / ([Return Date Dimensions].CurrentMember.nextMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Current vs Previous",
+        "unique_name": "calc.return_date_dimensions.current_vs_previous",
+        "mdx": "([Return Date Dimensions].CurrentMember, [Measures].currentMember) - ([Return Date Dimensions].CurrentMember.prevMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Current vs Previous Pct",
+        "unique_name": "calc.return_date_dimensions.current_vs_previous_pct",
+        "mdx": "(([Return Date Dimensions].CurrentMember, [Measures].currentMember) - ([Return Date Dimensions].CurrentMember.prevMember, [Measures].currentMember)) / ([Return Date Dimensions].CurrentMember.prevMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Last Year",
+        "unique_name": "calc.return_date_dimensions.last_year",
+        "mdx": "(ParallelPeriod([Return Date Dimensions].TimeYears, 1, [Return Date Dimensions].CurrentMember), [Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Month Moving Average 3 Month",
+        "unique_name": "calc.return_date_dimensions.month_moving_average_3_month",
+        "mdx": "Avg(ParallelPeriod([Return Date Dimensions].TimeMonths, 2, [Return Date Dimensions].CurrentMember):[Return Date Dimensions].CurrentMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Month to Date",
+        "unique_name": "calc.return_date_dimensions.month_to_date",
+        "mdx": "Aggregate(PeriodsToDate([Return Date Dimensions].TimeMonths, [Return Date Dimensions].CurrentMember),[Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Moving Average 30 Period",
+        "unique_name": "calc.return_date_dimensions.moving_average_30_period",
+        "mdx": "Avg([Return Date Dimensions].CurrentMember.Lag(29):[Return Date Dimensions].CurrentMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Moving Average 5 Period",
+        "unique_name": "calc.return_date_dimensions.moving_average_5_period",
+        "mdx": "Avg([Return Date Dimensions].CurrentMember.Lag(4):[Return Date Dimensions].CurrentMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Next",
+        "unique_name": "calc.return_date_dimensions.next",
+        "mdx": "([Return Date Dimensions].CurrentMember.nextMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Pct of Parent",
+        "unique_name": "calc.return_date_dimensions.pct_of_parent",
+        "mdx": "([Return Date Dimensions].CurrentMember, [Measures].currentMember) / ([Return Date Dimensions].CurrentMember.parent, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Pct of Total",
+        "unique_name": "calc.return_date_dimensions.pct_of_total",
+        "mdx": "([Return Date Dimensions].CurrentMember, [Measures].currentMember) / ([Return Date Dimensions].[All], [Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Previous",
+        "unique_name": "calc.return_date_dimensions.previous",
+        "mdx": "([Return Date Dimensions].CurrentMember.prevMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Quarter to Date",
+        "unique_name": "calc.return_date_dimensions.quarter_to_date",
+        "mdx": "Aggregate(PeriodsToDate([Return Date Dimensions].TimeQuarters, [Return Date Dimensions].CurrentMember),[Measures].currentMember)"
+      },
+      {
+        "group_name": "Return Date Dimensions",
+        "member_name": "Year to Date",
+        "unique_name": "calc.return_date_dimensions.year_to_date",
+        "mdx": "Aggregate(PeriodsToDate([Return Date Dimensions].TimeYears, [Return Date Dimensions].CurrentMember),[Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Current",
+        "unique_name": "calc.ship_date_dimensions.current",
+        "mdx": "([Ship Date Dimensions].CurrentMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Current vs Last Year",
+        "unique_name": "calc.ship_date_dimensions.current_vs_last_year",
+        "mdx": "(([Ship Date Dimensions].CurrentMember, [Measures].currentMember) - (ParallelPeriod([Ship Date Dimensions].TimeYears, 1, [Ship Date Dimensions].CurrentMember), [Measures].currentMember ))"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Current vs Last Year Pct",
+        "unique_name": "calc.ship_date_dimensions.current_vs_last_year_pct",
+        "mdx": "(([Ship Date Dimensions].CurrentMember, [Measures].currentMember) - (ParallelPeriod([Ship Date Dimensions].TimeYears, 1, [Ship Date Dimensions].CurrentMember), [Measures].currentMember )) / (ParallelPeriod([Ship Date Dimensions].TimeYears, 1, [Ship Date Dimensions].CurrentMember), [Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Current vs Next",
+        "unique_name": "calc.ship_date_dimensions.current_vs_next",
+        "mdx": "([Ship Date Dimensions].CurrentMember, [Measures].currentMember) - ([Ship Date Dimensions].CurrentMember.nextMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Current vs Next Pct",
+        "unique_name": "calc.ship_date_dimensions.current_vs_next_pct",
+        "mdx": "(([Ship Date Dimensions].CurrentMember, [Measures].currentMember) - ([Ship Date Dimensions].CurrentMember.nextMember, [Measures].currentMember)) / ([Ship Date Dimensions].CurrentMember.nextMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Current vs Previous",
+        "unique_name": "calc.ship_date_dimensions.current_vs_previous",
+        "mdx": "([Ship Date Dimensions].CurrentMember, [Measures].currentMember) - ([Ship Date Dimensions].CurrentMember.prevMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Current vs Previous Pct",
+        "unique_name": "calc.ship_date_dimensions.current_vs_previous_pct",
+        "mdx": "(([Ship Date Dimensions].CurrentMember, [Measures].currentMember) - ([Ship Date Dimensions].CurrentMember.prevMember, [Measures].currentMember)) / ([Ship Date Dimensions].CurrentMember.prevMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Last Year",
+        "unique_name": "calc.ship_date_dimensions.last_year",
+        "mdx": "(ParallelPeriod([Ship Date Dimensions].TimeYears, 1, [Ship Date Dimensions].CurrentMember), [Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Month Moving Average 3 Month",
+        "unique_name": "calc.ship_date_dimensions.month_moving_average_3_month",
+        "mdx": "Avg(ParallelPeriod([Ship Date Dimensions].TimeMonths, 2, [Ship Date Dimensions].CurrentMember):[Ship Date Dimensions].CurrentMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Month to Date",
+        "unique_name": "calc.ship_date_dimensions.month_to_date",
+        "mdx": "Aggregate(PeriodsToDate([Ship Date Dimensions].TimeMonths, [Ship Date Dimensions].CurrentMember),[Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Moving Average 30 Period",
+        "unique_name": "calc.ship_date_dimensions.moving_average_30_period",
+        "mdx": "Avg([Ship Date Dimensions].CurrentMember.Lag(29):[Ship Date Dimensions].CurrentMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Moving Average 5 Period",
+        "unique_name": "calc.ship_date_dimensions.moving_average_5_period",
+        "mdx": "Avg([Ship Date Dimensions].CurrentMember.Lag(4):[Ship Date Dimensions].CurrentMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Next",
+        "unique_name": "calc.ship_date_dimensions.next",
+        "mdx": "([Ship Date Dimensions].CurrentMember.nextMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Pct of Parent",
+        "unique_name": "calc.ship_date_dimensions.pct_of_parent",
+        "mdx": "([Ship Date Dimensions].CurrentMember, [Measures].currentMember) / ([Ship Date Dimensions].CurrentMember.parent, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Pct of Total",
+        "unique_name": "calc.ship_date_dimensions.pct_of_total",
+        "mdx": "([Ship Date Dimensions].CurrentMember, [Measures].currentMember) / ([Ship Date Dimensions].[All], [Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Previous",
+        "unique_name": "calc.ship_date_dimensions.previous",
+        "mdx": "([Ship Date Dimensions].CurrentMember.prevMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Quarter to Date",
+        "unique_name": "calc.ship_date_dimensions.quarter_to_date",
+        "mdx": "Aggregate(PeriodsToDate([Ship Date Dimensions].TimeQuarters, [Ship Date Dimensions].CurrentMember),[Measures].currentMember)"
+      },
+      {
+        "group_name": "Ship Date Dimensions",
+        "member_name": "Year to Date",
+        "unique_name": "calc.ship_date_dimensions.year_to_date",
+        "mdx": "Aggregate(PeriodsToDate([Ship Date Dimensions].TimeYears, [Ship Date Dimensions].CurrentMember),[Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Current",
+        "unique_name": "calc.sold_date_dimensions.current",
+        "mdx": "([Sold Date Dimensions].CurrentMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Current vs Last Year",
+        "unique_name": "calc.sold_date_dimensions.current_vs_last_year",
+        "mdx": "(([Sold Date Dimensions].CurrentMember, [Measures].currentMember) - (ParallelPeriod([Sold Date Dimensions].TimeYears, 1, [Sold Date Dimensions].CurrentMember), [Measures].currentMember ))"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Current vs Last Year Pct",
+        "unique_name": "calc.sold_date_dimensions.current_vs_last_year_pct",
+        "mdx": "(([Sold Date Dimensions].CurrentMember, [Measures].currentMember) - (ParallelPeriod([Sold Date Dimensions].TimeYears, 1, [Sold Date Dimensions].CurrentMember), [Measures].currentMember )) / (ParallelPeriod([Sold Date Dimensions].TimeYears, 1, [Sold Date Dimensions].CurrentMember), [Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Current vs Next",
+        "unique_name": "calc.sold_date_dimensions.current_vs_next",
+        "mdx": "([Sold Date Dimensions].CurrentMember, [Measures].currentMember) - ([Sold Date Dimensions].CurrentMember.nextMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Current vs Next Pct",
+        "unique_name": "calc.sold_date_dimensions.current_vs_next_pct",
+        "mdx": "(([Sold Date Dimensions].CurrentMember, [Measures].currentMember) - ([Sold Date Dimensions].CurrentMember.nextMember, [Measures].currentMember)) / ([Sold Date Dimensions].CurrentMember.nextMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Current vs Previous",
+        "unique_name": "calc.sold_date_dimensions.current_vs_previous",
+        "mdx": "([Sold Date Dimensions].CurrentMember, [Measures].currentMember) - ([Sold Date Dimensions].CurrentMember.prevMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Current vs Previous Pct",
+        "unique_name": "calc.sold_date_dimensions.current_vs_previous_pct",
+        "mdx": "(([Sold Date Dimensions].CurrentMember, [Measures].currentMember) - ([Sold Date Dimensions].CurrentMember.prevMember, [Measures].currentMember)) / ([Sold Date Dimensions].CurrentMember.prevMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Last Year",
+        "unique_name": "calc.sold_date_dimensions.last_year",
+        "mdx": "(ParallelPeriod([Sold Date Dimensions].TimeYears, 1, [Sold Date Dimensions].CurrentMember), [Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Month Moving Average 3 Month",
+        "unique_name": "calc.sold_date_dimensions.month_moving_average_3_month",
+        "mdx": "Avg(ParallelPeriod([Sold Date Dimensions].TimeMonths, 2, [Sold Date Dimensions].CurrentMember):[Sold Date Dimensions].CurrentMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Month to Date",
+        "unique_name": "calc.sold_date_dimensions.month_to_date",
+        "mdx": "Aggregate(PeriodsToDate([Sold Date Dimensions].TimeMonths, [Sold Date Dimensions].CurrentMember),[Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Moving Average 30 Period",
+        "unique_name": "calc.sold_date_dimensions.moving_average_30_period",
+        "mdx": "Avg([Sold Date Dimensions].CurrentMember.Lag(29):[Sold Date Dimensions].CurrentMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Moving Average 5 Period",
+        "unique_name": "calc.sold_date_dimensions.moving_average_5_period",
+        "mdx": "Avg([Sold Date Dimensions].CurrentMember.Lag(4):[Sold Date Dimensions].CurrentMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Next",
+        "unique_name": "calc.sold_date_dimensions.next",
+        "mdx": "([Sold Date Dimensions].CurrentMember.nextMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Pct of Parent",
+        "unique_name": "calc.sold_date_dimensions.pct_of_parent",
+        "mdx": "([Sold Date Dimensions].CurrentMember, [Measures].currentMember) / ([Sold Date Dimensions].CurrentMember.parent, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Pct of Total",
+        "unique_name": "calc.sold_date_dimensions.pct_of_total",
+        "mdx": "([Sold Date Dimensions].CurrentMember, [Measures].currentMember) / ([Sold Date Dimensions].[All], [Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Previous",
+        "unique_name": "calc.sold_date_dimensions.previous",
+        "mdx": "([Sold Date Dimensions].CurrentMember.prevMember, [Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Quarter to Date",
+        "unique_name": "calc.sold_date_dimensions.quarter_to_date",
+        "mdx": "Aggregate(PeriodsToDate([Sold Date Dimensions].TimeQuarters, [Sold Date Dimensions].CurrentMember),[Measures].currentMember)"
+      },
+      {
+        "group_name": "Sold Date Dimensions",
+        "member_name": "Year to Date",
+        "unique_name": "calc.sold_date_dimensions.year_to_date",
+        "mdx": "Aggregate(PeriodsToDate([Sold Date Dimensions].TimeYears, [Sold Date Dimensions].CurrentMember),[Measures].currentMember)"
+      }
+    ]
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://raw.githubusercontent.com/j0yen/autobuilder/main/schemas/intent-card.schema.json",
+  "schema_version": "intent-card.v1",
+  "slug": "dh-vs-json-bench",
+  "binary_name": "dh-bench",
+  "build_target": "cli",
+  "root_motivation": "Turn 'handles avoid the LLM-as-calculator problem' into a measurable number by comparing value-error rates between arm A (model computes from raw rows) and arm B (server computes via dataset_* tools).",
+  "five_whys": [
+    "mqo-vs-sql-bench measures query construction but not answer-value correctness — the calculator failure mode is invisible without this benchmark.",
+    "Value-error rate (arithmetic/transcription/wrong-subset) is the precise metric: arm B should approach zero because the server computed every reported value.",
+    "Two-arm head-to-head design produces a signed delta, making the improvement claim falsifiable.",
+    "Configurable shell-out grader reuses the mqo-vs-sql-bench grading convention and allows real graders without binary changes.",
+    "Fixture + stub-grader path ensures cargo test passes in CI with no live cluster or API key."
+  ],
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "text": "Run both arms over a tasks file and produce a per-task result table with each arm's reported answer and error classification."
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "text": "Aggregate reports value-error rate (overall and by class), retries, latency, and token deltas between arms."
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "text": "Equivalence/correctness judged by the configurable shell-out grader, not bespoke compare; the grader command is a config field."
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "text": "The report names the winning arm per metric and writes both JSON and markdown."
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "text": "Runs green end-to-end on a bundled fixture (recorded arm outputs + stub grader); no live cluster, model key, or external grader install required."
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "text": "cargo test --release passes; cargo clippy --release -- -D warnings clean."
+    }
+  ],
+  "hard_constraints": [
+    "#![forbid(unsafe_code)]",
+    "Only deps: serde_json, clap, thiserror; grader/dh-mcp-server invoked as external commands",
+    "No live cluster or model API key required for cargo test"
+  ],
+  "keystone_deps": [
+    "dh-mcp-server (https://github.com/joeyen-atscale/dh-mcp-server) — invoked as external command, not a Cargo dep"
+  ],
+  "publish_repo": "https://github.com/joeyen-atscale/dh-vs-json-bench",
+  "prd_path": "/Users/jsy/Documents/PRDs/ARCHIVE/PRD-dh-vs-json-bench.md",
+  "created_at": "2026-06-08T00:00:00Z"
+}

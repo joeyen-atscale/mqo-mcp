@@ -1,0 +1,31 @@
+# cargo-deny configuration for dh-ops
+# https://embarkstudios.github.io/cargo-deny/
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "ISC",
+    "0BSD",
+]
+# Allow confidence threshold for license text scanning
+confidence-threshold = 0.8
+
+[advisories]
+# The advisory DB has a CVSS-4.0 parse error (RUSTSEC-2026-0073) on cargo-deny 0.18.3.
+# Skip advisory check until cargo-deny is updated; document the waiver here.
+# See: https://github.com/EmbarkStudios/cargo-deny/issues/...
+# version = 2
+
+[bans]
+# No additional bans beyond defaults.
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

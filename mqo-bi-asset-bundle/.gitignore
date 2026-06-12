@@ -1,0 +1,9 @@
+/target/
+!/target/
+/target/*
+!/target/autobuilder/
+/target/autobuilder/*
+!/target/autobuilder/receipts/
+!/target/autobuilder/postmortem.md
+!/target/autobuilder/rollback.md
+!/target/autobuilder/audit-waivers.json

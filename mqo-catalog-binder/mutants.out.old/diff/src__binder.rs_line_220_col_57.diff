@@ -1,0 +1,21 @@
+--- src/binder.rs
++++ replace == with != in bind
+@@ -212,17 +212,17 @@
+                 .describe_model
+                 .as_ref()
+                 .map_or(&[][..], |dm| dm.calc_groups.as_slice());
+ 
+             let matches: Vec<_> = calc_entries
+                 .iter()
+                 .filter(|e| {
+                     e.group_name.to_lowercase() == group_key
+-                        && e.member_name.to_lowercase() == member_key
++                        && e.member_name.to_lowercase() != /* ~ changed by cargo-mutants ~ */ member_key
+                 })
+                 .collect();
+ 
+             match matches.len() {
+                 1 => {
+                     let e = matches[0];
+                     bound_calc_group_members.push(BoundCalcGroupMember {
+                         calc_group: calc_group.clone(),

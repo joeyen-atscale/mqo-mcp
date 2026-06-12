@@ -1,0 +1,37 @@
+{
+  "domain": "tpcds_test",
+  "tasks": [
+    {
+      "id": "fm1-001",
+      "failure_mode": "path_incompatible",
+      "canonical": { "approach": "reject the query", "measures": [], "dimensions": [] },
+      "rejected": []
+    },
+    {
+      "id": "fm1-002",
+      "failure_mode": "path_incompatible",
+      "canonical": { "approach": "reject the query", "measures": [], "dimensions": [] },
+      "rejected": []
+    },
+    {
+      "id": "fm2-001",
+      "failure_mode": "wrong_date_role",
+      "canonical": {
+        "approach": "use sold date dim",
+        "measures": ["Store Sales"],
+        "dimensions": ["Sold Date Year"]
+      },
+      "rejected": ["Ship Date Year"]
+    },
+    {
+      "id": "fm2-002",
+      "failure_mode": "wrong_date_role",
+      "canonical": {
+        "approach": "use sold date dim",
+        "measures": ["Web Sales"],
+        "dimensions": ["Sold Date Quarter"]
+      },
+      "rejected": ["Return Date Quarter"]
+    }
+  ]
+}

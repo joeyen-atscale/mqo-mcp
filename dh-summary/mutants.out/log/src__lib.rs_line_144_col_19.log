@@ -1,0 +1,114 @@
+
+*** src/lib.rs:144:19: replace > with == in build_sample
+
+*** mutation diff:
+--- src/lib.rs
++++ replace > with == in build_sample
+@@ -136,17 +136,17 @@
+     let head_count = (sample_cap + 1) / 2; // ceiling half
+     let tail_count = sample_cap / 2;
+ 
+     // Which row indices to include (deduped, in order)
+     let mut indices: Vec<usize> = Vec::with_capacity(sample_cap);
+     for i in 0..head_count.min(n) {
+         indices.push(i);
+     }
+-    if tail_count > 0 {
++    if tail_count == /* ~ changed by cargo-mutants ~ */ 0 {
+         let tail_start = n.saturating_sub(tail_count).max(head_count.min(n));
+         for i in tail_start..n {
+             indices.push(i);
+         }
+     }
+ 
+     indices.iter().map(|&row_idx| row_to_map(dataset, row_idx)).collect()
+ }
+
+
+*** /Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo test --no-run --verbose --package=dh-summary@0.1.0
+       Fresh unicode-ident v1.0.24
+       Fresh itoa v1.0.18
+       Fresh proc-macro2 v1.0.106
+       Fresh memchr v2.8.1
+       Fresh dyn-clone v1.0.20
+       Fresh quote v1.0.45
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh libc v0.2.186
+       Fresh cfg-if v1.0.4
+       Fresh syn v2.0.117
+       Fresh serde_json v1.0.150
+       Fresh getrandom v0.4.2
+       Fresh serde_derive v1.0.228
+       Fresh serde_derive_internals v0.29.1
+       Fresh uuid v1.23.2
+       Fresh schemars_derive v0.8.22
+       Fresh serde v1.0.228
+       Fresh schemars v0.8.22
+       Fresh dh-spec v0.1.0 (/Users/jsy/Documents/projects/dh-spec)
+       Fresh dh-store v0.1.0 (/Users/jsy/Documents/projects/dh-store)
+       Dirty dh-summary v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp): the file `src/lib.rs` has changed (1780953890.612577179s, 603637158ns after last build at 1780953890.008940021s)
+   Compiling dh-summary v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp)
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name dh_summary --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=343947f4240e2b9c -C extra-filename=-5243533f63ef4209 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rlib --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib`
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name dh_summary --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=78d698b9a149721f -C extra-filename=-bd59e07e1bc4c303 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rmeta --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rmeta --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rmeta`
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.28s
+  Executable `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/dh_summary-5243533f63ef4209`
+
+*** result: Success
+
+*** /Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo test --verbose --package=dh-summary@0.1.0
+       Fresh unicode-ident v1.0.24
+       Fresh itoa v1.0.18
+       Fresh memchr v2.8.1
+       Fresh proc-macro2 v1.0.106
+       Fresh cfg-if v1.0.4
+       Fresh dyn-clone v1.0.20
+       Fresh quote v1.0.45
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh libc v0.2.186
+       Fresh syn v2.0.117
+       Fresh serde_json v1.0.150
+       Fresh getrandom v0.4.2
+       Fresh serde_derive_internals v0.29.1
+       Fresh serde_derive v1.0.228
+       Fresh uuid v1.23.2
+       Fresh serde v1.0.228
+       Fresh schemars_derive v0.8.22
+       Fresh schemars v0.8.22
+       Fresh dh-spec v0.1.0 (/Users/jsy/Documents/projects/dh-spec)
+       Fresh dh-store v0.1.0 (/Users/jsy/Documents/projects/dh-store)
+       Fresh dh-summary v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/dh_summary-5243533f63ef4209`
+
+running 17 tests
+test tests::max_bytes_one_over_triggers_truncation ... ok
+test tests::max_bytes_exact_fit_no_truncation ... ok
+test tests::ac7_round_trip_serialization ... ok
+test tests::ac2_numeric_stats_golden ... ok
+test tests::ac4_capabilities_pivot_rule ... ok
+test tests::ac3_categorical_topk_and_date_span ... ok
+test tests::ac5_notes_nulls_and_dominant_group ... ok
+test tests::count_nulls_per_variant ... ok
+test tests::notes_date_span_format ... ok
+test tests::stats_bool_all_false ... ok
+test tests::stats_bool_all_null ... ok
+test tests::stats_bool_counts_and_top_k ... ok
+test tests::stats_int_all_null ... ok
+test tests::stats_float_golden ... ok
+test tests::notes_dominance_threshold_boundary ... ok
+test tests::ac1_large_dataset_sample_and_size_bounds ... ok
+test tests::ac6_max_bytes_truncates_sample_not_stats ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests dh_summary
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustdoc --edition=2021 --crate-type lib --color auto --crate-name dh_summary --test src/lib.rs --test-run-directory /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rlib --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rlib --extern dh_summary=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libdh_summary-bd59e07e1bc4c303.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-ANPrsK.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib -C embed-bitcode=no --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' --error-format human`
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+*** result: Success

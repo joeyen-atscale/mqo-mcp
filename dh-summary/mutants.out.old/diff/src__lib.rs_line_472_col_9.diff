@@ -1,0 +1,21 @@
+--- src/lib.rs
++++ delete match arm ColumnData::Bool(v) in count_nulls
+@@ -464,17 +464,17 @@
+ 
+     notes
+ }
+ 
+ fn count_nulls(data: &ColumnData) -> u64 {
+     match data {
+         ColumnData::Int(v) => v.iter().filter(|o| o.is_none()).count() as u64,
+         ColumnData::Float(v) => v.iter().filter(|o| o.is_none()).count() as u64,
+-        ColumnData::Bool(v) => v.iter().filter(|o| o.is_none()).count() as u64,
++         /* ~ changed by cargo-mutants ~ */
+         ColumnData::Decimal(v)
+         | ColumnData::Str(v)
+         | ColumnData::Date(v)
+         | ColumnData::Time(v) => v.iter().filter(|o| o.is_none()).count() as u64,
+         _ => 0,
+     }
+ }
+ 

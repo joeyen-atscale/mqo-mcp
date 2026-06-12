@@ -1,0 +1,23 @@
+{
+  "models": [
+    {
+      "unique_name": "tpcds",
+      "name": "TPC-DS",
+      "measures": [
+        {
+          "unique_name": "Total Store Sales",
+          "name": "Total Store Sales",
+          "expression": "[ss_sales_price]",
+          "aggregation_type": "SUM"
+        },
+        {
+          "unique_name": "Exclusive Measure A",
+          "name": "Exclusive Measure A",
+          "expression": "[ss_exclusive]",
+          "aggregation_type": "SUM"
+        }
+      ],
+      "dimensions": []
+    }
+  ]
+}

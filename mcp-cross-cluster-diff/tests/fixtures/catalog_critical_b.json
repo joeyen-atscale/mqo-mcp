@@ -1,0 +1,19 @@
+{
+  "models": [
+    {
+      "unique_name": "tpcds",
+      "name": "TPC-DS",
+      "measures": [
+        {
+          "unique_name": "Total Store Sales",
+          "name": "Total Store Sales",
+          "expression": "[ss_net_paid]",
+          "aggregation_type": "AVG",
+          "folder": "Sales",
+          "format_string": "#,##0.00"
+        }
+      ],
+      "dimensions": []
+    }
+  ]
+}

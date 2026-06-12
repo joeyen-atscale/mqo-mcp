@@ -1,0 +1,20 @@
+{
+  "model": "tpcds-demo",
+  "turns": 5,
+  "chars_per_token": 4,
+  "total_tokens": 12450,
+  "classes": {
+    "system_prompt": 320,
+    "catalog_describe_model": 8200,
+    "tool_call": 1500,
+    "tool_result_rows": 2100,
+    "dialogue": 330
+  },
+  "per_turn": [
+    {"turn": 1, "op": "system", "tokens": 320},
+    {"turn": 2, "op": "describe_model", "tokens": 8200},
+    {"turn": 3, "op": "query_multidimensional", "tokens": 3600},
+    {"turn": 4, "op": "query_multidimensional", "tokens": 0},
+    {"turn": 5, "op": "dialogue", "tokens": 330}
+  ]
+}

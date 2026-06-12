@@ -1,0 +1,4 @@
+# extended-gates.toml — configuration for autobuilder extended-gate producers.
+# This file tells ac-traceability where to find the PRD.
+
+prd_path = "PRD-mqo-mdx-compiler.md"

@@ -1,0 +1,21 @@
+[package]
+name = "mqo-cross-backend-parity"
+version = "0.1.0"
+edition = "2021"
+description = "Parity oracle: proves one MQO returns the same answer on DAX, MDX, and SQL backends"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[[bin]]
+name = "mqo-parity"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+clap = { version = "4", features = ["derive"] }
+pbicorr-dax-result-comparator = { git = "https://github.com/joeyen-atscale/pbicorr-dax-result-comparator", branch = "autobuilder/pbicorr-dax-result-comparator" }
+
+[dev-dependencies]
+# no extra needed

@@ -1,0 +1,21 @@
+--- src/binder.rs
++++ replace > with >= in resolve_measure
+@@ -74,17 +74,17 @@
+     let by_unique: Vec<&ColumnEntry> = columns
+         .iter()
+         .filter(|c| c.kind == "measure" && c.unique_name.to_lowercase() == key)
+         .collect();
+ 
+     if by_unique.len() == 1 {
+         return Ok(by_unique[0]);
+     }
+-    if by_unique.len() > 1 {
++    if by_unique.len() >= /* ~ changed by cargo-mutants ~ */ 1 {
+         return Err(by_unique);
+     }
+ 
+     // Second: try label match (case-insensitive)
+     let by_label: Vec<&ColumnEntry> = columns
+         .iter()
+         .filter(|c| c.kind == "measure" && c.label.to_lowercase() == key)
+         .collect();

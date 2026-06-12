@@ -1,0 +1,41 @@
+{
+  "schema": "autobuilder.test_map.v1",
+  "ac_to_tests": {
+    "AC1": [
+      "integration_tests::ac1_valid_mqo_binds_and_exits_0",
+      "integration_tests::ac1_case_insensitive_resolution",
+      "integration_tests::unique_name_passthrough",
+      "integration_tests::dimension_binding_by_hierarchy_and_level",
+      "binder::binder_unit_tests::resolve_measure_exact_unique_name",
+      "binder::binder_unit_tests::resolve_measure_by_label_case_insensitive",
+      "binder::binder_unit_tests::resolve_level_case_insensitive"
+    ],
+    "AC2": [
+      "integration_tests::ac2_fabricated_measure_not_found",
+      "integration_tests::ac2_not_found_no_guess",
+      "integration_tests::multiple_not_found_all_reported",
+      "integration_tests::unknown_dimension_not_found",
+      "binder::binder_unit_tests::resolve_measure_not_found_returns_empty_err"
+    ],
+    "AC3": [
+      "integration_tests::ac3_ambiguous_label_returns_candidates",
+      "binder::binder_unit_tests::resolve_measure_ambiguous_returns_candidates"
+    ],
+    "AC4": [
+      "integration_tests::ac4_calc_group_member_resolved_with_mdx",
+      "integration_tests::ac4_missing_calc_group_member_not_found",
+      "binder::binder_unit_tests::bind_calc_group_member_missing_describe_model",
+      "binder::binder_unit_tests::bind_calc_group_member_found"
+    ],
+    "AC5": [
+      "integration_tests::ac5_semi_additive_flagged_with_trigger_hierarchies",
+      "integration_tests::ac5_non_semi_additive_has_empty_triggers",
+      "integration_tests::required_dimension_carried_through",
+      "binder::binder_unit_tests::bind_semi_additive_flags"
+    ],
+    "AC6": [
+      "cargo test --release",
+      "cargo clippy --workspace -- -D warnings"
+    ]
+  }
+}

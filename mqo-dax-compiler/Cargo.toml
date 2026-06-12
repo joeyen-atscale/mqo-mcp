@@ -1,0 +1,30 @@
+[package]
+name = "mqo-dax-compiler"
+version = "0.6.0"
+edition = "2021"
+rust-version = "1.70.0"
+description = "Compile a BoundMqo to a DAX EVALUATE query string"
+license = "MIT OR Apache-2.0"
+keywords = ["dax", "mqo", "semantic-layer", "olap", "compiler"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "mqo-dax"
+path = "src/main.rs"
+
+[lib]
+name = "mqo_dax_compiler"
+path = "src/lib.rs"
+
+[dependencies]
+mqo-spec = { path = "../mqo-spec" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+thiserror = "1"
+
+[dev-dependencies]
+# none — test deps satisfied by [dependencies]
+
+[features]
+default = []

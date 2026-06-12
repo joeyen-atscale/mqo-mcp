@@ -1,0 +1,21 @@
+--- src/binder.rs
++++ delete match arm 0 in resolve_measure
+@@ -86,17 +86,17 @@
+     // Second: try label match (case-insensitive)
+     let by_label: Vec<&ColumnEntry> = columns
+         .iter()
+         .filter(|c| c.kind == "measure" && c.label.to_lowercase() == key)
+         .collect();
+ 
+     match by_label.len() {
+         1 => Ok(by_label[0]),
+-        0 => Err(vec![]),
++         /* ~ changed by cargo-mutants ~ */
+         _ => Err(by_label),
+     }
+ }
+ 
+ /// Resolve a dimension level selection against the column list.
+ /// Matches by hierarchy (exact, case-insensitive) + level name (case-insensitive).
+ fn resolve_level<'a>(
+     sel: &LevelSelection,

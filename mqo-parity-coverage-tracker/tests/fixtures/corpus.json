@@ -1,0 +1,9 @@
+{
+  "version": "parity-corpus.v1",
+  "catalog": "tpcds",
+  "cases": [
+    {"case_id": "tss_total", "measures": ["Total Store Sales"], "grain": "total", "has_grounding": true},
+    {"case_id": "margin_total", "measures": ["Margin %"], "grain": "total", "has_grounding": true},
+    {"case_id": "returns_total", "measures": ["Returns Amount"], "grain": "total", "has_grounding": false}
+  ]
+}

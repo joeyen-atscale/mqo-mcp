@@ -1,0 +1,41 @@
+--- src/binder.rs
++++ replace resolve_level -> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>> with Ok(Box::leak(Box::new(Default::default())))
+@@ -97,37 +97,17 @@
+ }
+ 
+ /// Resolve a dimension level selection against the column list.
+ /// Matches by hierarchy (exact, case-insensitive) + level name (case-insensitive).
+ fn resolve_level<'a>(
+     sel: &LevelSelection,
+     columns: &'a [ColumnEntry],
+ ) -> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>> {
+-    let hier_key = sel.hierarchy.to_lowercase();
+-    let level_key = sel.level.to_lowercase();
+-
+-    let candidates: Vec<&ColumnEntry> = columns
+-        .iter()
+-        .filter(|c| {
+-            c.kind == "level"
+-                && c.hierarchy
+-                    .as_deref()
+-                    .is_some_and(|h| h.to_lowercase() == hier_key)
+-                && c.level
+-                    .as_deref()
+-                    .is_some_and(|l| l.to_lowercase() == level_key)
+-        })
+-        .collect();
+-
+-    match candidates.len() {
+-        1 => Ok(candidates[0]),
+-        0 => Err(vec![]),
+-        _ => Err(candidates),
+-    }
++    Ok(Box::leak(Box::new(Default::default()))) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ // ── Main bind function ────────────────────────────────────────────────────────
+ 
+ /// Bind an MQO against a catalog snapshot.
+ ///
+ /// Resolution precedence within each category:
+ /// 1. Exact `unique_name` match (case-insensitive)

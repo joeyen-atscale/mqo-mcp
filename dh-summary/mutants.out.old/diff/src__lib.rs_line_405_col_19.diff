@@ -1,0 +1,21 @@
+--- src/lib.rs
++++ replace == with != in generate_notes
+@@ -397,17 +397,17 @@
+     v.len() as u64
+ }
+ 
+ /// Generate deterministic notes about nulls, dominant groups, date spans, etc.
+ #[allow(clippy::cast_precision_loss)]
+ fn generate_notes(dataset: &Dataset, stats: &HashMap<String, ColStats>) -> Vec<String> {
+     let mut notes = Vec::new();
+     let total_rows = dataset.row_count();
+-    if total_rows == 0 {
++    if total_rows != /* ~ changed by cargo-mutants ~ */ 0 {
+         notes.push("Dataset is empty.".to_string());
+         return notes;
+     }
+ 
+     for (col, data) in dataset.columns.iter().zip(dataset.data.iter()) {
+         // Null note
+         let null_count = count_nulls(data);
+         if null_count > 0 {

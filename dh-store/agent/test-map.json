@@ -1,0 +1,75 @@
+{
+  "schema": "autobuilder.test_map.v1",
+  "tests": [
+    {
+      "ac_id": "AC1",
+      "test_name": "store::tests::ac1_put_get_and_opaque_handle",
+      "file": "src/store.rs",
+      "level": "MUST",
+      "description": "put returns handle; get retrieves same row_count; handle id contains no column name or row value strings"
+    },
+    {
+      "ac_id": "AC2",
+      "test_name": "store::tests::ac2_derive_immutability_and_lineage",
+      "file": "src/store.rs",
+      "level": "MUST",
+      "description": "derive mints new handle != parent; parent still retrievable with original row count; lineage records parent id"
+    },
+    {
+      "ac_id": "AC3",
+      "test_name": "store::tests::ac3_expired_returns_expired_not_not_found",
+      "file": "src/store.rs",
+      "level": "MUST",
+      "description": "TTL=0 dataset after evict_expired returns Expired; uninserted handle returns NotFound"
+    },
+    {
+      "ac_id": "AC4",
+      "test_name": "store::tests::ac4_lru_eviction_under_cap",
+      "file": "src/store.rs",
+      "level": "MUST",
+      "description": "5 datasets inserted into 50-byte cap; stats().total_bytes <= 50; last-inserted handle still retrievable"
+    },
+    {
+      "ac_id": "AC5",
+      "test_name": "store::tests::ac5_no_mutation_api_only_derive",
+      "file": "src/store.rs",
+      "level": "MUST",
+      "description": "Compile + runtime: original dataset unchanged after derive; absence of mutate/update proven by API surface"
+    },
+    {
+      "ac_id": "AC6",
+      "test_name": "store::tests::ac6_stats_accurate",
+      "file": "src/store.rs",
+      "level": "MUST",
+      "description": "4 live before sweep; 3 after evict_expired; total_bytes decreases after eviction"
+    },
+    {
+      "ac_id": "AC7",
+      "test_name": "cargo_build_gate",
+      "file": "Cargo.toml",
+      "level": "MUST",
+      "description": "cargo test --release exit 0 and cargo clippy --release -- -D warnings exit 0"
+    },
+    {
+      "ac_id": null,
+      "test_name": "store::tests::dataset_column_count_mismatch_is_rejected",
+      "file": "src/store.rs",
+      "level": "extra",
+      "description": "Dataset::new rejects column/data length mismatch"
+    },
+    {
+      "ac_id": null,
+      "test_name": "store::tests::dataset_row_length_mismatch_is_rejected",
+      "file": "src/store.rs",
+      "level": "extra",
+      "description": "Dataset::new rejects rows of different lengths across columns"
+    },
+    {
+      "ac_id": null,
+      "test_name": "store::tests::derive_on_expired_parent_returns_error",
+      "file": "src/store.rs",
+      "level": "extra",
+      "description": "derive on an expired parent returns LookupError::Expired"
+    }
+  ]
+}

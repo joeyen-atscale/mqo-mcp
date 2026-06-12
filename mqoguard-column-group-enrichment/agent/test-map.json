@@ -1,0 +1,80 @@
+{
+  "schema": "autobuilder.test_map.v1",
+  "intent_slug": "mqoguard-column-group-enrichment",
+  "mappings": [
+    {
+      "ac_id": "AC1",
+      "test_file": "tests/acceptance_AC1.rs",
+      "test_functions": [
+        "ac1_measure_bound_to_single_fact",
+        "ac1_inventory_measure_bound_correctly",
+        "ac1_catalog_sales_measure_bound_correctly",
+        "ac1_web_measure_bound_correctly"
+      ],
+      "proof_lane": "acceptance"
+    },
+    {
+      "ac_id": "AC2",
+      "test_file": "tests/acceptance_AC2.rs",
+      "test_functions": [
+        "ac2_conformed_dimension_gets_all_facts",
+        "ac2_tpcds_product_dimension_is_conformed",
+        "ac2_customer_dimension_conformed_across_sales_and_returns",
+        "ac2_three_fact_conformed_dimension"
+      ],
+      "proof_lane": "acceptance"
+    },
+    {
+      "ac_id": "AC3",
+      "test_file": "tests/acceptance_AC3.rs",
+      "test_functions": [
+        "ac3_all_fields_preserved_for_measure",
+        "ac3_level_fields_preserved",
+        "ac3_column_order_preserved"
+      ],
+      "proof_lane": "acceptance"
+    },
+    {
+      "ac_id": "AC4",
+      "test_file": "tests/acceptance_AC4.rs",
+      "test_functions": [
+        "ac4_unbound_measure_not_dropped",
+        "ac4_unbound_level_not_dropped",
+        "ac4_mixed_bound_and_unbound",
+        "ac4_coverage_report_totals_match_column_count"
+      ],
+      "proof_lane": "acceptance"
+    },
+    {
+      "ac_id": "AC5",
+      "test_file": "tests/acceptance_AC5.rs",
+      "test_functions": [
+        "ac5_coverage_100_pct_with_tpcds_bindings",
+        "ac5_inventory_measures_have_no_sales_group",
+        "ac5_sales_measures_have_no_inventory_group",
+        "ac5_inventory_dimension_not_on_sales"
+      ],
+      "proof_lane": "acceptance"
+    },
+    {
+      "ac_id": "AC6",
+      "test_file": "tests/acceptance_AC6.rs",
+      "test_functions": [
+        "ac6_malformed_catalog_json_returns_default_not_panic",
+        "ac6_empty_object_catalog_parses_to_empty_columns",
+        "ac6_malformed_bindings_json_returns_error",
+        "ac6_empty_bindings_json_returns_empty_error",
+        "ac6_columns_with_null_kind_do_not_panic",
+        "ac6_level_with_no_hierarchy_does_not_panic",
+        "ac6_array_instead_of_object_for_catalog_returns_error"
+      ],
+      "proof_lane": "acceptance"
+    },
+    {
+      "ac_id": "AC7",
+      "test_file": "scripts/run-metrics.sh",
+      "test_functions": ["clippy_gate", "audit_gate"],
+      "proof_lane": "clippy"
+    }
+  ]
+}

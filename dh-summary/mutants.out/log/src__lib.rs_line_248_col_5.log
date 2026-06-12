@@ -1,0 +1,117 @@
+
+*** src/lib.rs:248:5: replace stats_float -> ColStats with Default::default()
+
+*** mutation diff:
+--- src/lib.rs
++++ replace stats_float -> ColStats with Default::default()
+@@ -240,63 +240,17 @@
+         mean: Some(mean),
+         distinct: Some(distinct + null_count.min(1)),
+         top_k: None,
+     }
+ }
+ 
+ #[allow(clippy::cast_precision_loss)]
+ fn stats_float(data: &ColumnData) -> ColStats {
+-    let (vals, null_count, total) = match data {
+-        ColumnData::Float(v) => {
+-            let non_null: Vec<f64> = v.iter().filter_map(|o| *o).collect();
+-            let nulls = v.iter().filter(|o| o.is_none()).count() as u64;
+-            let tot = v.len() as u64;
+-            (non_null, nulls, tot)
+-        }
+-        ColumnData::Decimal(v) => {
+-            let non_null: Vec<f64> = v
+-                .iter()
+-                .filter_map(|o| o.as_deref())
+-                .filter_map(|s| s.parse::<f64>().ok())
+-                .collect();
+-            let nulls = v.iter().filter(|o| o.is_none()).count() as u64;
+-            let tot = v.len() as u64;
+-            (non_null, nulls, tot)
+-        }
+-        _ => (vec![], 0, 0),
+-    };
+-    let non_null_count = total - null_count;
+-    if vals.is_empty() {
+-        return ColStats {
+-            min: None,
+-            max: None,
+-            sum: None,
+-            mean: None,
+-            distinct: Some(null_count.min(1)),
+-            top_k: None,
+-        };
+-    }
+-    let min = vals.iter().copied().fold(f64::INFINITY, f64::min);
+-    let max = vals.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+-    let sum: f64 = vals.iter().sum();
+-    let mean = sum / non_null_count as f64;
+-    // Approximate distinct count via sort-dedup on bits.
+-    let mut sorted = vals.clone();
+-    sorted.sort_by(f64::total_cmp);
+-    sorted.dedup_by(|a, b| a.to_bits() == b.to_bits());
+-    let distinct = sorted.len() as u64 + null_count.min(1);
+-    ColStats {
+-        min: Some(min),
+-        max: Some(max),
+-        sum: Some(sum),
+-        mean: Some(mean),
+-        distinct: Some(distinct),
+-        top_k: None,
+-    }
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ #[allow(clippy::cast_precision_loss)]
+ fn stats_str(data: &ColumnData, topk: usize) -> ColStats {
+     let (values, null_count) = match data {
+         ColumnData::Str(v) => {
+             let non_null: Vec<&str> = v.iter().filter_map(|o| o.as_deref()).collect();
+             let nulls = v.iter().filter(|o| o.is_none()).count() as u64;
+
+
+*** /Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/cargo test --no-run --verbose --package=dh-summary@0.1.0
+       Fresh unicode-ident v1.0.24
+       Fresh memchr v2.8.1
+       Fresh itoa v1.0.18
+       Fresh proc-macro2 v1.0.106
+       Fresh cfg-if v1.0.4
+       Fresh dyn-clone v1.0.20
+       Fresh quote v1.0.45
+       Fresh serde_core v1.0.228
+       Fresh zmij v1.0.21
+       Fresh libc v0.2.186
+       Fresh syn v2.0.117
+       Fresh serde_json v1.0.150
+       Fresh getrandom v0.4.2
+       Fresh serde_derive v1.0.228
+       Fresh serde_derive_internals v0.29.1
+       Fresh uuid v1.23.2
+       Fresh schemars_derive v0.8.22
+       Fresh serde v1.0.228
+       Fresh schemars v0.8.22
+       Fresh dh-spec v0.1.0 (/Users/jsy/Documents/projects/dh-spec)
+       Fresh dh-store v0.1.0 (/Users/jsy/Documents/projects/dh-store)
+       Dirty dh-summary v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp): the file `src/lib.rs` has changed (1780953897.937260818s, 770204802ns after last build at 1780953897.167056016s)
+   Compiling dh-summary v0.1.0 (/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp)
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name dh_summary --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=343947f4240e2b9c -C extra-filename=-5243533f63ef4209 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rlib --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib`
+     Running `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name dh_summary --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=78d698b9a149721f -C extra-filename=-bd59e07e1bc4c303 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rmeta --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rmeta --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rmeta`
+error[E0277]: the trait bound `ColStats: Default` is not satisfied
+   --> src/lib.rs:248:5
+    |
+248 |     Default::default() /* ~ changed by cargo-mutants ~ */
+    |     ^^^^^^^^^^^^^^^^^^ the trait `Default` is not implemented for `ColStats`
+
+For more information about this error, try `rustc --explain E0277`.
+error: could not compile `dh-summary` (lib) due to 1 previous error
+
+Caused by:
+  process didn't exit successfully: `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name dh_summary --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=78d698b9a149721f -C extra-filename=-bd59e07e1bc4c303 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rmeta --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rmeta --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rmeta` (exit status: 1)
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `dh-summary` (lib test) due to 1 previous error
+
+Caused by:
+  process didn't exit successfully: `/Users/jsy/.rustup/toolchains/1.85.0-aarch64-apple-darwin/bin/rustc --crate-name dh_summary --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no -C debuginfo=2 -C split-debuginfo=unpacked --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values())' -C metadata=343947f4240e2b9c -C extra-filename=-5243533f63ef4209 --out-dir /private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps -C incremental=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/incremental -L dependency=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps --extern dh_spec=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libdh_spec-fa2ae146e2e0d5cb.rlib --extern dh_store=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libdh_store-b5128db5421edc74.rlib --extern serde_json=/private/var/folders/d3/c59bpjrx1778lb2rxcplcltr0000gn/T/cargo-mutants-dh-summary-KieFWF.tmp/target/debug/deps/libserde_json-3fe3499550b3ea1e.rlib` (exit status: 1)
+
+*** result: Failure(101)

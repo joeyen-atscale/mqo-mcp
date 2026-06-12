@@ -1,0 +1,16 @@
+{
+  "model": "sales",
+  "measures": [
+    { "unique_name": "sales.units_sold" }
+  ],
+  "dimensions": [
+    { "hierarchy": "date.calendar", "level": "month" }
+  ],
+  "filters": [],
+  "time_intelligence": [
+    { "op": "prior_period" }
+  ],
+  "order": null,
+  "limit": 12,
+  "non_empty": true
+}

@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "autobuilder/**"]
+  pull_request:
+    branches: [main]
+
+# Minimal permissions — read-only by default; jobs that need write-access declare it explicitly.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: Check + Clippy + Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          submodules: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9  # stable
+        with:
+          toolchain: "1.85.0"
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae  # v2
+
+      - name: cargo check
+        run: cargo check --workspace
+
+      - name: cargo clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: cargo test (release)
+        run: cargo test --workspace --release
+        # Fleet binaries (mqo-bind, mqo-route, mqo-dax, mqo-mdx) are resolved
+        # from PATH or sibling release dirs. In CI, subprocess-dependent tests
+        # are mock-gated (skip with note when fleet absent).
+
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: EmbarkStudios/cargo-deny-action@8f84122a46a358a27cb0625d85ad60ab436a1b87  # v2
+        with:
+          command: check
+          arguments: --disable-fetch

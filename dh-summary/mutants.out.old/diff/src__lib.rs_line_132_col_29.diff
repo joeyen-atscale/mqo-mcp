@@ -1,0 +1,21 @@
+--- src/lib.rs
++++ replace == with != in build_sample
+@@ -124,17 +124,17 @@
+     caps
+ }
+ 
+ // ── Internal helpers ────────────────────────────────────────────────────────
+ 
+ /// Build the head+tail sample, capped at `sample_cap` total rows.
+ fn build_sample(dataset: &Dataset, sample_cap: usize) -> Vec<Row> {
+     let n = dataset.row_count();
+-    if n == 0 || sample_cap == 0 {
++    if n == 0 || sample_cap != /* ~ changed by cargo-mutants ~ */ 0 {
+         return Vec::new();
+     }
+ 
+     let head_count = (sample_cap + 1) / 2; // ceiling half
+     let tail_count = sample_cap / 2;
+ 
+     // Which row indices to include (deduped, in order)
+     let mut indices: Vec<usize> = Vec::with_capacity(sample_cap);

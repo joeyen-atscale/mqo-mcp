@@ -1,0 +1,1 @@
+{"build_id":"b-2026-06-10.1","version":"v0.1.0","cluster":"mcp-aws.atscaleinternal.com","recorded_at":"2026-06-10T10:00:00Z","overall_verdict":"Agree","measures":[{"measure":"Order Quantity","backend_pair":"DAX↔SQL","status":"verified"},{"measure":"Total Returns","backend_pair":"DAX↔SQL","status":"mismatch"}],"deltas":{"newly_broken":[],"newly_verified":[]}}

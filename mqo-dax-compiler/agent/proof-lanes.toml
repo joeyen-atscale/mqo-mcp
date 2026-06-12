@@ -1,0 +1,43 @@
+# proof-lanes.toml — path-to-proof-lane routing for mqo-dax-compiler
+
+[[lane]]
+id = "codegen"
+description = "Core DAX codegen logic"
+path_patterns = ["src/codegen.rs"]
+proofs = ["tests/acceptance.rs:ac1_*", "tests/acceptance.rs:ac2_*", "tests/acceptance.rs:ac4_*"]
+confidence = 0.95
+
+[[lane]]
+id = "input-types"
+description = "BoundMqoInput deserialization types"
+path_patterns = ["src/input.rs"]
+proofs = ["tests/acceptance.rs:json_round_trip_*", "tests/acceptance.rs:ac1_*"]
+confidence = 0.90
+
+[[lane]]
+id = "syntax-check"
+description = "Bundled DAX syntax validator"
+path_patterns = ["src/syntax_check.rs"]
+proofs = ["tests/acceptance.rs:ac5_*", "src/syntax_check.rs::tests::*"]
+confidence = 0.96
+
+[[lane]]
+id = "calc-group"
+description = "Calc-group member filter emission"
+path_patterns = ["src/codegen.rs"]
+proofs = ["tests/acceptance.rs:ac3_*", "tests/acceptance.rs:ac1_golden_calc_group_member_filter"]
+confidence = 0.95
+
+[[lane]]
+id = "binary-cli"
+description = "CLI entry point and argument parsing"
+path_patterns = ["src/main.rs"]
+proofs = ["tests/integration_cli.rs:cli_*"]
+confidence = 0.90
+
+[[lane]]
+id = "lib-interface"
+description = "Public lib re-exports and error types"
+path_patterns = ["src/lib.rs"]
+proofs = ["tests/acceptance.rs:error_*", "tests/acceptance.rs:json_round_trip_*"]
+confidence = 0.92

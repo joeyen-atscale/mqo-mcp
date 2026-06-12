@@ -1,0 +1,117 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "intent_slug": "mqo-backend-router",
+  "prd_source": "/Users/jsy/Documents/PRDs/ARCHIVE/PRD-mqo-backend-router.md",
+  "root_motivation": "Prevent warehouse credit waste by proactively routing a BoundMqo to the cheapest capable backend before execution — DAX for small aggregates, MDX for multidimensional shape, SQL/PGWire-streaming for large extracts — using the MQO's grain-based pre-execution row estimate, which is only computable because the MQO is structured.",
+  "user_persona": "AtScale MQO fleet engineers and the mcp-server runtime, which call `mqo-route --bound <file> --stats <file>` to get a JSON routing decision before dispatching a query to the backend engine.",
+  "unfakeable_metric": {
+    "name": "tests_pass_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --release 2>&1 | grep -E '^test result' | awk '{sum += $4} END {print sum}'",
+    "target": null
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "An aggregated MQO over low-cardinality levels routes to `dax`.",
+      "test": "lib.rs::tests::ac1_low_cardinality_routes_to_dax"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "An MQO flagged drill-through, asymmetric-axes, or cellset-requested routes to `mdx`.",
+      "test": "lib.rs::tests::ac2_drill_through_routes_to_mdx, ac2_asymmetric_axes_routes_to_mdx, ac2_cellset_requested_routes_to_mdx"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "An MQO whose estimated rows exceed the threshold routes to `sql` and emits a non-empty `sql_projection`.",
+      "test": "lib.rs::tests::ac3_high_cardinality_routes_to_sql_with_projection"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "`estimated_rows` is computed as the product of selected level cardinalities, reduced by equality filters; the formula is asserted in a unit test.",
+      "test": "lib.rs::tests::ac4_estimated_rows_is_product_of_level_cardinalities, ac4_member_filter_reduces_cardinality, ac4_unknown_level_defaults_to_cardinality_one, ac4_no_dimensions_is_scalar_aggregate_one_row"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "`--row-threshold` overrides the default (50,000) and changes the routing boundary.",
+      "test": "lib.rs::tests::ac5_row_threshold_override_changes_routing_boundary, ac5_threshold_boundary_exactly_at_threshold_is_dax"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "`cargo test --release` passes; `cargo clippy -- -D warnings` is clean.",
+      "test": "CI: cargo test --release && cargo clippy -- -D warnings exits 0"
+    },
+    {
+      "id": "AC7",
+      "level": "SHOULD",
+      "description": "The binary `mqo-route` can be invoked end-to-end via integration test with real JSON fixture files.",
+      "test": "tests/integration_cli.rs — end_to_end_dax_routing, end_to_end_sql_routing, end_to_end_mdx_routing"
+    }
+  ],
+  "scope": [
+    "Rust CLI binary `mqo-route` that reads --bound <BoundMqo JSON> and --stats <StatBundle JSON>",
+    "StatBundle carrying level_cardinalities (HashMap<String,u64>) and ShapeFlags (asymmetric_axes, drill_through, cellset_requested)",
+    "Row estimation: product of level cardinalities, filtered by Member filters",
+    "Backend routing: MDX-shape-first, then SQL-if-over-threshold, then DAX default",
+    "Flat SQL SELECT projection emitted for sql backend",
+    "JSON routing decision on stdout: { backend, estimated_rows, reason, sql_projection? }",
+    "RouterError::NoMeasures for empty-measures BoundMqo"
+  ],
+  "non_goals": [
+    "No DAX, MDX, or SQL query compilation — projection is intentionally stub-level",
+    "No query execution or network calls",
+    "No caching or memoisation of cardinality estimates",
+    "No dynamic model introspection — stats are always caller-supplied",
+    "No cost-based optimizer; row threshold is the only routing signal beyond shape flags"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "cli",
+    "deny_unsafe": true,
+    "max_deps": 6,
+    "msrv": "1.70.0",
+    "additional": {
+      "allowed_deps": "mqo-spec, serde, serde_json, clap, thiserror",
+      "note": "mqo-catalog-binder listed in Cargo.toml but unused in lib — remove or keep as optional future dep"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why route to different backends at all — why not always use DAX?",
+      "a": "DAX trips the engine's row cap on large extracts, spending warehouse credits and returning zero rows."
+    },
+    {
+      "why": 2,
+      "q": "Why must the routing be pre-execution rather than post-MDX-overflow?",
+      "a": "By the time MDX overflows, the warehouse credits are already consumed. The 2026-02-18 engine blog confirms PGWire streaming makes large tabular pulls heap-safe, so SQL is the correct escape hatch — but only if chosen before the MDX call is made."
+    },
+    {
+      "why": 3,
+      "q": "Why is a pre-execution estimate even possible?",
+      "a": "The MQO is a structured object with a declared grain (selected levels), so the result cardinality is the product of level cardinalities — computable from cached stats before touching the engine."
+    },
+    {
+      "why": 4,
+      "q": "Why does this belong in a separate CLI rather than inside mcp-server?",
+      "a": "Separation lets the routing decision be testable independently, invokable from the orchestrator tier, and replaceable without redeploying the server. The router is also the right seam for future cost-model upgrades (e.g. per-level null rate)."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Does mqo-catalog-binder need to be a runtime dependency?",
+      "resolution": "No — the PRD says 'consumes BoundMqo JSON + catalog stats'; both arrive as JSON files. The binder is the producer, not a linked dep. Remove mqo-catalog-binder from Cargo.toml; the compiler warning confirms it has no lib target."
+    },
+    {
+      "question": "Is a SHOULD-level integration CLI test required for the risk gate?",
+      "resolution": "Yes — SKILL.md §'Binary integration test gap (mqo-spec, 2026-06-08)' adds tests/integration_cli.rs to the scaffold for [[bin]] projects. It catches missed mutants in binary dispatch arms."
+    }
+  ],
+  "created_at": "2026-06-08T00:00:00Z"
+}

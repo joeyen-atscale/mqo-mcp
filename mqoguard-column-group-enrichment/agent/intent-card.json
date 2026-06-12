@@ -1,0 +1,118 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "prd_source": "/Users/jsy/Documents/PRDs/PRD-mqoguard-column-group-enrichment.md",
+  "intent_slug": "mqoguard-column-group-enrichment",
+  "root_motivation": "Downstream MQ-query guardrail crates cannot deterministically reject invalid measure×dimension pairs (e.g. inventory × promotions) because the AtScale catalog payload has no 'column_group' field. Without a grounded fact-binding tag, every compatibility check is a hand-maintained table that drifts. This library adds the missing tag via a deterministic enrichment pass so that compatibility checks become model-grounded and scalable.",
+  "user_persona": "A data engineer or Rust crate (mqo-param-validator, compatibility matrix, null-path detector) consuming an AtScale describe_model catalog JSON and needing a column_group set on every measure and dimension level to perform cross-fact compatibility checks.",
+  "unfakeable_metric": {
+    "name": "acceptance_tests_passing_count",
+    "lower_is_better": false,
+    "harness_command": "bash scripts/run-metrics.sh",
+    "target": 6
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "Given a catalog and bindings where measure M is on fact F, when enrich runs, then M's column_group set equals {F} exactly.",
+      "test": "tests/acceptance_AC1.rs"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "Given a dimension level L joinable to facts F1 and F2, when enrich runs, then L's column_group set equals {F1, F2} (conformed dimension preserved).",
+      "test": "tests/acceptance_AC2.rs"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "Given any input catalog, when enrich runs, then every non-column_group field in every column is present and byte-identical in the output (additive).",
+      "test": "tests/acceptance_AC3.rs"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "Given an entity with no binding, when enrich runs, then it carries column_group: [] and appears in the coverage report's unbound list, never dropped.",
+      "test": "tests/acceptance_AC4.rs"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "Given the TPC-DS benchmark catalog + its known bindings, when enrich runs, coverage is 100% and inventory-fact measures carry no sales column-group (and vice versa).",
+      "test": "tests/acceptance_AC5.rs"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "Given malformed JSON for catalog or bindings, when enrich runs, it returns a typed error or empty-coverage result — never panics.",
+      "test": "tests/acceptance_AC6.rs"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "cargo test passes; cargo clippy --all-targets -- -D warnings is clean; zero unsafe.",
+      "test": "metric: clippy_warning_count == 0 AND audit: unsafe_block_count == 0"
+    }
+  ],
+  "scope": [
+    "Deserialize CatalogSnapshot from describe_model JSON (columns array with unique_name, label, kind, is_calc, hierarchy, level fields)",
+    "Accept FactBindings as a typed Rust struct mapping measure unique_names and hierarchy names to column-group string sets",
+    "Emit EnrichedCatalog: every input column annotated with column_group: BTreeSet<String>",
+    "Produce a CoverageReport counting bound vs unbound entities",
+    "Expose a TPC-DS default bindings constructor for the benchmark model",
+    "Support deserialization of FactBindings from a JSON sidecar file"
+  ],
+  "non_goals": [
+    "NG1: Determining correctness of a query — this adds the tag; it does not validate anything",
+    "NG2: Editing the live AtScale model or engine metadata",
+    "NG3: Network calls or LLM inference — pure deterministic enrichment only",
+    "NG4: Compatibility matrix or cross-fact check logic — consumed downstream",
+    "NG5: Guessing column-groups heuristically from name strings"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2024",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 4,
+    "msrv": "1.85",
+    "additional": {
+      "allowed_deps": "serde, serde_json, thiserror (optional strsim for binding reconciliation)",
+      "no_network": true,
+      "no_llm": true,
+      "performance_target_ms": 100
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why do we need a column_group enrichment library?",
+      "a": "The AtScale catalog payload (describe_model) has no field indicating which fact table a measure or dimension belongs to."
+    },
+    {
+      "why": 2,
+      "q": "Why does the absence of that field matter?",
+      "a": "Without it, downstream tools (mqo-param-validator, compatibility matrix, subagent prompts) must maintain a hand-coded incompatibility table that drifts from the actual model."
+    },
+    {
+      "why": 3,
+      "q": "Why does the drifting table cause real failures?",
+      "a": "The mcp-tuner k=4 run scored path_incompatible tasks at 22.5% path-mean because agents lacked catalog-grounded compatibility signals and accepted structurally invalid queries."
+    },
+    {
+      "why": 4,
+      "q": "Why is a Rust library the right fix rather than updating the subagent prompt?",
+      "a": "Prompt patches are agent-model-specific and unverifiable; a typed enrichment pass that downstream crates consume produces a machine-checkable, model-grounded artifact that survives model changes."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "OQ1: Source of truth for FactBindings — richer engine pull vs. sidecar JSON?",
+      "resolution": "This library accepts FactBindings as a typed input regardless of source. For TPC-DS specifically, a default bindings constructor is bundled with the crate (derived from the known TPC-DS fact table structure). OQ1 remains open for production; this library's API is source-agnostic."
+    },
+    {
+      "question": "OQ2: Identifier scheme for column-groups — reuse AtScale dataset name or synthesized stable ID?",
+      "resolution": "Use simple lowercase short names: 'store_sales', 'catalog_sales', 'web_sales', 'store_returns', 'catalog_returns', 'web_returns', 'inventory'. These are stable across catalog refreshes for TPC-DS and map directly to TPC-DS fact table names."
+    }
+  ],
+  "created_at": "2026-06-10T00:00:00Z"
+}

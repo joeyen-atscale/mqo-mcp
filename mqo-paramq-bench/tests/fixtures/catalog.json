@@ -1,0 +1,21 @@
+{
+  "measures": [
+    { "unique_name": "[Total Sales]", "subject_area": "Sales" },
+    { "unique_name": "[Total Cost]", "subject_area": "Sales" },
+    { "unique_name": "[Gross Profit]", "subject_area": "Sales" },
+    { "unique_name": "[Total Sales Lookalike]", "subject_area": "Sales" }
+  ],
+  "dimensions": [
+    { "unique_name": "[Date]", "subject_areas": ["Sales"] },
+    { "unique_name": "[Customer]", "subject_areas": ["Sales"] },
+    { "unique_name": "[Product]", "subject_areas": ["Sales"] }
+  ],
+  "hierarchies": [
+    {
+      "dimension_unique_name": "[Date]",
+      "hierarchy_unique_name": "[Date].[Calendar]",
+      "levels": ["Year", "Quarter", "Month", "Day"]
+    }
+  ],
+  "date_roles": []
+}

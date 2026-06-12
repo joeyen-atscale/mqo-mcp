@@ -1,0 +1,20 @@
+{
+  "model": "finance",
+  "measures": [
+    { "unique_name": "finance.amount" }
+  ],
+  "dimensions": [
+    { "hierarchy": "date.calendar", "level": "quarter" }
+  ],
+  "filters": [
+    {
+      "type": "calc_group_member",
+      "calc_group": "time_calc_group",
+      "member": "Actual"
+    }
+  ],
+  "time_intelligence": [],
+  "order": null,
+  "limit": null,
+  "non_empty": false
+}

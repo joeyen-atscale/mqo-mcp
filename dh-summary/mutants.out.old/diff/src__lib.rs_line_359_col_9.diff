@@ -1,0 +1,25 @@
+--- src/lib.rs
++++ delete match arm ColumnData::Date(v) | ColumnData::Time(v) in stats_date
+@@ -351,21 +351,17 @@
+         mean: None,
+         distinct: Some(distinct),
+         top_k: if entries.is_empty() { None } else { Some(entries) },
+     }
+ }
+ 
+ fn stats_date(data: &ColumnData) -> ColStats {
+     let (values, null_count) = match data {
+-        ColumnData::Date(v) | ColumnData::Time(v) => {
+-            let non_null: Vec<&str> = v.iter().filter_map(|o| o.as_deref()).collect();
+-            let nulls = v.iter().filter(|o| o.is_none()).count() as u64;
+-            (non_null, nulls)
+-        }
++         /* ~ changed by cargo-mutants ~ */
+         _ => (vec![], 0),
+     };
+     let mut sorted: Vec<&str> = values.clone();
+     sorted.sort_unstable();
+     let min_s = sorted.first().map(|s| (*s).to_string());
+     let max_s = sorted.last().map(|s| (*s).to_string());
+     let distinct: u64 = {
+         let mut u = sorted.clone();

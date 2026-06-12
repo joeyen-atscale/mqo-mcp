@@ -1,0 +1,50 @@
+{
+  "AC1": {
+    "test_fn": "ac1_advertises_all_tools_with_readonly_hints",
+    "file": "tests/acceptance.rs",
+    "depends_on_fleet": false
+  },
+  "AC2": {
+    "test_fn": "ac2_query_returns_summary_handle_caps_and_no_rows",
+    "file": "tests/acceptance.rs",
+    "depends_on_fleet": true
+  },
+  "AC3": {
+    "test_fn": "ac3_query_aggregate_top_n_chain_matches_golden",
+    "file": "tests/acceptance.rs",
+    "depends_on_fleet": true
+  },
+  "AC4": {
+    "test_fn": "ac4_filter_sort_pivot_compare_drill_reachable_end_to_end",
+    "file": "tests/acceptance.rs",
+    "depends_on_fleet": true
+  },
+  "AC5": {
+    "test_fn": "ac5_export_is_only_full_data_path_and_emits_receipt",
+    "file": "tests/acceptance.rs",
+    "depends_on_fleet": true
+  },
+  "AC6": [
+    {
+      "test_fn": "ac6_raw_sql_rejected_and_bad_handles_are_typed_not_panics",
+      "file": "tests/acceptance.rs",
+      "depends_on_fleet": false
+    },
+    {
+      "test_fn": "ac6_expired_handle_returns_typed_error",
+      "file": "tests/acceptance.rs",
+      "depends_on_fleet": true
+    }
+  ],
+  "AC7": {
+    "test_fn": "ac7_runs_under_release_toolchain",
+    "file": "tests/acceptance.rs",
+    "depends_on_fleet": false
+  },
+  "unit_convert": [
+    "convert::tests::leaf_name_strips_brackets_and_prefix",
+    "convert::tests::builds_typed_columns_in_bound_order",
+    "convert::tests::empty_projection_is_rejected",
+    "convert::tests::missing_cells_become_typed_nulls"
+  ]
+}

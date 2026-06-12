@@ -1,0 +1,13 @@
+{
+  "owners": {
+    "src/lib.rs": "Joe Yen",
+    "src/main.rs": "Joe Yen",
+    "tests/acceptance_AC1.rs": "autobuilder",
+    "tests/acceptance_AC2.rs": "autobuilder",
+    "tests/acceptance_AC3.rs": "autobuilder",
+    "tests/acceptance_AC4.rs": "autobuilder",
+    "tests/acceptance_AC5.rs": "autobuilder",
+    "tests/acceptance_AC6.rs": "autobuilder",
+    "tests/acceptance_AC7.rs": "autobuilder"
+  }
+}

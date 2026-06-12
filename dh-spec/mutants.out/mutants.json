@@ -1,0 +1,122 @@
+[
+  {
+    "package": "dh-spec",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "emit_summary_schema",
+      "return_type": "-> String",
+      "span": {
+        "start": {
+          "line": 331,
+          "column": 1
+        },
+        "end": {
+          "line": 341,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 339,
+        "column": 5
+      },
+      "end": {
+        "line": 340,
+        "column": 91
+      }
+    },
+    "replacement": "String::new()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-spec",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "emit_summary_schema",
+      "return_type": "-> String",
+      "span": {
+        "start": {
+          "line": 331,
+          "column": 1
+        },
+        "end": {
+          "line": 341,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 339,
+        "column": 5
+      },
+      "end": {
+        "line": 340,
+        "column": 91
+      }
+    },
+    "replacement": "\"xyzzy\".into()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-spec",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "emit_op_result_schema",
+      "return_type": "-> String",
+      "span": {
+        "start": {
+          "line": 343,
+          "column": 1
+        },
+        "end": {
+          "line": 352,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 350,
+        "column": 5
+      },
+      "end": {
+        "line": 351,
+        "column": 91
+      }
+    },
+    "replacement": "String::new()",
+    "genre": "FnValue"
+  },
+  {
+    "package": "dh-spec",
+    "file": "src/lib.rs",
+    "function": {
+      "function_name": "emit_op_result_schema",
+      "return_type": "-> String",
+      "span": {
+        "start": {
+          "line": 343,
+          "column": 1
+        },
+        "end": {
+          "line": 352,
+          "column": 2
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 350,
+        "column": 5
+      },
+      "end": {
+        "line": 351,
+        "column": 91
+      }
+    },
+    "replacement": "\"xyzzy\".into()",
+    "genre": "FnValue"
+  }
+]

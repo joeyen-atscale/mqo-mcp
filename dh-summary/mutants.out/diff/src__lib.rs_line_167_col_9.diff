@@ -1,0 +1,24 @@
+--- src/lib.rs
++++ delete match arm ColumnData::Int(v) in extract_value
+@@ -159,20 +159,17 @@
+         map.insert(col.name.clone(), val);
+     }
+     map
+ }
+ 
+ /// Extract the JSON `Value` at position `row_idx` from [`ColumnData`].
+ fn extract_value(data: &ColumnData, row_idx: usize) -> Value {
+     match data {
+-        ColumnData::Int(v) => v
+-            .get(row_idx)
+-            .and_then(|o| *o)
+-            .map_or(Value::Null, Value::from),
++         /* ~ changed by cargo-mutants ~ */
+         ColumnData::Float(v) => v
+             .get(row_idx)
+             .and_then(|o| *o)
+             .and_then(serde_json::Number::from_f64)
+             .map_or(Value::Null, Value::Number),
+         ColumnData::Decimal(v) | ColumnData::Str(v) | ColumnData::Date(v)
+         | ColumnData::Time(v) => v
+             .get(row_idx)

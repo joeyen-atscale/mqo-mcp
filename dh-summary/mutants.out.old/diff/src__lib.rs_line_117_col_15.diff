@@ -1,0 +1,21 @@
+--- src/lib.rs
++++ replace >= with < in capabilities
+@@ -109,17 +109,17 @@
+         .filter(|c| c.role == ColumnRole::Dimension)
+         .count();
+ 
+     let mut caps = Vec::with_capacity(9);
+     caps.push(Capability::Aggregate);
+     caps.push(Capability::Filter);
+     caps.push(Capability::Sort);
+     caps.push(Capability::TopN);
+-    if n_dims >= 2 {
++    if n_dims < /* ~ changed by cargo-mutants ~ */ 2 {
+         caps.push(Capability::Pivot);
+     }
+     caps.push(Capability::Compare);
+     caps.push(Capability::Drill);
+     caps.push(Capability::Describe);
+     caps.push(Capability::Export);
+     caps
+ }

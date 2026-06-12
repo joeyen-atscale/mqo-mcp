@@ -1,0 +1,120 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "prd_source": "/Users/jsy/Documents/PRDs/ARCHIVE/PRD-dh-spec.md",
+  "intent_slug": "dh-spec",
+  "root_motivation": "Establish a single shared wire-contract for handle-based dataset results so every dh-* fleet member compiles against one set of types — preventing the drift that would otherwise arise if each crate invented its own shape.",
+  "user_persona": "A Rust library consumer (another crate in the dh-* fleet, or an MCP integration test) that imports dh-spec to construct, serialize, or validate DatasetHandle / DatasetSummary / OpRequest / OpResult / Lineage values over JSON.",
+  "unfakeable_metric": {
+    "name": "tests_pass_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --workspace --release 2>&1 | grep -E '^test result' | awk '{sum += $4} END {print sum}'",
+    "target": 42
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "All public types (DatasetHandle, ColumnSchema, DatasetSummary, Capability, OpRequest, OpResult, Lineage) serialize/deserialize round-trip via serde_json with stable field names. A test asserts byte-stable JSON for a fixed fixture.",
+      "test": "tests/ac1_round_trip.rs"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "DatasetSummary never contains the full dataset: a test constructs a 10_000-row logical dataset and asserts sample.len() <= sample_cap and total serialized size < 64 KiB.",
+      "test": "tests/ac2_summary_bounded.rs"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "Capability enumerates exactly the nine ops named in the PRD (Aggregate, Filter, Sort, TopN, Pivot, Compare, Drill, Describe, Export). A test asserts the set.",
+      "test": "tests/ac3_capability_set.rs"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "OpResult.handle != OpRequest.handle is representable and a doc-test shows the derive-new-handle pattern.",
+      "test": "tests/ac4_op_result_new_handle.rs"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "Lineage.parents can express a multi-parent op (e.g. compare): a test builds a 2-parent lineage record.",
+      "test": "tests/ac5_lineage_multi_parent.rs"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "schema/dh-spec.schema.json exists and a test validates a fixture DatasetSummary + OpResult against it.",
+      "test": "tests/ac6_schema_validation.rs"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "cargo test --release passes; cargo clippy --release -- -D warnings clean.",
+      "test": "tests/ac7_cargo_clean.rs — verified by cargo test --release and cargo clippy -- -D warnings exit 0"
+    }
+  ],
+  "scope": [
+    "Rust library crate exposing DatasetHandle, ColumnSchema, DatasetSummary, Capability, OpRequest, OpResult, Lineage types",
+    "JSON serialization/deserialization of all types via serde + serde_json",
+    "JSON Schema emission (schema/dh-spec.schema.json) via schemars",
+    "INLINE_THRESHOLD and DEFAULT_SAMPLE_CAP constants",
+    "DatasetSummary::new constructor that enforces the sample cap invariant",
+    "ALL_CAPABILITIES constant array for iteration and assertion"
+  ],
+  "non_goals": [
+    "No execution logic — this crate only defines types and their JSON shape",
+    "No network, no async, no I/O beyond schema file generation",
+    "No operation implementations — OpRequest/OpResult are wire shapes only",
+    "No persistence, caching, or TTL enforcement — those belong to the server",
+    "No WebAssembly or embedded targets — std is required"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 5,
+    "msrv": "1.70.0",
+    "additional": {
+      "forbid_unsafe_code": "true — #![forbid(unsafe_code)] in lib.rs",
+      "license": "MIT OR Apache-2.0"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why define a separate dh-spec crate instead of putting these types inline in mqo-mcp-server?",
+      "a": "Because mqo-mcp-server returns EngineResult { rows: Vec<Value> } today; every downstream crate would need to import from mqo-mcp-server just to hold a handle reference, creating an inverted dependency."
+    },
+    {
+      "why": 2,
+      "q": "Why does the inverted dependency matter — can't they all just agree on a shape informally?",
+      "a": "The fleet has at least 14 crates (mqo-*, dh-*); informal shapes drift. mqo-spec playing this same foundation role for the MQO fleet is the direct precedent — without it crates would have drifted on measure/dimension/calc-group semantics."
+    },
+    {
+      "why": 3,
+      "q": "Why is drift a problem for the dh-* fleet specifically? The types are just structs.",
+      "a": "OpResult, Lineage, and DatasetSummary travel over JSON across MCP tool boundaries. A field rename or enum variant rename breaks deserialization silently — no compile error, just a wrong answer at runtime."
+    },
+    {
+      "why": 4,
+      "q": "Why not just use a JSON Schema file without a Rust crate — any language can validate against that?",
+      "a": "The primary consumers are Rust crates that need compile-time type safety; a JSON Schema alone does not give Rust callers typed constructors or serialization. The schema is a secondary artifact emitted from schemars so non-Rust clients (Python, TypeScript) can also validate."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Should INLINE_THRESHOLD be exactly 8 or 'at most 8'?",
+      "resolution": "PRD says 'scalar or <= 8 rows'; the constant is set to 8 and the test asserts INLINE_THRESHOLD <= 8 to allow tightening."
+    },
+    {
+      "question": "Is the JSON Schema hand-written or generated?",
+      "resolution": "Generated via schemars; the schema file is checked into schema/dh-spec.schema.json as a committed artifact."
+    },
+    {
+      "question": "What is the KB cap for AC2's serialized-size test?",
+      "resolution": "64 KiB — generous enough for DEFAULT_SAMPLE_CAP=20 rows of realistic data, tight enough to catch an accidental full-dataset embed."
+    }
+  ],
+  "created_at": "2026-06-08T20:52:00Z"
+}

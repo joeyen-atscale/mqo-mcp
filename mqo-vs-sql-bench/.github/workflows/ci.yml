@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "autobuilder/**"]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  check:
+    name: check + clippy + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry + build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Patch Cargo.toml for CI vendored path
+        run: |
+          # In CI, mqo-spec is vendored at vendor/mqo-spec.
+          # Rewrite the path dep from ../mqo-spec to vendor/mqo-spec.
+          sed -i 's|path = "../mqo-spec"|path = "vendor/mqo-spec"|g' Cargo.toml
+          echo "Cargo.toml after patch:"
+          grep mqo-spec Cargo.toml
+
+      - name: cargo check
+        run: cargo check --workspace
+
+      - name: cargo clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: cargo test --release
+        run: cargo test --release --workspace
+
+      - name: Check for unsafe code
+        run: |
+          if grep -rn 'unsafe {' src/ 2>/dev/null; then
+            echo "ERROR: unsafe code found in src/ (deny_unsafe=true)"
+            exit 1
+          fi
+          echo "No unsafe blocks found in src/"

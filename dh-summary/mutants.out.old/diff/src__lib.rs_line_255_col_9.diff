@@ -1,0 +1,30 @@
+--- src/lib.rs
++++ delete match arm ColumnData::Decimal(v) in stats_float
+@@ -247,26 +247,17 @@
+ fn stats_float(data: &ColumnData) -> ColStats {
+     let (vals, null_count, total) = match data {
+         ColumnData::Float(v) => {
+             let non_null: Vec<f64> = v.iter().filter_map(|o| *o).collect();
+             let nulls = v.iter().filter(|o| o.is_none()).count() as u64;
+             let tot = v.len() as u64;
+             (non_null, nulls, tot)
+         }
+-        ColumnData::Decimal(v) => {
+-            let non_null: Vec<f64> = v
+-                .iter()
+-                .filter_map(|o| o.as_deref())
+-                .filter_map(|s| s.parse::<f64>().ok())
+-                .collect();
+-            let nulls = v.iter().filter(|o| o.is_none()).count() as u64;
+-            let tot = v.len() as u64;
+-            (non_null, nulls, tot)
+-        }
++         /* ~ changed by cargo-mutants ~ */
+         _ => (vec![], 0, 0),
+     };
+     let non_null_count = total - null_count;
+     if vals.is_empty() {
+         return ColStats {
+             min: None,
+             max: None,
+             sum: None,

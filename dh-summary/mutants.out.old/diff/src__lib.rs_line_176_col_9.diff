@@ -1,0 +1,25 @@
+--- src/lib.rs
++++ delete match arm ColumnData::Decimal(v) | ColumnData::Str(v) | ColumnData::Date(v) | ColumnData::Time(v) in extract_value
+@@ -168,21 +168,17 @@
+             .get(row_idx)
+             .and_then(|o| *o)
+             .map_or(Value::Null, Value::from),
+         ColumnData::Float(v) => v
+             .get(row_idx)
+             .and_then(|o| *o)
+             .and_then(serde_json::Number::from_f64)
+             .map_or(Value::Null, Value::Number),
+-        ColumnData::Decimal(v) | ColumnData::Str(v) | ColumnData::Date(v)
+-        | ColumnData::Time(v) => v
+-            .get(row_idx)
+-            .and_then(|o| o.as_deref())
+-            .map_or(Value::Null, |s| Value::String(s.to_string())),
++         /* ~ changed by cargo-mutants ~ */
+         ColumnData::Bool(v) => v
+             .get(row_idx)
+             .and_then(|o| *o)
+             .map_or(Value::Null, Value::Bool),
+         _ => Value::Null,
+     }
+ }
+ 

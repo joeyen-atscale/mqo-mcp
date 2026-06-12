@@ -1,0 +1,21 @@
+[
+  {
+    "name": "scalar_total_store_sales",
+    "mqo": {
+      "measures": ["store_sales.total_store_sales"],
+      "catalog": "tpcds",
+      "model": "tpcds"
+    },
+    "expected_value": 10170000000.0
+  },
+  {
+    "name": "store_sales_by_item_class",
+    "mqo": {
+      "measures": ["store_sales.total_store_sales"],
+      "dimensions": ["item.item_class"],
+      "catalog": "tpcds",
+      "model": "tpcds"
+    },
+    "expected_value": 10170000000.0
+  }
+]

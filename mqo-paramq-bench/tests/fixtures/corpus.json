@@ -1,0 +1,32 @@
+[
+  {
+    "id": "task_001",
+    "failure_mode": "lookalike_measure",
+    "question": "What are total sales by date?",
+    "canonical": {
+      "measures": ["[Total Sales]"],
+      "dimensions": ["[Date]"],
+      "rejected": ["[Total Sales Lookalike]"]
+    }
+  },
+  {
+    "id": "task_002",
+    "failure_mode": "lookalike_measure",
+    "question": "What are total sales by customer?",
+    "canonical": {
+      "measures": ["[Total Sales]"],
+      "dimensions": ["[Customer]"],
+      "rejected": ["[Total Sales Lookalike]"]
+    }
+  },
+  {
+    "id": "task_003",
+    "failure_mode": "wrong_hierarchy_level",
+    "question": "What is total cost by product?",
+    "canonical": {
+      "measures": ["[Total Cost]"],
+      "dimensions": ["[Product]"],
+      "rejected": []
+    }
+  }
+]

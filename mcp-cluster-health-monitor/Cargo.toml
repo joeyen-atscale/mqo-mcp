@@ -1,0 +1,30 @@
+[package]
+name = "mcp-cluster-health-monitor"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70.0"
+description = "Health canary for registered AtScale clusters — TCP probe + structured JSON report"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/joeyen-atscale/mcp-cluster-health-monitor"
+keywords = ["semantic-layer", "olap", "federation", "health", "atscale"]
+categories = ["command-line-utilities", "network-programming"]
+
+[lib]
+name = "mcp_cluster_health_monitor"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mcp-cluster-health-monitor"
+path = "src/main.rs"
+
+[dependencies]
+mcp-cluster-registry = { path = "../mcp-cluster-registry" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "macros", "io-util"] }
+thiserror = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "macros", "io-util", "test-util"] }
+tempfile = "3"

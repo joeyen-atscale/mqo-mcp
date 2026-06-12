@@ -1,0 +1,23 @@
+[
+  {
+    "id": "q001",
+    "question": "What is the total sales revenue by year?",
+    "model": "sales",
+    "reference_sql": "SELECT year, SUM(revenue) FROM sales GROUP BY year",
+    "reference_mqo": null
+  },
+  {
+    "id": "q002",
+    "question": "How many customers are there by region?",
+    "model": "sales",
+    "reference_sql": null,
+    "reference_mqo": null
+  },
+  {
+    "id": "q003",
+    "question": "What are the top 5 products by units sold?",
+    "model": "sales",
+    "reference_sql": null,
+    "reference_mqo": null
+  }
+]

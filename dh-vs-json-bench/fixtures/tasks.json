@@ -1,0 +1,23 @@
+[
+  {
+    "id": "q001",
+    "question": "What is the total revenue across all regions?",
+    "dataset": "sales",
+    "correct_answer": 5350000.0,
+    "answer_description": "Sum of revenue across all three regions"
+  },
+  {
+    "id": "q002",
+    "question": "What is the average order value?",
+    "dataset": "sales",
+    "correct_answer": 245.50,
+    "answer_description": "Mean order value across all transactions"
+  },
+  {
+    "id": "q003",
+    "question": "Which product has the highest unit sales, and how many units?",
+    "dataset": "sales",
+    "correct_answer": {"product": "Widget A", "units": 98000},
+    "answer_description": "Top product by units sold"
+  }
+]

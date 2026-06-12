@@ -1,0 +1,111 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "intent_slug": "dh-export",
+  "prd_source": "/Users/jsy/Documents/PRDs/ARCHIVE/PRD-dh-export.md",
+  "created_at": "2026-06-08T21:17:00Z",
+  "root_motivation": "Concentrate all full-dataset materialization in a single audited, bounded operation so that 'data crossed the boundary' is always a deliberate logged event — not a side effect of a summary or op — keeping the LLM-as-calculator guarantee honest.",
+  "user_persona": "MCP server engineer or operator consuming the dh-* fleet; needs a sanctioned path to produce actual rows for the 'download the results' case without opening an unaudited spill path elsewhere.",
+  "unfakeable_metric": {
+    "name": "ac_passing_count",
+    "lower_is_better": false,
+    "harness_command": "cargo test --release 2>&1 | grep -E '^test result' | awk '{print $6}'",
+    "target": 12
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "CSV export of a fixture handle produces correct, well-formed CSV (header + rows match dataset); round-trip parse equals source.",
+      "test": "tests::ac1_csv_export_correct_header_and_rows"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "JSON export honors max_rows: dataset larger than max_rows is refused with typed error unless explicit override is set; within bound emits exactly the rows.",
+      "test": "tests::ac2_json_max_rows_refused_without_override + tests::ac2_json_max_rows_succeeds_within_bound + tests::ac2_json_override_allows_exceeding_max_rows"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "ExportReceipt reports correct row_count, bytes, and stable sha256 of payload (test asserts hash for fixed fixture).",
+      "test": "tests::ac3_receipt_sha256_stable_for_fixed_fixture"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "File export writes atomically (no partial file on simulated mid-write failure) and refuses to overwrite existing file without overwrite flag.",
+      "test": "tests::ac4_file_no_overwrite_without_flag + tests::ac4_file_overwrite_with_flag_succeeds + tests::ac4_file_write_is_atomic_no_partial_on_missing_dir"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "Parquet export (behind parquet feature) produces file readable back to same rows; test is feature-gated and skipped cleanly when feature is off.",
+      "test": "tests::ac5_parquet_roundtrip (with --features parquet) + tests::ac5_parquet_returns_error_when_feature_off (default features)"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "Exporting an expired/unknown handle returns a typed error, never a panic.",
+      "test": "tests::ac6_expired_handle_returns_typed_error + tests::ac6_unknown_handle_returns_typed_error"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "cargo test --release passes (default features); cargo clippy --release -- -D warnings clean.",
+      "test": "cargo test --release (exit 0) + cargo clippy --release -- -D warnings (exit 0)"
+    }
+  ],
+  "scope": [
+    "Single export() entry point: store+handle+fmt+dest+opts → ExportReceipt",
+    "Formats: CSV (always), JSON bounded by max_rows (always), Parquet (feature-gated)",
+    "Destinations: File (atomic tempfile+rename) and Inline (bounded by max_bytes)",
+    "ExportReceipt audit record: handle, fmt, dest, row_count, bytes, sha256, ts",
+    "Typed error enum covering all failure modes: LookupFailed, JsonLimitExceeded, InlineLimitExceeded, FileExists, Io, ParquetNotEnabled"
+  ],
+  "non_goals": [
+    "Streaming / chunked export (all-at-once only in v1)",
+    "Network destinations (S3, HTTP, etc.) — file or inline only",
+    "Async API — synchronous only",
+    "Schema evolution or format negotiation",
+    "Audit log persistence — ExportReceipt is returned to caller; crate does not write a log itself",
+    "Multiple concurrent exports of the same handle — no locking on top of Store",
+    "Compression (gzip, zstd) on top of formats"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2021",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 8,
+    "msrv": "1.70.0",
+    "additional": {
+      "parquet_feature_optional": "true — arrow+parquet behind feature flag; default build must be light"
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why build a separate dh-export crate instead of adding export() to dh-store?",
+      "a": "dh-store owns the in-memory representation; adding format serialization bloats it with CSV/JSON/Parquet deps and muddies the single responsibility. Export is a boundary concern, not a storage concern."
+    },
+    {
+      "why": 2,
+      "q": "Why make this a hard boundary at all rather than letting any tool serialize a Dataset?",
+      "a": "If any code path can spill rows, the LLM-as-calculator guarantee (MQO server: raw SQL is a rejected path) leaks silently. Concentrating materialization here makes auditing trivially complete: if ExportReceipt exists, data crossed; if not, it didn't."
+    },
+    {
+      "why": 3,
+      "q": "Why must the JSON exit be bounded by max_rows rather than relying on callers to pass small datasets?",
+      "a": "Callers will forget. A million-row inline JSON dump is a latency and memory bomb in an MCP response. The type system should make the wrong thing require extra effort (override flag), not the right thing."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Should ExportReceipt include the inline payload bytes directly?",
+      "resolution": "Yes — inline_payload: Option<Vec<u8>>, Some only for Inline dest. File dest records the path in dest field; bytes live on disk. Serde: skip_serializing_if = None."
+    },
+    {
+      "question": "Is 'atomic' on non-POSIX platforms in scope?",
+      "resolution": "POSIX only (macOS/Linux). tempfile::Builder + persist() gives the rename guarantee on POSIX. Windows is a non-goal for v1."
+    }
+  ]
+}

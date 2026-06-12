@@ -1,0 +1,6 @@
+{
+  "schema": "result-profile.v1",
+  "columns": [
+    {"name": "total_revenue", "role": "measure", "is_temporal": false, "cardinality": null}
+  ]
+}

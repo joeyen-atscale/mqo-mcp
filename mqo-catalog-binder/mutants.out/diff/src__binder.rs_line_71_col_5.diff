@@ -1,0 +1,46 @@
+--- src/binder.rs
++++ replace resolve_measure -> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>> with Ok(Box::leak(Box::new(Default::default())))
+@@ -63,42 +63,17 @@
+ ///
+ /// Returns:
+ ///   `Ok(entry)` — exactly one match
+ ///   `Err(candidates)` — zero (empty vec) or multiple matches
+ fn resolve_measure<'a>(
+     label: &str,
+     columns: &'a [ColumnEntry],
+ ) -> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>> {
+-    let key = label.to_lowercase();
+-
+-    // First: try exact unique_name match (case-insensitive)
+-    let by_unique: Vec<&ColumnEntry> = columns
+-        .iter()
+-        .filter(|c| c.kind == "measure" && c.unique_name.to_lowercase() == key)
+-        .collect();
+-
+-    if by_unique.len() == 1 {
+-        return Ok(by_unique[0]);
+-    }
+-    if by_unique.len() > 1 {
+-        return Err(by_unique);
+-    }
+-
+-    // Second: try label match (case-insensitive)
+-    let by_label: Vec<&ColumnEntry> = columns
+-        .iter()
+-        .filter(|c| c.kind == "measure" && c.label.to_lowercase() == key)
+-        .collect();
+-
+-    match by_label.len() {
+-        1 => Ok(by_label[0]),
+-        0 => Err(vec![]),
+-        _ => Err(by_label),
+-    }
++    Ok(Box::leak(Box::new(Default::default()))) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Resolve a dimension level selection against the column list.
+ /// Matches by hierarchy (exact, case-insensitive) + level name (case-insensitive).
+ fn resolve_level<'a>(
+     sel: &LevelSelection,
+     columns: &'a [ColumnEntry],
+ ) -> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>> {

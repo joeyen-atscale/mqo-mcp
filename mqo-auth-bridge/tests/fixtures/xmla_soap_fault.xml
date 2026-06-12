@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <soap:Fault>
+      <faultcode>XMLAnalysisError.0x80040E14</faultcode>
+      <faultstring>Unsupported query syntax near token 'BADTOKEN'</faultstring>
+      <detail>
+        <Error ErrorCode="3238658580" Description="Unsupported query syntax near token 'BADTOKEN'"
+               Source="Microsoft XML for Analysis" HelpFile="" xmlns="urn:schemas-microsoft-com:xml-analysis:exception"/>
+      </detail>
+    </soap:Fault>
+  </soap:Body>
+</soap:Envelope>

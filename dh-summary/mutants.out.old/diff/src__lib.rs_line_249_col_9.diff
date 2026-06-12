@@ -1,0 +1,26 @@
+--- src/lib.rs
++++ delete match arm ColumnData::Float(v) in stats_float
+@@ -241,22 +241,17 @@
+         distinct: Some(distinct + null_count.min(1)),
+         top_k: None,
+     }
+ }
+ 
+ #[allow(clippy::cast_precision_loss)]
+ fn stats_float(data: &ColumnData) -> ColStats {
+     let (vals, null_count, total) = match data {
+-        ColumnData::Float(v) => {
+-            let non_null: Vec<f64> = v.iter().filter_map(|o| *o).collect();
+-            let nulls = v.iter().filter(|o| o.is_none()).count() as u64;
+-            let tot = v.len() as u64;
+-            (non_null, nulls, tot)
+-        }
++         /* ~ changed by cargo-mutants ~ */
+         ColumnData::Decimal(v) => {
+             let non_null: Vec<f64> = v
+                 .iter()
+                 .filter_map(|o| o.as_deref())
+                 .filter_map(|s| s.parse::<f64>().ok())
+                 .collect();
+             let nulls = v.iter().filter(|o| o.is_none()).count() as u64;
+             let tot = v.len() as u64;

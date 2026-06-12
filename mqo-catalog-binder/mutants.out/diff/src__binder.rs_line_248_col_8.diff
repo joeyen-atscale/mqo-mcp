@@ -1,0 +1,21 @@
+--- src/binder.rs
++++ delete ! in bind
+@@ -240,17 +240,17 @@
+                         "candidates": matches.iter().map(|e| &e.unique_name).collect::<Vec<_>>(),
+                     }));
+                 }
+             }
+         }
+     }
+ 
+     // ── Collate results ───────────────────────────────────────────────────
+-    if !ambiguous.is_empty() {
++    if  /* ~ changed by cargo-mutants ~ */ambiguous.is_empty() {
+         return BindResult::Ambiguous(ambiguous);
+     }
+     if !not_found.is_empty() {
+         return BindResult::NotFound(not_found);
+     }
+ 
+     BindResult::Bound(Box::new(BoundMqoOutput {
+         mqo: mqo.clone(),

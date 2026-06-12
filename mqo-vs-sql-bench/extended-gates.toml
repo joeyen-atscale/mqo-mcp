@@ -1,0 +1,2 @@
+prd_path = "agent/PRD-mqo-vs-sql-bench.md"
+mutation_kill_min_pct = 50.0

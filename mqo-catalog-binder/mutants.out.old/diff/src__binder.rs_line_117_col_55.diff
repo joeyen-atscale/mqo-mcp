@@ -1,0 +1,21 @@
+--- src/binder.rs
++++ replace == with != in resolve_level
+@@ -109,17 +109,17 @@
+         .iter()
+         .filter(|c| {
+             c.kind == "level"
+                 && c.hierarchy
+                     .as_deref()
+                     .is_some_and(|h| h.to_lowercase() == hier_key)
+                 && c.level
+                     .as_deref()
+-                    .is_some_and(|l| l.to_lowercase() == level_key)
++                    .is_some_and(|l| l.to_lowercase() != /* ~ changed by cargo-mutants ~ */ level_key)
+         })
+         .collect();
+ 
+     match candidates.len() {
+         1 => Ok(candidates[0]),
+         0 => Err(vec![]),
+         _ => Err(candidates),
+     }

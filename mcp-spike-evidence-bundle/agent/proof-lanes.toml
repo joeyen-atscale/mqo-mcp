@@ -1,0 +1,22 @@
+# Proof-lane routing for mcp-spike-evidence-bundle.
+# Every changed path must resolve to >= 1 lane.
+
+[[lanes]]
+name = "core-logic"
+paths = ["src/lib.rs"]
+gates = ["cargo test --workspace", "cargo clippy --all-targets -- -D warnings"]
+
+[[lanes]]
+name = "cli-dispatch"
+paths = ["src/main.rs"]
+gates = ["cargo test --workspace", "cargo build --release"]
+
+[[lanes]]
+name = "acceptance-tests"
+paths = ["tests/acceptance_*.rs"]
+gates = ["cargo test --workspace"]
+
+[[lanes]]
+name = "fixtures"
+paths = ["fixtures/*.json"]
+gates = ["cargo test --workspace"]

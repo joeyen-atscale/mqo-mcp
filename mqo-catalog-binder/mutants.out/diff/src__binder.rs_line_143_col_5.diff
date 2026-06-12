@@ -1,0 +1,138 @@
+--- src/binder.rs
++++ replace bind -> BindResult with Default::default()
+@@ -135,134 +135,17 @@
+ ///
+ /// If any ref is ambiguous, returns `BindResult::Ambiguous`.
+ /// If any ref is missing (and none are ambiguous), returns `BindResult::NotFound`.
+ /// Only if all refs resolve returns `BindResult::Bound`.
+ ///
+ /// Priority: ambiguous > `not_found` > bound (i.e., if both exist, ambiguous wins).
+ #[allow(clippy::too_many_lines)]
+ pub fn bind(mqo: &Mqo, snapshot: &CatalogSnapshot) -> BindResult {
+-    let mut ambiguous: Vec<Value> = vec![];
+-    let mut not_found: Vec<String> = vec![];
+-
+-    // ── Resolve measures ──────────────────────────────────────────────────
+-    let mut bound_measures: Vec<BoundMeasureExt> = vec![];
+-
+-    for m_ref in &mqo.measures {
+-        match resolve_measure(&m_ref.unique_name, &snapshot.columns) {
+-            Ok(entry) => {
+-                let (semi_additive, trigger_hierarchies) = entry
+-                    .semi_additive
+-                    .as_ref()
+-                    .map_or((false, vec![]), |sa| (true, sa.trigger_hierarchies.clone()));
+-
+-                bound_measures.push(BoundMeasureExt {
+-                    unique_name: entry.unique_name.clone(),
+-                    is_calc: entry.is_calc,
+-                    semi_additive,
+-                    trigger_hierarchies,
+-                    required_dimension: entry.required_dimension.clone(),
+-                });
+-            }
+-            Err(candidates) if candidates.is_empty() => {
+-                not_found.push(m_ref.unique_name.clone());
+-            }
+-            Err(candidates) => {
+-                ambiguous.push(serde_json::json!({
+-                    "ref": m_ref.unique_name,
+-                    "candidates": candidates.iter().map(|c| &c.unique_name).collect::<Vec<_>>(),
+-                }));
+-            }
+-        }
+-    }
+-
+-    // ── Resolve dimensions ────────────────────────────────────────────────
+-    let mut bound_dimensions: Vec<BoundDimensionExt> = vec![];
+-
+-    for sel in &mqo.dimensions {
+-        match resolve_level(sel, &snapshot.columns) {
+-            Ok(entry) => {
+-                bound_dimensions.push(BoundDimensionExt {
+-                    unique_name: entry.unique_name.clone(),
+-                    hierarchy: entry
+-                        .hierarchy
+-                        .clone()
+-                        .unwrap_or_else(|| sel.hierarchy.clone()),
+-                });
+-            }
+-            Err(candidates) if candidates.is_empty() => {
+-                not_found.push(format!("dimension {}:{}", sel.hierarchy, sel.level));
+-            }
+-            Err(candidates) => {
+-                ambiguous.push(serde_json::json!({
+-                    "ref": format!("dimension {}:{}", sel.hierarchy, sel.level),
+-                    "candidates": candidates.iter().map(|c| &c.unique_name).collect::<Vec<_>>(),
+-                }));
+-            }
+-        }
+-    }
+-
+-    // ── Resolve CalcGroupMember filters ───────────────────────────────────
+-    let mut bound_calc_group_members: Vec<BoundCalcGroupMember> = vec![];
+-
+-    for filter in &mqo.filters {
+-        if let Filter::CalcGroupMember { calc_group, member } = filter {
+-            let group_key = calc_group.to_lowercase();
+-            let member_key = member.to_lowercase();
+-
+-            let calc_entries = snapshot
+-                .describe_model
+-                .as_ref()
+-                .map_or(&[][..], |dm| dm.calc_groups.as_slice());
+-
+-            let matches: Vec<_> = calc_entries
+-                .iter()
+-                .filter(|e| {
+-                    e.group_name.to_lowercase() == group_key
+-                        && e.member_name.to_lowercase() == member_key
+-                })
+-                .collect();
+-
+-            match matches.len() {
+-                1 => {
+-                    let e = matches[0];
+-                    bound_calc_group_members.push(BoundCalcGroupMember {
+-                        calc_group: calc_group.clone(),
+-                        member: member.clone(),
+-                        unique_name: e.unique_name.clone(),
+-                        mdx: e.mdx.clone(),
+-                    });
+-                }
+-                0 => {
+-                    not_found.push(format!("calc_group_member {calc_group}::{member}"));
+-                }
+-                _ => {
+-                    ambiguous.push(serde_json::json!({
+-                        "ref": format!("calc_group_member {calc_group}::{member}"),
+-                        "candidates": matches.iter().map(|e| &e.unique_name).collect::<Vec<_>>(),
+-                    }));
+-                }
+-            }
+-        }
+-    }
+-
+-    // ── Collate results ───────────────────────────────────────────────────
+-    if !ambiguous.is_empty() {
+-        return BindResult::Ambiguous(ambiguous);
+-    }
+-    if !not_found.is_empty() {
+-        return BindResult::NotFound(not_found);
+-    }
+-
+-    BindResult::Bound(Box::new(BoundMqoOutput {
+-        mqo: mqo.clone(),
+-        measures: bound_measures,
+-        dimensions: bound_dimensions,
+-        calc_group_members: bound_calc_group_members,
+-    }))
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ #[cfg(test)]
+ mod binder_unit_tests {
+     use super::*;
+     use crate::catalog::{CalcGroupEntry, ColumnEntry, DescribeModelOutput, SemiAdditiveInfo};
+     use mqo_spec::{Filter, LevelSelection, MeasureRef, Mqo};
+ 

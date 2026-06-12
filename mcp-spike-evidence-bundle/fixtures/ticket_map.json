@@ -1,0 +1,97 @@
+{
+  "tickets": [
+    {
+      "ticket": "ATSCALE-49212",
+      "acs": [
+        {
+          "id": "AC1",
+          "text": "Session byte classifier emits per-class token counts",
+          "expected_artifact": "footprint",
+          "artifact_pointer": "/classes/system_prompt",
+          "owner": "Joe Yen"
+        },
+        {
+          "id": "AC2",
+          "text": "Catalog class tokens are captured",
+          "expected_artifact": "footprint",
+          "artifact_pointer": "/classes/catalog_describe_model",
+          "owner": "Joe Yen"
+        },
+        {
+          "id": "AC3",
+          "text": "Tool result rows class tokens are captured",
+          "expected_artifact": "footprint",
+          "artifact_pointer": "/classes/tool_result_rows",
+          "owner": "Joe Yen"
+        }
+      ]
+    },
+    {
+      "ticket": "ATSCALE-49213",
+      "acs": [
+        {
+          "id": "AC1",
+          "text": "Offline t-bench: structured arm pass@1 >= free-form arm",
+          "expected_artifact": "paramq",
+          "artifact_pointer": "/overall/structured_pass_at_1",
+          "owner": "Joe Yen"
+        },
+        {
+          "id": "AC2",
+          "text": "Validator catches schema violations",
+          "expected_artifact": "paramq",
+          "artifact_pointer": "/overall/total_caught_by_validator",
+          "owner": "Joe Yen"
+        },
+        {
+          "id": "AC3",
+          "text": "Live vendor compliance loop (RQ3) — requires live LLM",
+          "expected_artifact": "paramq",
+          "artifact_pointer": "/live_vendor_score",
+          "verdict_if_absent": "skip-needs-live",
+          "blocked_on": "live LLM vendor",
+          "owner": "Joe Yen"
+        }
+      ]
+    },
+    {
+      "ticket": "ATSCALE-49214",
+      "acs": [
+        {
+          "id": "AC1",
+          "text": "Handle store put/get round-trip completes",
+          "expected_artifact": "handle_demo",
+          "artifact_pointer": "/round_trip_ok",
+          "owner": "Joe Yen"
+        },
+        {
+          "id": "AC2",
+          "text": "Walkthrough transcript records 4 turns with requery_count=1",
+          "expected_artifact": "walkthrough",
+          "artifact_pointer": "/header/requery_count",
+          "owner": "Joe Yen"
+        }
+      ]
+    },
+    {
+      "ticket": "ATSCALE-49215",
+      "acs": [
+        {
+          "id": "AC1",
+          "text": "Session footprint baseline for Patrick's thread",
+          "expected_artifact": "footprint",
+          "artifact_pointer": "/total_tokens",
+          "owner": "Patrick"
+        },
+        {
+          "id": "AC2",
+          "text": "Lazy-catalog accuracy arm — requires live catalog port",
+          "expected_artifact": "footprint",
+          "artifact_pointer": "/lazy_catalog_accuracy",
+          "verdict_if_absent": "gap",
+          "owner": "Patrick"
+        }
+      ]
+    }
+  ]
+}

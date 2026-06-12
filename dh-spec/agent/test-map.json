@@ -1,0 +1,69 @@
+{
+  "schema": "autobuilder.test_map.v1",
+  "mappings": [
+    {
+      "src_path": "src/lib.rs",
+      "covers": [
+        "tests/ac1_round_trip.rs",
+        "tests/ac2_summary_bounded.rs",
+        "tests/ac3_capability_set.rs",
+        "tests/ac4_op_result_new_handle.rs",
+        "tests/ac5_lineage_multi_parent.rs",
+        "tests/ac6_schema_validation.rs",
+        "tests/ac7_cargo_clean.rs"
+      ],
+      "rationale": "lib.rs contains all public types; every acceptance test directly exercises types defined here"
+    },
+    {
+      "src_path": "schema/dh-spec.schema.json",
+      "covers": [
+        "tests/ac6_schema_validation.rs"
+      ],
+      "rationale": "AC6 asserts schema file existence, valid JSON, and structural shape references"
+    }
+  ],
+  "proof_lanes": [
+    {
+      "lane": "round_trip_serde",
+      "src_globs": ["src/lib.rs"],
+      "test_globs": ["tests/ac1_round_trip.rs"],
+      "confidence": 0.95
+    },
+    {
+      "lane": "summary_bounded",
+      "src_globs": ["src/lib.rs"],
+      "test_globs": ["tests/ac2_summary_bounded.rs"],
+      "confidence": 0.95
+    },
+    {
+      "lane": "capability_set",
+      "src_globs": ["src/lib.rs"],
+      "test_globs": ["tests/ac3_capability_set.rs"],
+      "confidence": 0.99
+    },
+    {
+      "lane": "op_result_new_handle",
+      "src_globs": ["src/lib.rs"],
+      "test_globs": ["tests/ac4_op_result_new_handle.rs"],
+      "confidence": 0.95
+    },
+    {
+      "lane": "lineage_multi_parent",
+      "src_globs": ["src/lib.rs"],
+      "test_globs": ["tests/ac5_lineage_multi_parent.rs"],
+      "confidence": 0.99
+    },
+    {
+      "lane": "schema_validation",
+      "src_globs": ["src/lib.rs", "schema/dh-spec.schema.json"],
+      "test_globs": ["tests/ac6_schema_validation.rs"],
+      "confidence": 0.90
+    },
+    {
+      "lane": "all_public_symbols",
+      "src_globs": ["src/lib.rs"],
+      "test_globs": ["tests/ac7_cargo_clean.rs"],
+      "confidence": 0.99
+    }
+  ]
+}

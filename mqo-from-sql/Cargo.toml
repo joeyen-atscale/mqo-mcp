@@ -1,0 +1,30 @@
+[package]
+name = "mqo-from-sql"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70.0"
+description = "Reverse-compile AtScale SQL projections into MQO JSON"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/joeyen-atscale/mqo-from-sql"
+keywords = ["semantic-layer", "olap", "mqo", "sql", "atscale"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "mqo-from-sql"
+path = "src/main.rs"
+
+[lib]
+name = "mqo_from_sql_lib"
+path = "src/lib.rs"
+
+[dependencies]
+sqlparser = "0.44"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+thiserror = "1"
+mqo-spec = { path = "../mqo-spec" }
+mqo-catalog-binder = { path = "../mqo-catalog-binder" }
+
+[dev-dependencies]
+tempfile = "3"

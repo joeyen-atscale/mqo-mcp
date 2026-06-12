@@ -1,0 +1,24 @@
+--- src/lib.rs
++++ delete match arm ColumnData::Bool(v) in extract_value
+@@ -173,20 +173,17 @@
+             .and_then(|o| *o)
+             .and_then(serde_json::Number::from_f64)
+             .map_or(Value::Null, Value::Number),
+         ColumnData::Decimal(v) | ColumnData::Str(v) | ColumnData::Date(v)
+         | ColumnData::Time(v) => v
+             .get(row_idx)
+             .and_then(|o| o.as_deref())
+             .map_or(Value::Null, |s| Value::String(s.to_string())),
+-        ColumnData::Bool(v) => v
+-            .get(row_idx)
+-            .and_then(|o| *o)
+-            .map_or(Value::Null, Value::Bool),
++         /* ~ changed by cargo-mutants ~ */
+         _ => Value::Null,
+     }
+ }
+ 
+ /// Compute per-column statistics keyed by `unique_name`.
+ fn compute_stats(dataset: &Dataset, topk: usize) -> HashMap<String, ColStats> {
+     let mut stats = HashMap::new();
+     for (col, data) in dataset.columns.iter().zip(dataset.data.iter()) {

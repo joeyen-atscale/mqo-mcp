@@ -1,0 +1,48 @@
+[[lane]]
+id = "unit-resolution"
+name = "unit-resolution"
+description = "Unit tests for resolve_measure and resolve_level helpers"
+globs = ["src/binder.rs"]
+tests = ["binder::binder_unit_tests::*"]
+confidence_floor = 0.80
+
+[[lane]]
+id = "integration-binding"
+name = "integration-binding"
+description = "Integration tests covering end-to-end bind() results"
+globs = ["src/binder.rs", "src/main.rs"]
+tests = ["integration_tests::*"]
+confidence_floor = 0.80
+
+[[lane]]
+id = "cli-integration"
+name = "cli-integration"
+description = "CLI argument parsing, exit codes, file I/O via process::Command"
+globs = ["src/main.rs", "tests/integration_cli.rs"]
+tests = ["integration_cli::*"]
+confidence_floor = 0.75
+
+[[lane]]
+id = "serde-roundtrip"
+name = "serde-roundtrip"
+description = "CatalogSnapshot serde round-trip and type definitions"
+globs = ["src/catalog.rs"]
+tests = ["binder::binder_unit_tests::bind_semi_additive_flags"]
+confidence_floor = 0.75
+
+[[lane]]
+id = "scaffold-artifacts"
+name = "scaffold-artifacts"
+description = "Autobuilder scaffold files, receipts, CI workflow, scripts — not implementation; validated structurally"
+globs = [
+  "agent/**",
+  "scripts/**",
+  "target/**",
+  ".github/**",
+  "Cargo.toml",
+  "Cargo.lock",
+  "mutants.out/**",
+  "mutants.out.old/**"
+]
+tests = ["cargo_check", "cargo_test_release"]
+confidence_floor = 0.70

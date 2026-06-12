@@ -1,0 +1,21 @@
+--- src/binder.rs
++++ delete match arm 1 in resolve_level
+@@ -114,17 +114,17 @@
+                     .is_some_and(|h| h.to_lowercase() == hier_key)
+                 && c.level
+                     .as_deref()
+                     .is_some_and(|l| l.to_lowercase() == level_key)
+         })
+         .collect();
+ 
+     match candidates.len() {
+-        1 => Ok(candidates[0]),
++         /* ~ changed by cargo-mutants ~ */
+         0 => Err(vec![]),
+         _ => Err(candidates),
+     }
+ }
+ 
+ // ── Main bind function ────────────────────────────────────────────────────────
+ 
+ /// Bind an MQO against a catalog snapshot.

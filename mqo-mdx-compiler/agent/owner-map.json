@@ -1,0 +1,26 @@
+{
+  "schema": "autobuilder.owner_map.v1",
+  "project": "mqo-mdx-compiler",
+  "owners": [
+    {
+      "path_glob": "src/**",
+      "owner": "Joe Yen <joe.yen@atscale.com>",
+      "role": "primary"
+    },
+    {
+      "path_glob": "tests/**",
+      "owner": "Joe Yen <joe.yen@atscale.com>",
+      "role": "primary"
+    },
+    {
+      "path_glob": "agent/**",
+      "owner": "autobuilder",
+      "role": "harness"
+    },
+    {
+      "path_glob": "scripts/**",
+      "owner": "autobuilder",
+      "role": "harness"
+    }
+  ]
+}

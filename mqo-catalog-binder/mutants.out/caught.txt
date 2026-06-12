@@ -1,0 +1,28 @@
+src/main.rs:38:5: replace main with ()
+src/binder.rs:76:41: replace && with || in resolve_measure
+src/binder.rs:76:28: replace == with != in resolve_measure
+src/binder.rs:76:73: replace == with != in resolve_measure
+src/binder.rs:79:24: replace == with != in resolve_measure
+src/binder.rs:82:24: replace > with == in resolve_measure
+src/binder.rs:82:24: replace > with < in resolve_measure
+src/binder.rs:89:41: replace && with || in resolve_measure
+src/binder.rs:89:28: replace == with != in resolve_measure
+src/binder.rs:89:67: replace == with != in resolve_measure
+src/binder.rs:93:9: delete match arm 1 in resolve_measure
+src/binder.rs:115:17: replace && with || in resolve_level
+src/binder.rs:112:17: replace && with || in resolve_level
+src/binder.rs:111:20: replace == with != in resolve_level
+src/binder.rs:114:55: replace == with != in resolve_level
+src/binder.rs:117:55: replace == with != in resolve_level
+src/binder.rs:122:9: delete match arm 1 in resolve_level
+src/binder.rs:165:32: replace match guard candidates.is_empty() with true in bind
+src/binder.rs:165:32: replace match guard candidates.is_empty() with false in bind
+src/binder.rs:191:32: replace match guard candidates.is_empty() with true in bind
+src/binder.rs:191:32: replace match guard candidates.is_empty() with false in bind
+src/binder.rs:220:25: replace && with || in bind
+src/binder.rs:219:49: replace == with != in bind
+src/binder.rs:220:57: replace == with != in bind
+src/binder.rs:225:17: delete match arm 1 in bind
+src/binder.rs:234:17: delete match arm 0 in bind
+src/binder.rs:248:8: delete ! in bind
+src/binder.rs:251:8: delete ! in bind

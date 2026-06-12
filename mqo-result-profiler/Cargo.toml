@@ -1,0 +1,40 @@
+[package]
+name = "mqo-result-profiler"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70.0"
+description = "Typed column inventory from query_multidimensional response + catalog for downstream charting"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/joeyen-atscale/mqo-result-profiler"
+keywords = ["semantic-layer", "olap", "mqo", "profiler", "atscale"]
+categories = ["data-structures", "encoding"]
+
+[lib]
+name = "mqo_result_profiler"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mqo-result-profiler"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+thiserror = "1"
+
+[dev-dependencies]
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+module_name_repetitions = "allow"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"

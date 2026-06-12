@@ -1,0 +1,23 @@
+{
+  "model": "sales",
+  "measures": [
+    { "unique_name": "sales.cumulative_revenue" }
+  ],
+  "dimensions": [
+    { "hierarchy": "date.calendar", "level": "day" }
+  ],
+  "filters": [
+    {
+      "type": "range",
+      "level": "date.calendar.day",
+      "lo": 20260101,
+      "hi": 20261231
+    }
+  ],
+  "time_intelligence": [
+    { "op": "running_total" }
+  ],
+  "order": [{ "key": "date.calendar.day", "direction": "asc" }],
+  "limit": null,
+  "non_empty": true
+}

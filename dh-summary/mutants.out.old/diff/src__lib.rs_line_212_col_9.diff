@@ -1,0 +1,26 @@
+--- src/lib.rs
++++ delete match arm ColumnData::Int(v) in stats_int
+@@ -204,22 +204,17 @@
+         DType::Bool => stats_bool(data),
+         DType::Date | DType::Time => stats_date(data),
+     }
+ }
+ 
+ #[allow(clippy::cast_precision_loss)]
+ fn stats_int(data: &ColumnData) -> ColStats {
+     let (vals, null_count, total) = match data {
+-        ColumnData::Int(v) => {
+-            let non_null: Vec<i64> = v.iter().filter_map(|o| *o).collect();
+-            let nulls = v.iter().filter(|o| o.is_none()).count() as u64;
+-            let tot = v.len() as u64;
+-            (non_null, nulls, tot)
+-        }
++         /* ~ changed by cargo-mutants ~ */
+         _ => (vec![], 0, 0),
+     };
+     let distinct = count_distinct_int(&vals);
+     if vals.is_empty() {
+         return ColStats {
+             min: None,
+             max: None,
+             sum: None,

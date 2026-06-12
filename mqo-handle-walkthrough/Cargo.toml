@@ -1,0 +1,23 @@
+[package]
+name = "mqo-handle-walkthrough"
+version = "0.1.0"
+edition = "2021"
+description = "4-turn POC walkthrough asserting zero re-queries via mqo-duckdb-handle-store (Vega-Lite chart, offline fixture mode)"
+license = "MIT"
+
+[[bin]]
+name = "mqo-handle-walkthrough"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+mqo-duckdb-handle-store = { git = "https://github.com/joeyen-atscale/mqo-duckdb-handle-store" }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = []
+duckdb = ["mqo-duckdb-handle-store/duckdb"]

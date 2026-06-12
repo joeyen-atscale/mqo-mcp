@@ -1,0 +1,110 @@
+{
+  "schema": "autobuilder.intent_card.v1",
+  "prd_source": "/Users/jsy/Documents/PRDs/PRD-mqo-chart-recommender.md",
+  "intent_slug": "mqo-chart-recommender",
+  "root_motivation": "The bi-toolkit vision needs a deterministic, pure-Rust step that maps a typed column inventory (result-profile.v1) to a chart mark and encoding, so downstream emitters (Vega) receive a schema-valid recommendation instead of requiring the LLM to re-inspect data or guess chart shapes each time.",
+  "user_persona": "AtScale MCP server or LLM orchestrator calling the lib as part of the bi-toolkit pipeline: produces chart-recommendation.v1 JSON from result-profile.v1 input, no render dependency, no network.",
+  "unfakeable_metric": {
+    "name": "acceptance_tests_passing_count",
+    "lower_is_better": false,
+    "harness_command": "bash scripts/run-metrics.sh",
+    "target": 7
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC1",
+      "level": "MUST",
+      "description": "A profile with 1 measure + 1 temporal dim → mark = Line, x = temporal field, y = measure field.",
+      "test": "tests/ac1_line_for_temporal.rs"
+    },
+    {
+      "id": "AC2",
+      "level": "MUST",
+      "description": "A profile with 1 measure + 1 nominal dim (low cardinality) → mark = Bar.",
+      "test": "tests/ac2_bar_for_nominal.rs"
+    },
+    {
+      "id": "AC3",
+      "level": "MUST",
+      "description": "A profile with 2 measures, 0 dims → mark = Point (scatter), x and y being the two measures.",
+      "test": "tests/ac3_scatter_two_measures.rs"
+    },
+    {
+      "id": "AC4",
+      "level": "MUST",
+      "description": "A profile with 1 measure, 0 dims → mark = BigNumber.",
+      "test": "tests/ac4_kpi_single_measure.rs"
+    },
+    {
+      "id": "AC5",
+      "level": "MUST",
+      "description": "A high-cardinality nominal dim (> 25) still returns mark = Bar but alternatives contains Table with a cardinality rationale.",
+      "test": "tests/ac5_high_cardinality_alt.rs"
+    },
+    {
+      "id": "AC6",
+      "level": "MUST",
+      "description": "A 0-measure profile → mark = Table with a rationale explaining nothing is quantitative.",
+      "test": "tests/ac6_table_no_measures.rs"
+    },
+    {
+      "id": "AC7",
+      "level": "MUST",
+      "description": "Every recommendation carries a non-empty rationale and deterministic alternatives ordering.",
+      "test": "tests/ac7_rationale_deterministic.rs"
+    }
+  ],
+  "scope": [
+    "Accept result-profile.v1 JSON (serde_json::Value or local mirror struct)",
+    "Implement the full selection rule table from the PRD (BigNumber, Bar, Line, Point, Rect, Table marks)",
+    "Emit chart-recommendation.v1 JSON: {mark, encoding, rationale, alternatives}",
+    "Thin binary: mqo-chart-recommender --profile <f> [--format json|human]",
+    "Deterministic, pure, no-network, macOS-buildable"
+  ],
+  "non_goals": [
+    "Rendering or Vega-Lite spec emission (that is mqo-vega-emitter)",
+    "Reading rows or the catalog directly — only result-profile.v1 consumed",
+    "theta/pie encodings beyond leaving the channel None in v1",
+    "Integration with mqo-result-profiler as a Rust crate dependency",
+    "Network access of any kind",
+    "Percent/semi-additive measure special-casing (v2)"
+  ],
+  "hard_constraints": {
+    "rust_edition": "2024",
+    "target_kind": "lib",
+    "deny_unsafe": true,
+    "max_deps": 5,
+    "msrv": "1.85.0",
+    "additional": {
+      "no_network": true
+    }
+  },
+  "five_whys_trace": [
+    {
+      "why": 1,
+      "q": "Why does the bi-toolkit need a chart recommender at all?",
+      "a": "The LLM downstream receives a result profile but has no deterministic step to choose a chart — it guesses, producing inconsistent results."
+    },
+    {
+      "why": 2,
+      "q": "Why can't the LLM just choose the chart each time from the data?",
+      "a": "The profile already encodes role, temporality, and cardinality — the information needed for the choice is fully present; re-inspecting data wastes tokens and introduces variance."
+    },
+    {
+      "why": 3,
+      "q": "Why a pure Rust lib rather than a prompt template?",
+      "a": "A prompt template is not testable, not versioned as code, and cannot gate on failing acceptance tests; a Rust lib can be unit-tested, deployed as a binary, and embedded in the MCP server."
+    }
+  ],
+  "ambiguities_resolved": [
+    {
+      "question": "Does the lib need mqo-result-profiler as a Rust crate dep?",
+      "resolution": "No — it reads result-profile.v1 JSON (serde_json::Value or a mirrored local struct). No crate dependency on mqo-result-profiler."
+    },
+    {
+      "question": "Is theta/pie encoding in scope for v1?",
+      "resolution": "Non-goal: leave theta channel as None in v1."
+    }
+  ],
+  "created_at": "2026-06-09T00:00:00Z"
+}

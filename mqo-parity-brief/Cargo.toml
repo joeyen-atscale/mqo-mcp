@@ -1,0 +1,19 @@
+[package]
+name = "mqo-parity-brief"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88.0"
+description = "Generates a human-readable Markdown parity brief from mqo-parity-coverage-tracker JSONL history"
+authors = ["Joe Yen <joe.yen@atscale.com>"]
+
+[[bin]]
+name = "mqo-parity-brief"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

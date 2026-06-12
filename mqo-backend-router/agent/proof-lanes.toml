@@ -1,0 +1,78 @@
+# proof-lanes.toml — change-class -> required-lane routing.
+# READ-ONLY after scaffold. The edit-agent must NOT modify this.
+#
+# Every changed path in Stage 3 must resolve to >= 1 lane. All resolved
+# lanes must be green for the iteration to advance.
+
+[[lane]]
+id = "routing-logic"
+description = "Core routing logic in src/lib.rs"
+globs = ["src/lib.rs"]
+required_commands = [
+  "cargo check",
+  "cargo clippy -- -D warnings",
+  "cargo test --release --lib",
+]
+
+[[lane]]
+id = "binary-dispatch"
+description = "CLI binary src/main.rs — arg parsing, I/O, exit codes"
+globs = ["src/main.rs"]
+required_commands = [
+  "cargo check",
+  "cargo clippy -- -D warnings",
+  "cargo build --release --bin mqo-route",
+  "cargo test --release --test integration_cli",
+]
+
+[[lane]]
+id = "integration-tests"
+description = "Integration tests for the mqo-route binary"
+globs = ["tests/**/*.rs"]
+required_commands = [
+  "cargo test --release --test integration_cli",
+]
+
+[[lane]]
+id = "deps"
+description = "Dependency and supply-chain configuration"
+globs = ["Cargo.toml", "Cargo.lock", "deny.toml"]
+required_commands = [
+  "cargo check",
+  "cargo deny check bans licenses sources",
+]
+
+[[lane]]
+id = "ci"
+description = "GitHub Actions workflow files"
+globs = [".github/workflows/**"]
+required_commands = [
+  "scripts/audit.sh",
+]
+
+[[lane]]
+id = "harness-readonly"
+description = "Harness files; must not change after scaffold"
+globs = [
+  "scripts/run-metrics.sh",
+  "scripts/audit.sh",
+  "scripts/risk-gate.sh",
+  "clippy.toml",
+  "rust-toolchain.toml",
+]
+required_commands = [
+  "exit 1",
+]
+note = "Any change to a harness-readonly path fails the gate. Use an intent-card amendment to modify."
+
+[[lane]]
+id = "agent-metadata"
+description = "Agent metadata files (intent-card, owner-map, test-map, proof-lanes)"
+globs = ["agent/**"]
+required_commands = []
+
+[[lane]]
+id = "docs"
+description = "Documentation and license files"
+globs = ["README.md", "LICENSE*", "*.md", "CHANGELOG*"]
+required_commands = []

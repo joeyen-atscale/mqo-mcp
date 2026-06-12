@@ -1,0 +1,2 @@
+# dh-export clippy configuration
+msrv = "1.70.0"

@@ -1,0 +1,21 @@
+--- src/lib.rs
++++ replace + with * in stats_int
+@@ -219,17 +219,17 @@
+     };
+     let distinct = count_distinct_int(&vals);
+     if vals.is_empty() {
+         return ColStats {
+             min: None,
+             max: None,
+             sum: None,
+             mean: None,
+-            distinct: Some(distinct + null_count.min(1)),
++            distinct: Some(distinct * /* ~ changed by cargo-mutants ~ */ null_count.min(1)),
+             top_k: None,
+         };
+     }
+     let min = vals.iter().copied().min().unwrap() as f64;
+     let max = vals.iter().copied().max().unwrap() as f64;
+     let sum: f64 = vals.iter().map(|&v| v as f64).sum();
+     let non_null_count = total - null_count;
+     let mean = sum / non_null_count as f64;

@@ -1,0 +1,21 @@
+--- src/lib.rs
++++ replace == with != in generate_notes
+@@ -436,17 +436,17 @@
+                             }
+                         }
+                     }
+                 }
+             }
+         }
+ 
+         // Date span note
+-        if col.dtype == DType::Date || col.dtype == DType::Time {
++        if col.dtype != /* ~ changed by cargo-mutants ~ */ DType::Date || col.dtype == DType::Time {
+             if let Some(cs) = stats.get(&col.unique_name) {
+                 if let Some(topk_vals) = &cs.top_k {
+                     let min_val = topk_vals
+                         .iter()
+                         .find(|v| v.get("label").and_then(Value::as_str) == Some("min"))
+                         .and_then(|v| v.get("value"))
+                         .and_then(Value::as_str);
+                     let max_val = topk_vals

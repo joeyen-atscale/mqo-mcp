@@ -1,0 +1,300 @@
+{
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "summary": "Success",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 4.150575916,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=dh-spec@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 2.236736166,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=dh-spec@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "dh-spec",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "emit_summary_schema",
+            "return_type": "-> String",
+            "span": {
+              "start": {
+                "line": 331,
+                "column": 1
+              },
+              "end": {
+                "line": 341,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 339,
+              "column": 5
+            },
+            "end": {
+              "line": 340,
+              "column": 91
+            }
+          },
+          "replacement": "String::new()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_339_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_339_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.259489542,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=dh-spec@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.967149,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=dh-spec@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "dh-spec",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "emit_op_result_schema",
+            "return_type": "-> String",
+            "span": {
+              "start": {
+                "line": 343,
+                "column": 1
+              },
+              "end": {
+                "line": 352,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 350,
+              "column": 5
+            },
+            "end": {
+              "line": 351,
+              "column": 91
+            }
+          },
+          "replacement": "String::new()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_350_col_5.log",
+      "diff_path": "diff/src__lib.rs_line_350_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 5.575303083,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=dh-spec@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.337505,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=dh-spec@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "dh-spec",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "emit_summary_schema",
+            "return_type": "-> String",
+            "span": {
+              "start": {
+                "line": 331,
+                "column": 1
+              },
+              "end": {
+                "line": 341,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 339,
+              "column": 5
+            },
+            "end": {
+              "line": 340,
+              "column": 91
+            }
+          },
+          "replacement": "\"xyzzy\".into()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_339_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_339_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 6.2466685,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=dh-spec@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.336811625,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=dh-spec@0.1.0"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "package": "dh-spec",
+          "file": "src/lib.rs",
+          "function": {
+            "function_name": "emit_op_result_schema",
+            "return_type": "-> String",
+            "span": {
+              "start": {
+                "line": 343,
+                "column": 1
+              },
+              "end": {
+                "line": 352,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 350,
+              "column": 5
+            },
+            "end": {
+              "line": 351,
+              "column": 91
+            }
+          },
+          "replacement": "\"xyzzy\".into()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__lib.rs_line_350_col_5_001.log",
+      "diff_path": "diff/src__lib.rs_line_350_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 6.804102083,
+          "process_status": "Success",
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--verbose",
+            "--package=dh-spec@0.1.0"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 0.355083916,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/jsy/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--verbose",
+            "--package=dh-spec@0.1.0"
+          ]
+        }
+      ]
+    }
+  ],
+  "total_mutants": 4,
+  "missed": 0,
+  "caught": 4,
+  "timeout": 0,
+  "unviable": 0,
+  "success": 0,
+  "start_time": "2026-06-08T20:55:30.314773Z",
+  "end_time": "2026-06-08T20:55:43.946671Z",
+  "cargo_mutants_version": "26.0.0"
+}

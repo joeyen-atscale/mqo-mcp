@@ -1,0 +1,30 @@
+{
+  "models": ["sales"],
+  "columns": [
+    { "unique_name": "sales.revenue", "label": "Revenue", "kind": "measure", "is_calc": false },
+    { "unique_name": "sales.units_sold", "label": "Units Sold", "kind": "measure", "is_calc": false },
+    { "unique_name": "sales.margin_pct", "label": "Margin %", "kind": "measure", "is_calc": true },
+    {
+      "unique_name": "sales.balance",
+      "label": "Balance",
+      "kind": "measure",
+      "is_calc": false,
+      "semi_additive": { "trigger_hierarchies": ["time.calendar"] },
+      "required_dimension": "account.account_type"
+    },
+    { "unique_name": "time.calendar.[Year]", "label": "Year", "kind": "level", "hierarchy": "time.calendar", "level": "Year", "is_calc": false },
+    { "unique_name": "time.calendar.[Month]", "label": "Month", "kind": "level", "hierarchy": "time.calendar", "level": "Month", "is_calc": false },
+    { "unique_name": "geo.country.[Country]", "label": "Country", "kind": "level", "hierarchy": "geo.country", "level": "Country", "is_calc": false },
+    { "unique_name": "customer.account.[Account]", "label": "Account", "kind": "level", "hierarchy": "customer.account", "level": "Account", "is_calc": false }
+  ],
+  "describe_model": {
+    "calc_groups": [
+      {
+        "group_name": "Time Intelligence",
+        "member_name": "YTD",
+        "unique_name": "calc.time_intel.YTD",
+        "mdx": "Aggregate(PeriodsToDate([Time].[Calendar].[Year]))"
+      }
+    ]
+  }
+}

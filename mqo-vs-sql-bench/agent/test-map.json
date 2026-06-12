@@ -1,0 +1,28 @@
+{
+  "schema": "autobuilder.test_map.v1",
+  "routes": [
+    {
+      "glob": "src/**",
+      "required_proof": [
+        "cargo test --workspace",
+        "tests/integration.rs"
+      ]
+    },
+    {
+      "glob": "Cargo.toml",
+      "required_proof": ["cargo check --workspace", "cargo deny check"]
+    },
+    {
+      "glob": "Cargo.lock",
+      "required_proof": ["cargo deny check"]
+    }
+  ],
+  "ac_test_mapping": {
+    "AC1": ["ac1_per_question_table_has_correct_row_count", "ac1_each_row_has_both_arms"],
+    "AC2": ["ac2_aggregate_covers_all_five_metrics", "ac2_deltas_are_b_minus_a"],
+    "AC3": ["ac3_grader_is_configurable_not_hardcoded"],
+    "AC4": ["ac4_aggregate_names_winner_per_metric", "ac4_markdown_report_contains_required_sections", "ac4_json_report_structure"],
+    "AC5": ["ac5_end_to_end_fixture_run_no_external_deps"],
+    "AC6": ["ac6_cargo_test_release_passes"]
+  }
+}

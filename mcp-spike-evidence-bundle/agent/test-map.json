@@ -1,0 +1,11 @@
+{
+  "test_map": [
+    {"ac": "AC1", "test_file": "tests/acceptance_AC1.rs", "level": "MUST"},
+    {"ac": "AC2", "test_file": "tests/acceptance_AC2.rs", "level": "MUST"},
+    {"ac": "AC3", "test_file": "tests/acceptance_AC3.rs", "level": "MUST"},
+    {"ac": "AC4", "test_file": "tests/acceptance_AC4.rs", "level": "MUST"},
+    {"ac": "AC5", "test_file": "tests/acceptance_AC5.rs", "level": "MUST"},
+    {"ac": "AC6", "test_file": "tests/acceptance_AC6.rs", "level": "MUST"},
+    {"ac": "AC7", "test_file": "tests/acceptance_AC7.rs", "level": "MUST"}
+  ]
+}

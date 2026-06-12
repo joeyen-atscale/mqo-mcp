@@ -1,0 +1,26 @@
+--- src/lib.rs
++++ replace row_to_map -> Row with Default::default()
+@@ -148,22 +148,17 @@
+         }
+     }
+ 
+     indices.iter().map(|&row_idx| row_to_map(dataset, row_idx)).collect()
+ }
+ 
+ /// Convert a single row index into a `Row` (`HashMap`<String, Value>).
+ fn row_to_map(dataset: &Dataset, row_idx: usize) -> Row {
+-    let mut map = Row::new();
+-    for (col, data) in dataset.columns.iter().zip(dataset.data.iter()) {
+-        let val = extract_value(data, row_idx);
+-        map.insert(col.name.clone(), val);
+-    }
+-    map
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Extract the JSON `Value` at position `row_idx` from [`ColumnData`].
+ fn extract_value(data: &ColumnData, row_idx: usize) -> Value {
+     match data {
+         ColumnData::Int(v) => v
+             .get(row_idx)
+             .and_then(|o| *o)

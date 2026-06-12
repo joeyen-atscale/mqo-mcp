@@ -1,0 +1,21 @@
+--- src/binder.rs
++++ replace match guard candidates.is_empty() with false in bind
+@@ -157,17 +157,17 @@
+                 bound_measures.push(BoundMeasureExt {
+                     unique_name: entry.unique_name.clone(),
+                     is_calc: entry.is_calc,
+                     semi_additive,
+                     trigger_hierarchies,
+                     required_dimension: entry.required_dimension.clone(),
+                 });
+             }
+-            Err(candidates) if candidates.is_empty() => {
++            Err(candidates) if false /* ~ changed by cargo-mutants ~ */ => {
+                 not_found.push(m_ref.unique_name.clone());
+             }
+             Err(candidates) => {
+                 ambiguous.push(serde_json::json!({
+                     "ref": m_ref.unique_name,
+                     "candidates": candidates.iter().map(|c| &c.unique_name).collect::<Vec<_>>(),
+                 }));
+             }
