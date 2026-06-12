@@ -315,47 +315,49 @@ fn main() {
     // grounding guards run on live data instead of a hand-edited snapshot.
     if args.capture_live_domains {
         match &engine {
-            ServerEngine::Live(_) => {
+            ServerEngine::Live(ex) => {
                 // Prefer the explicit --catalog-model; else the sole discovered
-                // model; else the first key with a warning (probe may bind wrong).
+                // model; else the first key with a warning.
                 let model = args.catalog_model.clone().or_else(|| {
                     if xmla_model_coords.len() > 1 {
                         eprintln!(
                             "mqo-mcp-server: WARN: --capture-live-domains: {} models discovered \
-                             and no --catalog-model given; probing against an arbitrary one",
+                             and no --catalog-model given; using an arbitrary one",
                             xmla_model_coords.len()
                         );
                     }
                     xmla_model_coords.keys().next().cloned()
                 });
-                if let Some(model) = model {
-                    let cfg = mqo_mcp_server::catalog_ingest::IngestConfig {
-                        domain_cap: args.catalog_domain_cap,
-                        max_levels: args.catalog_max_levels,
-                        probe_measure_attempts: 12,
-                    };
-                    let sum = mqo_mcp_server::catalog_ingest::capture_domains(
-                        &mut catalog,
-                        &stats,
-                        &tools,
-                        args.row_threshold,
-                        &engine,
-                        args.force_backend.as_deref(),
-                        &capabilities,
-                        &xmla_model_coords,
-                        &model,
-                        &cfg,
-                    );
-                    eprintln!(
-                        "mqo-mcp-server: live catalog ingestion: {} levels seen, \
-                         {} domains captured, {} over-cap, {} errored, {}ms",
-                        sum.levels_seen, sum.domains_captured, sum.over_cap, sum.errored, sum.wall_ms
-                    );
-                } else {
-                    eprintln!(
-                        "mqo-mcp-server: --capture-live-domains: no model coords \
-                         available; skipping ingestion"
-                    );
+                // Resolve the XMLA (catalog, cube) for the chosen model.
+                let coords = model.as_ref().and_then(|m| xmla_model_coords.get(m).cloned());
+                match coords {
+                    Some((xmla_catalog, cube)) => {
+                        let cfg = mqo_mcp_server::catalog_ingest::IngestConfig {
+                            domain_cap: args.catalog_domain_cap,
+                            max_levels: args.catalog_max_levels,
+                        };
+                        let sum = mqo_mcp_server::catalog_ingest::ingest_live_metadata(
+                            &mut catalog,
+                            ex,
+                            &xmla_catalog,
+                            &cube,
+                            &cfg,
+                        );
+                        eprintln!(
+                            "mqo-mcp-server: live catalog ingestion (MDSCHEMA): \
+                             {} measures ({} semi-additive), {} levels seen / {} mapped, \
+                             {} domains captured, {} over-cap, {} errored, {}ms",
+                            sum.measures_seen, sum.semi_additive_found, sum.levels_seen,
+                            sum.levels_mapped, sum.domains_captured, sum.over_cap,
+                            sum.errored, sum.wall_ms
+                        );
+                    }
+                    None => {
+                        eprintln!(
+                            "mqo-mcp-server: --capture-live-domains: no XMLA coords for model \
+                             {model:?}; skipping ingestion"
+                        );
+                    }
                 }
             }
             ServerEngine::Fixture => {

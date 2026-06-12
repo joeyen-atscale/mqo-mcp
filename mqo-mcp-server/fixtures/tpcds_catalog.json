@@ -2262,13 +2262,7 @@
       "unique_name": "tpcds_benchmark_model.inventory_quantity_on_hand",
       "label": "Inventory Quantity On Hand",
       "kind": "measure",
-      "is_calc": false,
-      "semi_additive": {
-        "trigger_hierarchies": [
-          "inventory_date_dimensions",
-          "inventory_date_week_hierarchy"
-        ]
-      }
+      "is_calc": false
     },
     {
       "unique_name": "tpcds_benchmark_model.purchased_amount_in_catalog",

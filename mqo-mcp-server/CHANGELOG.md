@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.22.0 — 2026-06-12
+
+- **live catalog ingestion via XMLA MDSCHEMA** (PRD-mqo-live-catalog-ingestion
+  v0.2) — supersedes the v0.21.0 MQO domain probe. `catalog_ingest` now pulls
+  metadata from `MDSCHEMA_MEASURES` (aggregator → `semi_additive`; only 10–13
+  First/LastChild/NonEmpty count, NOT 9 AverageOfChildren), `MDSCHEMA_LEVELS`
+  (`LEVEL_DBTYPE` → value_type, `LEVEL_CARDINALITY` → gate), and `MDSCHEMA_MEMBERS`
+  (domains, fetched only for levels ≤ cap). value_type is inferred from the
+  captured member captions (the compared-against type), falling back to dbtype.
+  Name mapping (OQ-5): `snake(DIMENSION caption) == catalog hierarchy` +
+  `LEVEL_NAME == catalog level`. No measure-pairing (OQ-4 dissolved), no query
+  execution, cardinality-gated. Backed by `mqo-auth-bridge` v0.4.0
+  `LiveExecutor::discover_mdschema`.
+  - Verified against mcp-aws: 86 measures (**0 semi-additive — faithful to the
+    live model**, which sums inventory-on-hand), 209/423 levels mapped, 60 domains
+    captured, 0 errored. The earlier fixture edit marking inventory semi-additive
+    was unfaithful and is **reverted**.
+  - Flags unchanged: `--capture-live-domains`, `--catalog-domain-cap` (1000),
+    `--catalog-max-levels` (200), `--catalog-model`. Fail-open; startup summary.
+  - Follow-on: ~half of levels unmapped (MDX↔snake naming divergence, OQ-5);
+    full column-list ingestion (no `--catalog` file) and cache/refresh (FR-5);
+    member-fetch latency (~1.7s/level) wants batching/parallelism.
+
 ## v0.21.0 — 2026-06-12
 
 - **live catalog domain ingestion** (PRD-mqo-live-catalog-ingestion, slice 1).

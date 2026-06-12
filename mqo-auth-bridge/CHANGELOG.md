@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.0 — 2026-06-12
+
+- **MDSCHEMA discovery** on `LiveExecutor` (PRD-mqo-live-catalog-ingestion):
+  `discover_mdschema(request_type, catalog, cube, level)` mints a bearer token via
+  `fetch_token_sync`, POSTs an XMLA `Discover` (Tabular), and returns the parsed
+  `<row>` rowsets as `Vec<BTreeMap<String,String>>`. Used for `MDSCHEMA_MEASURES`
+  (aggregator → semi_additive/is_calc), `MDSCHEMA_LEVELS` (dbtype + cardinality),
+  and `MDSCHEMA_MEMBERS` (level domain). Dependency-free rowset parser
+  (`parse_xmla_rows` + `xml_unescape`).
+
 ## v0.3.1 — 2026-06-11
 
 Bump rust-toolchain channel from 1.85.0 to 1.88.0 to resolve MSRV conflict with transitive ICU/idna deps (icu_collections, idna_adapter v2.x require rustc ≥ 1.86).

@@ -1,72 +1,77 @@
-//! Live catalog domain ingestion (PRD-mqo-live-catalog-ingestion, slice 1).
+//! Live catalog metadata ingestion via XMLA MDSCHEMA (PRD-mqo-live-catalog-ingestion v0.2).
 //!
-//! When the server runs in live mode (`ServerEngine::Live`) and
-//! `--capture-live-domains` is set, this module probes the cluster for each
-//! dimension level's enumerated member domain — one bounded `measure + level`
-//! query per level through the existing [`crate::pipeline::run`] path — and
-//! layers `value_type` / `domain` / `expected_key_shape` onto the in-memory
-//! catalog's level columns. This is the live-data source for the validator
-//! filter-level guard and the binder member-grounding check, replacing the
-//! hand-edited fixture domains.
+//! When the server runs in live mode and `--capture-live-domains` is set, this
+//! module pulls catalog metadata from the cluster's **MDSCHEMA Discover** rowsets
+//! and layers it onto the in-memory catalog's columns:
+//!   * `MDSCHEMA_MEASURES` → `semi_additive` (aggregator ∈ {10,11,12,13};
+//!     First/LastChild, First/LastNonEmpty — NOT 9 AverageOfChildren, which AtScale
+//!     applies to totals/calcs).
+//!   * `MDSCHEMA_LEVELS`   → `value_type` (`LEVEL_DBTYPE`) + cardinality gating
+//!     (`LEVEL_CARDINALITY`).
+//!   * `MDSCHEMA_MEMBERS`  → `domain` (member captions), fetched ONLY for levels
+//!     with `LEVEL_CARDINALITY ≤ cap`.
 //!
-//! Scope of this slice (per the PRD): the bounded-DISTINCT **domain** probe
-//! (FR-2), capped (FR-2/NFR-2), fail-open per level (FR-3), with a startup
-//! summary (FR-4). Full live **column/`semi_additive`** ingestion (FR-1, gated
-//! on PRD OQ-1) and disk caching/refresh (FR-5) are follow-on.
+//! This supersedes the v0.21.0 MQO domain probe: no measure-pairing, no query
+//! execution, cardinality-gated, types from metadata. The validator filter-level
+//! guard and binder member-grounding check then run on live data, not a fixture.
+//!
+//! Name mapping (PRD OQ-5): MDSCHEMA is MDX form (`[Store Dimension]`, captions);
+//! the catalog is snake_case (`store_dimension`, level label `Store State Name`).
+//! We map `snake(DIMENSION caption) == catalog hierarchy` and
+//! `LEVEL_NAME == catalog level label`; levels that don't map are counted + skipped.
 
-use crate::pipeline::{self, ToolPaths};
-use crate::probe::BackendCapabilities;
+use mqo_auth_bridge::LiveExecutor;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 /// Operator-tunable ingestion bounds.
 pub struct IngestConfig {
-    /// Max distinct members enumerated per level; above this, carry a descriptor only.
+    /// Max distinct members enumerated per level; above this, `value_type` is
+    /// still set but the domain is not fetched (descriptor only).
     pub domain_cap: usize,
-    /// Max number of levels probed (bounds startup wall-time on wide models).
+    /// Max number of `MDSCHEMA_MEMBERS` fetches (bounds startup wall-time).
     pub max_levels: usize,
-    /// How many catalog measures to try when finding one that reaches a level's fact.
-    pub probe_measure_attempts: usize,
 }
 
 /// Outcome counts for the startup summary (FR-4).
 #[derive(Default)]
 pub struct IngestSummary {
+    pub measures_seen: usize,
+    pub semi_additive_found: usize,
     pub levels_seen: usize,
+    pub levels_mapped: usize,
     pub domains_captured: usize,
     pub over_cap: usize,
     pub errored: usize,
     pub wall_ms: u128,
 }
 
-/// Extract the dimension-column value from a result row. XMLA-mangled keys: a
-/// MEASURE is `[Name]` → `_x005b_…`; a level is table-qualified
-/// `atscale_catalogs[Name]` → does NOT start with `_x005b_`. Integer-valued
-/// floats (e.g. a `5159.0` week sequence) render as `"5159"`.
-fn dim_value(row: &Value) -> Option<String> {
-    let obj = row.as_object()?;
-    for (k, v) in obj {
-        if k.starts_with("_x005b_") {
-            continue; // measure column
-        }
-        return match v {
-            Value::String(s) if !s.is_empty() => Some(s.clone()),
-            Value::Number(n) => {
-                if let Some(f) = n.as_f64() {
-                    if f.fract() == 0.0 {
-                        return Some((f as i64).to_string());
-                    }
-                }
-                Some(n.to_string())
-            }
-            _ => None,
-        };
-    }
-    None
+/// `[Store Dimension]` → `Store Dimension`; `[A].[B]` → `A` (first segment).
+fn strip_brackets(unique_name: &str) -> String {
+    let first = unique_name.split("].[").next().unwrap_or(unique_name);
+    first.trim_start_matches('[').trim_end_matches(']').to_string()
 }
 
-fn infer_value_type(samples: &[String]) -> &'static str {
+/// `Store Dimension` → `store_dimension` (the catalog hierarchy convention).
+fn snake(caption: &str) -> String {
+    caption.to_lowercase().replace(' ', "_")
+}
+
+/// Map an OLE DB `LEVEL_DBTYPE` to the validator's `value_type`.
+fn dbtype_to_value_type(dbtype: &str) -> &'static str {
+    match dbtype {
+        "2" | "3" | "16" | "17" | "18" | "19" | "20" | "21" => "integer",
+        "7" | "133" | "134" | "135" => "date",
+        _ => "string", // 8/129/130 wstr/str/bstr + safe default for numeric/decimal
+    }
+}
+
+/// Infer `value_type` from the actual member captions (what a filter value is
+/// compared against), preferred over `LEVEL_DBTYPE` which reflects the level's
+/// KEY type — e.g. a "Product Brand Name" level keyed by an integer ID but whose
+/// members are brand-name strings. Used whenever a domain was captured.
+fn infer_value_type_from_members(members: &[String]) -> &'static str {
     let is_int = |s: &str| {
         let t = s.strip_prefix('-').unwrap_or(s);
         !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit())
@@ -75,146 +80,169 @@ fn infer_value_type(samples: &[String]) -> &'static str {
         let b = s.as_bytes();
         s.len() == 10 && b[4] == b'-' && b[7] == b'-'
     };
-    if samples.iter().all(|s| is_date(s)) {
+    let sample: Vec<&String> = members.iter().take(50).collect();
+    if sample.iter().all(|s| is_date(s)) {
         "date"
-    } else if samples.iter().all(|s| is_int(s)) {
+    } else if sample.iter().all(|s| is_int(s)) {
         "integer"
     } else {
         "string"
     }
 }
 
-/// Probe the live cluster for level member domains and layer them onto
-/// `catalog`'s level columns in place. Fail-open: any per-level error is counted
-/// and skipped — never propagated. Returns a summary for the startup log.
-#[allow(clippy::too_many_arguments)]
-pub fn capture_domains<S: std::hash::BuildHasher>(
+/// True for genuine semi-additive aggregators (First/LastChild, First/LastNonEmpty).
+/// 9 (AverageOfChildren) is deliberately excluded — AtScale applies it to
+/// totals/calcs, not balances (verified against the live model 2026-06-12).
+fn is_semi_additive_aggregator(agg: i64) -> bool {
+    matches!(agg, 10 | 11 | 12 | 13)
+}
+
+/// Probe the live cluster via MDSCHEMA and layer `semi_additive` / `value_type` /
+/// `domain` onto `catalog`'s columns in place. Fail-open: a failed Discover is
+/// counted and skipped, never propagated.
+pub fn ingest_live_metadata(
     catalog: &mut Value,
-    stats: &Value,
-    tools: &ToolPaths,
-    row_threshold: u64,
-    engine: &crate::mcp::ServerEngine,
-    backend_override: Option<&str>,
-    capabilities: &BackendCapabilities,
-    coords: &HashMap<String, (String, String), S>,
-    model: &str,
+    ex: &LiveExecutor,
+    xmla_catalog: &str,
+    cube: &str,
     cfg: &IngestConfig,
 ) -> IngestSummary {
     let start = Instant::now();
     let mut summary = IngestSummary::default();
 
-    let Some(cols) = catalog.get("columns").and_then(Value::as_array).cloned() else {
-        return summary;
-    };
-
-    let measures: Vec<String> = cols
-        .iter()
-        .filter(|c| c.get("kind").and_then(Value::as_str) == Some("measure"))
-        .filter_map(|c| c.get("unique_name").and_then(Value::as_str).map(String::from))
-        .collect();
-    let levels: Vec<(String, String)> = cols
-        .iter()
-        .filter(|c| c.get("kind").and_then(Value::as_str) == Some("level"))
-        .filter_map(|c| {
-            Some((
-                c.get("hierarchy").and_then(Value::as_str)?.to_string(),
-                c.get("level").and_then(Value::as_str)?.to_string(),
-            ))
-        })
-        .collect();
-
-    let candidates: Vec<String> = measures.iter().take(cfg.probe_measure_attempts).cloned().collect();
-
-    // working measure per hierarchy (so we don't re-search per level)
-    let mut hier_measure: BTreeMap<String, String> = BTreeMap::new();
-    // (hierarchy, level) -> (value_type, Option<domain>)
-    let mut results: Vec<(String, String, &'static str, Option<Vec<String>>)> = Vec::new();
-
-    for (hier, level) in levels.iter().take(cfg.max_levels) {
-        summary.levels_seen += 1;
-        let try_measures: Vec<String> = hier_measure
-            .get(hier)
-            .map(|m| vec![m.clone()])
-            .unwrap_or_else(|| candidates.clone());
-
-        let mut captured = false;
-        for meas in &try_measures {
-            let mqo = json!({
-                "model": model,
-                "measures": [{ "unique_name": meas }],
-                "dimensions": [{ "hierarchy": hier, "level": level }],
-                "filters": [],
-                "time_intelligence": [],
-                "non_empty": true,
-                "limit": (cfg.domain_cap as u64) + 1
-            });
-            // enriched_catalog_json=None: probe queries are single-fact, no cross-fact check needed.
-            let out = pipeline::run(
-                &mqo,
-                &*catalog,
-                stats,
-                tools,
-                row_threshold,
-                engine,
-                backend_override,
-                capabilities,
-                None,
-                coords,
-            );
-            match out {
-                Ok(po) => {
-                    let mut dom: Vec<String> = po.rows.iter().filter_map(dim_value).collect();
-                    dom.sort();
-                    dom.dedup();
-                    if dom.is_empty() {
-                        continue; // wrong fact for this measure → try next
-                    }
-                    hier_measure.entry(hier.clone()).or_insert_with(|| meas.clone());
-                    let vt = infer_value_type(&dom);
-                    if dom.len() <= cfg.domain_cap {
-                        results.push((hier.clone(), level.clone(), vt, Some(dom)));
-                        summary.domains_captured += 1;
-                    } else {
-                        results.push((hier.clone(), level.clone(), vt, None));
-                        summary.over_cap += 1;
-                    }
-                    captured = true;
-                    break;
+    // ── 1. Measures → semi_additive (by caption) ──────────────────────────
+    let mut semi_by_caption: BTreeMap<String, bool> = BTreeMap::new();
+    match ex.discover_mdschema("MDSCHEMA_MEASURES", xmla_catalog, cube, None) {
+        Ok(rows) => {
+            summary.measures_seen = rows.len();
+            for r in &rows {
+                let Some(name) = r.get("MEASURE_NAME") else { continue };
+                let agg = r
+                    .get("MEASURE_AGGREGATOR")
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .unwrap_or(-1);
+                let sa = is_semi_additive_aggregator(agg);
+                if sa {
+                    summary.semi_additive_found += 1;
                 }
-                Err(_) => continue, // fail-open: try the next candidate measure
+                semi_by_caption.insert(name.clone(), sa);
             }
         }
-        if !captured {
-            summary.errored += 1;
+        Err(_) => summary.errored += 1,
+    }
+
+    // ── 2. Levels → value_type + cardinality (by hierarchy+level) ─────────
+    // (hierarchy, level) -> (value_type, level_unique_name, cardinality)
+    let mut level_meta: BTreeMap<(String, String), (&'static str, String, usize)> = BTreeMap::new();
+    match ex.discover_mdschema("MDSCHEMA_LEVELS", xmla_catalog, cube, None) {
+        Ok(rows) => {
+            for r in &rows {
+                summary.levels_seen += 1;
+                let level_name = r.get("LEVEL_NAME").map(String::as_str).unwrap_or("");
+                if level_name.is_empty() || level_name == "(All)" {
+                    continue; // skip the (All) level
+                }
+                if r.get("LEVEL_NUMBER").map(String::as_str) == Some("0") {
+                    continue;
+                }
+                let hier = r
+                    .get("DIMENSION_UNIQUE_NAME")
+                    .map(|d| snake(&strip_brackets(d)))
+                    .unwrap_or_default();
+                let vt = dbtype_to_value_type(r.get("LEVEL_DBTYPE").map(String::as_str).unwrap_or(""));
+                let lun = r.get("LEVEL_UNIQUE_NAME").cloned().unwrap_or_default();
+                let card = r
+                    .get("LEVEL_CARDINALITY")
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(usize::MAX);
+                level_meta.insert((hier, level_name.to_string()), (vt, lun, card));
+            }
+        }
+        Err(_) => summary.errored += 1,
+    }
+
+    // ── 3. Domains via MDSCHEMA_MEMBERS for low-card mapped levels ────────
+    // (hierarchy, level) -> domain
+    let mut domains: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+    // Which (hierarchy, level) keys actually exist in the catalog?
+    let catalog_levels: Vec<(String, String)> = catalog
+        .get("columns")
+        .and_then(Value::as_array)
+        .map(|cols| {
+            cols.iter()
+                .filter(|c| c.get("kind").and_then(Value::as_str) == Some("level"))
+                .filter_map(|c| {
+                    Some((
+                        c.get("hierarchy").and_then(Value::as_str)?.to_string(),
+                        c.get("level").and_then(Value::as_str)?.to_string(),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut fetches = 0usize;
+    for key in &catalog_levels {
+        let Some((_, lun, card)) = level_meta.get(key) else { continue };
+        if *card == 0 || *card > cfg.domain_cap {
+            if *card > cfg.domain_cap {
+                summary.over_cap += 1;
+            }
+            continue;
+        }
+        if fetches >= cfg.max_levels {
+            break;
+        }
+        fetches += 1;
+        match ex.discover_mdschema("MDSCHEMA_MEMBERS", xmla_catalog, cube, Some(lun)) {
+            Ok(rows) => {
+                let dom: Vec<String> = rows
+                    .iter()
+                    .filter_map(|r| r.get("MEMBER_CAPTION").cloned())
+                    .filter(|m| m != "__NULL__" && m != "(All)")
+                    .collect();
+                if !dom.is_empty() {
+                    domains.insert(key.clone(), dom);
+                    summary.domains_captured += 1;
+                }
+            }
+            Err(_) => summary.errored += 1,
         }
     }
 
-    // Merge captured metadata back onto the level columns.
+    // ── 4. Merge onto catalog columns ─────────────────────────────────────
     if let Some(arr) = catalog.get_mut("columns").and_then(Value::as_array_mut) {
         for col in arr.iter_mut() {
-            if col.get("kind").and_then(Value::as_str) != Some("level") {
-                continue;
-            }
-            let h = col.get("hierarchy").and_then(Value::as_str).unwrap_or_default().to_string();
-            let l = col.get("level").and_then(Value::as_str).unwrap_or_default().to_string();
-            if let Some((_, _, vt, dom)) = results.iter().find(|(hh, ll, _, _)| *hh == h && *ll == l) {
-                if let Some(obj) = col.as_object_mut() {
-                    obj.insert("value_type".into(), json!(vt));
-                    match dom {
-                        Some(d) => {
-                            obj.insert("domain".into(), json!(d));
-                        }
-                        None => {
-                            obj.insert(
-                                "expected_key_shape".into(),
-                                json!(format!(
-                                    "{vt} member key; >{} distinct values (high-cardinality)",
-                                    cfg.domain_cap
-                                )),
-                            );
+            match col.get("kind").and_then(Value::as_str) {
+                Some("measure") => {
+                    let label = col.get("label").and_then(Value::as_str).map(str::to_string);
+                    if let Some(l) = label {
+                        if semi_by_caption.get(&l).copied().unwrap_or(false) {
+                            if let Some(o) = col.as_object_mut() {
+                                o.insert("semi_additive".into(), json!({ "trigger_hierarchies": [] }));
+                            }
                         }
                     }
                 }
+                Some("level") => {
+                    let h = col.get("hierarchy").and_then(Value::as_str).unwrap_or_default().to_string();
+                    let l = col.get("level").and_then(Value::as_str).unwrap_or_default().to_string();
+                    let key = (h, l);
+                    if let Some((vt, _, _)) = level_meta.get(&key) {
+                        summary.levels_mapped += 1;
+                        let dom = domains.get(&key);
+                        // Prefer value_type inferred from the captured members
+                        // (the caption type) over LEVEL_DBTYPE (the key type).
+                        let value_type = dom.map_or(*vt, |d| infer_value_type_from_members(d));
+                        if let Some(o) = col.as_object_mut() {
+                            o.insert("value_type".into(), json!(value_type));
+                            if let Some(d) = dom {
+                                o.insert("domain".into(), json!(d));
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -228,27 +256,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dim_value_picks_dimension_not_measure() {
-        let row = json!({
-            "_x005b_Total_x0020_Store_x0020_Sales_x005d_": 1467409889.7,
-            "atscale_catalogs_x005b_Store_x0020_State_x0020_Name_x005d_": "South Dakota"
-        });
-        assert_eq!(dim_value(&row).as_deref(), Some("South Dakota"));
+    fn name_mapping() {
+        assert_eq!(strip_brackets("[Store Dimension]"), "Store Dimension");
+        assert_eq!(strip_brackets("[Sold Date Dimensions].[Sold Calendar Week]"), "Sold Date Dimensions");
+        assert_eq!(snake("Store Dimension"), "store_dimension");
+        assert_eq!(snake("Sold Date Dimensions"), "sold_date_dimensions");
+        assert_eq!(snake("Ship Mode"), "ship_mode");
     }
 
     #[test]
-    fn dim_value_int_float_renders_as_int() {
-        let row = json!({
-            "_x005b_Total_x0020_Store_x0020_Sales_x005d_": 78087067.22,
-            "atscale_catalogs_x005b_Sold_x0020_Calendar_x0020_Week_x005d_": 5159.0
-        });
-        assert_eq!(dim_value(&row).as_deref(), Some("5159"));
+    fn dbtype_mapping() {
+        assert_eq!(dbtype_to_value_type("130"), "string");
+        assert_eq!(dbtype_to_value_type("3"), "integer");
+        assert_eq!(dbtype_to_value_type("7"), "date");
+        assert_eq!(dbtype_to_value_type("131"), "string"); // numeric → safe default
     }
 
     #[test]
-    fn infer_value_type_classes() {
-        assert_eq!(infer_value_type(&["Alabama".into(), "Ohio".into()]), "string");
-        assert_eq!(infer_value_type(&["1".into(), "2".into(), "12".into()]), "integer");
-        assert_eq!(infer_value_type(&["2001-01-15".into()]), "date");
+    fn value_type_inferred_from_members_not_key() {
+        // A "Brand Name" level keyed by int but whose members are strings → string.
+        assert_eq!(infer_value_type_from_members(&["Nike".into(), "Acme".into()]), "string");
+        assert_eq!(infer_value_type_from_members(&["1".into(), "2".into()]), "integer");
+        assert_eq!(infer_value_type_from_members(&["2001-01-15".into()]), "date");
+    }
+
+    #[test]
+    fn semi_additive_aggregator_excludes_avg_of_children() {
+        assert!(is_semi_additive_aggregator(10)); // FirstChild
+        assert!(is_semi_additive_aggregator(13)); // LastNonEmpty
+        assert!(!is_semi_additive_aggregator(9)); // AverageOfChildren (AtScale artifact)
+        assert!(!is_semi_additive_aggregator(1)); // SUM
+        assert!(!is_semi_additive_aggregator(5)); // AVG
     }
 }

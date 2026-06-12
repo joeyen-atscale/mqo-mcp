@@ -9,6 +9,7 @@
 //! exercised without a live cluster. Network-dependent paths are skip-gated
 //! behind `ATSCALE_PGWIRE_HOST` / `ATSCALE_XMLA_URL` env checks.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -321,6 +322,106 @@ async fn xmla_discover_catalogs(xmla_url: &str, bearer_token: &str) -> Result<()
     }
 }
 
+// ─── MDSCHEMA discovery (live catalog ingestion) ──────────────────────────────
+
+/// Decode the basic XML entities that appear in XMLA rowset values.
+fn xml_unescape(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
+}
+
+/// Parse an XMLA `Tabular`-format Discover response into one map per `<row>`
+/// (flat `<TAG>value</TAG>` pairs; nested tags are skipped). Minimal,
+/// dependency-free — the MDSCHEMA rowsets we consume are flat.
+fn parse_xmla_rows(xml: &str) -> Vec<BTreeMap<String, String>> {
+    let mut out = Vec::new();
+    let mut rest = xml;
+    while let Some(s) = rest.find("<row>") {
+        let after = &rest[s + "<row>".len()..];
+        let Some(e) = after.find("</row>") else { break };
+        let row = &after[..e];
+        let mut map = BTreeMap::new();
+        let mut r = row;
+        while let Some(ts) = r.find('<') {
+            let after_lt = &r[ts + 1..];
+            let Some(te) = after_lt.find('>') else { break };
+            let tag = &after_lt[..te];
+            if tag.starts_with('/') || tag.ends_with('/') {
+                r = &after_lt[te + 1..]; // closing or self-closing tag
+                continue;
+            }
+            let close = format!("</{tag}>");
+            let content = &after_lt[te + 1..];
+            if let Some(ce) = content.find(&close) {
+                let val = &content[..ce];
+                if !val.contains('<') {
+                    map.insert(tag.to_string(), xml_unescape(val));
+                }
+                r = &content[ce + close.len()..];
+            } else {
+                r = content;
+            }
+        }
+        out.push(map);
+        rest = &after[e + "</row>".len()..];
+    }
+    out
+}
+
+/// Issue an MDSCHEMA Discover and return its parsed rows. `level` sets a
+/// `LEVEL_UNIQUE_NAME` restriction (for `MDSCHEMA_MEMBERS`); pass `None` otherwise.
+async fn xmla_discover_rows(
+    xmla_url: &str,
+    bearer_token: &str,
+    request_type: &str,
+    catalog: &str,
+    cube: &str,
+    level: Option<&str>,
+) -> Result<Vec<BTreeMap<String, String>>, EngineError> {
+    let mut restrictions = format!(
+        "<CATALOG_NAME>{}</CATALOG_NAME><CUBE_NAME>{}</CUBE_NAME>",
+        xmla_escape(catalog),
+        xmla_escape(cube)
+    );
+    if let Some(l) = level {
+        restrictions.push_str(&format!(
+            "<LEVEL_UNIQUE_NAME>{}</LEVEL_UNIQUE_NAME>",
+            xmla_escape(l)
+        ));
+    }
+    let body = format!(
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>
+<Discover xmlns="urn:schemas-microsoft-com:xml-analysis">
+<RequestType>{request_type}</RequestType>
+<Restrictions><RestrictionList>{restrictions}</RestrictionList></Restrictions>
+<Properties><PropertyList><Catalog>{catalog}</Catalog><Format>Tabular</Format></PropertyList></Properties>
+</Discover></soap:Body></soap:Envelope>"#,
+        catalog = xmla_escape(catalog),
+    );
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(xmla_url)
+        .header("Authorization", format!("Bearer {bearer_token}"))
+        .header("Content-Type", "application/xml")
+        .body(body)
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        return Err(EngineError::QueryError {
+            reason: format!("XMLA {request_type} returned HTTP {status}: {text}"),
+        });
+    }
+    let text = resp.text().await?;
+    Ok(parse_xmla_rows(&text))
+}
+
 // ─── Model path helpers ───────────────────────────────────────────────────────
 
 /// Parse `<Catalog>` and `<Cube>` from a dot-separated MQO model path.
@@ -430,6 +531,45 @@ impl LiveExecutor {
                     reason: format!("failed to build tokio runtime for token fetch: {e}"),
                 })?;
             rt.block_on(self.token_cache.fetch_token())
+        }
+    }
+
+    /// Issue an MDSCHEMA Discover against this executor's XMLA endpoint and
+    /// return the parsed rows. Mints a bearer token via [`Self::fetch_token_sync`].
+    /// Used by live catalog ingestion (PRD-mqo-live-catalog-ingestion):
+    /// `MDSCHEMA_MEASURES` / `MDSCHEMA_LEVELS` for the column metadata, and
+    /// `MDSCHEMA_MEMBERS` (with `level`) for a low-cardinality level's domain.
+    pub fn discover_mdschema(
+        &self,
+        request_type: &str,
+        catalog: &str,
+        cube: &str,
+        level: Option<&str>,
+    ) -> Result<Vec<BTreeMap<String, String>>, EngineError> {
+        let token = self.fetch_token_sync()?;
+        let url = self.config.xmla_url.clone();
+        let rt = request_type.to_string();
+        let cat = catalog.to_string();
+        let cb = cube.to_string();
+        let lv = level.map(str::to_string);
+        let fut = async move {
+            xmla_discover_rows(&url, &token.access_token, &rt, &cat, &cb, lv.as_deref()).await
+        };
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let join = handle.spawn(fut);
+            tokio::task::block_in_place(|| {
+                handle.block_on(join).map_err(|e| EngineError::ConnectionFailure {
+                    reason: format!("mdschema discover task panicked: {e}"),
+                })?
+            })
+        } else {
+            let rt2 = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| EngineError::ConnectionFailure {
+                    reason: format!("failed to build tokio runtime for mdschema discover: {e}"),
+                })?;
+            rt2.block_on(fut)
         }
     }
 }
