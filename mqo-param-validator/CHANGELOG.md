@@ -1,3 +1,23 @@
+## v0.6.0
+
+Filter-level guard (RULE 4) — member-domain check for level-less `Member`
+filters (PRD-mqo-catalog-level-domain-metadata). `mqo_spec::Filter::Member`
+carries a hierarchy + member keys but no level, so the existing value-fit path
+(which needs a level) never saw them. New `check_member_domain` compares each
+member against the hierarchy's enumerated level domains and rejects an
+out-of-domain member — but ONLY when safe: there is ≥1 enumerated same-type
+domain, the member is in none, AND no same-type level lacks an enumerated domain
+(a high-cardinality level the member could legitimately be a key of). This
+catches a wrong code/value on a fully-enumerated dimension with zero false
+positives on high-card member filters (store names, surrogate keys). The broad
+"member silently bound to the wrong level" case (e.g. `Store State="CA"`) is the
+binder's responsibility (no silent grounding) — tracked as a follow-on.
+
+Honest scope: through the current MQO grammar the rule's reach is limited —
+`Range` bounds are numeric (`f64`) so the type-mismatch arm is rarely reachable,
+and `Member` filters never name a level. The value here is the safe member-domain
+guard plus the level-domain metadata foundation (see mqo-mcp-server v0.20.0).
+
 ## v0.5.0
 
 Semi-additive guard (RULE 2) activated and made false-positive-safe

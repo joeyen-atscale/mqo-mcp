@@ -516,7 +516,7 @@ fn apply_capability_downgrade(
 fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError> {
     use mqo_param_validator::{
         validate, BoundMqoInput, CatalogHierarchy, CatalogMeasure, CatalogSnapshot,
-        MqoDimensionRef, MqoFilterRef, MqoMeasureRef,
+        LevelDomainMeta, LevelValueType, MqoDimensionRef, MqoFilterRef, MqoMeasureRef,
     };
     use std::collections::BTreeMap;
 
@@ -525,6 +525,10 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
     let mut measures: Vec<CatalogMeasure> = Vec::new();
     // hierarchy -> set of level labels (preserve first-seen order via Vec + dedup)
     let mut hier_levels: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // hierarchy -> per-level domain/type metadata (Rule 4 filter-level guard).
+    // Populated from `value_type`/`domain`/`expected_key_shape` on level columns
+    // (written by the catalog-capture probe, tools/capture_level_meta.py).
+    let mut hier_meta: BTreeMap<String, Vec<LevelDomainMeta>> = BTreeMap::new();
 
     for c in cols {
         let kind = c.get("kind").and_then(Value::as_str).unwrap_or("");
@@ -586,6 +590,30 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
                     .map(str::to_string)
                     .or_else(|| c.get("label").and_then(Value::as_str).map(str::to_string));
                 if let (Some(h), Some(lvl)) = (hier, level_label) {
+                    // Rule 4 metadata: carry the level's value type + (bounded)
+                    // member domain / key-shape when the catalog column has it.
+                    if let Some(vt) = c.get("value_type").and_then(Value::as_str) {
+                        let value_type = match vt {
+                            "integer" => LevelValueType::Integer,
+                            "date" => LevelValueType::Date,
+                            _ => LevelValueType::String,
+                        };
+                        let domain = c.get("domain").and_then(Value::as_array).map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(str::to_string))
+                                .collect::<Vec<_>>()
+                        });
+                        let expected_key_shape = c
+                            .get("expected_key_shape")
+                            .and_then(Value::as_str)
+                            .map(str::to_string);
+                        hier_meta.entry(h.clone()).or_default().push(LevelDomainMeta {
+                            level: lvl.clone(),
+                            value_type,
+                            domain,
+                            expected_key_shape,
+                        });
+                    }
                     let entry = hier_levels.entry(h).or_default();
                     if !entry.contains(&lvl) {
                         entry.push(lvl);
@@ -609,7 +637,7 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
             dimension_unique_name: h.clone(),
             hierarchy_unique_name: h.clone(),
             levels: levels.clone(),
-            ..Default::default()
+            level_meta: hier_meta.get(h).cloned().unwrap_or_default(),
         })
         .collect();
 
@@ -644,13 +672,47 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
             .filters
             .iter()
             .filter_map(|f| match f {
-                mqo_spec::Filter::Member { hierarchy, .. } => Some(MqoFilterRef {
+                // Member filters carry the member keys but no level (mqo_spec
+                // `Member` is hierarchy + members). The validator's member-domain
+                // check (Rule 4) compares them against the hierarchy's enumerated
+                // level domains, conservatively.
+                mqo_spec::Filter::Member { hierarchy, members } => Some(MqoFilterRef {
                     unique_name: hierarchy.clone(),
                     level: None,
+                    members: members.clone(),
                     ..Default::default()
                 }),
-                // Range/CalcGroupMember don't carry a resolvable hierarchy key
-                // the validator can ground; skip (conservative).
+                // Range filters carry a level unique_name ("hier.[Label]") + bounds.
+                // Only attach the level when we actually have level_meta for it, so
+                // the rule runs value-fit; otherwise leave level None (rule skips) —
+                // this prevents a false "level does not exist" rejection from a
+                // label-format mismatch on the common year-range filters.
+                mqo_spec::Filter::Range { level, lo, hi } => {
+                    let (hier, label) = match level.split_once(".[") {
+                        Some((h, rest)) => {
+                            (h.to_string(), rest.trim_end_matches(']').to_string())
+                        }
+                        None => (String::new(), level.clone()),
+                    };
+                    let has_meta = hier_meta
+                        .get(&hier)
+                        .map(|v| v.iter().any(|m| m.level == label))
+                        .unwrap_or(false);
+                    let fmt = |x: f64| {
+                        if x.fract() == 0.0 {
+                            (x as i64).to_string()
+                        } else {
+                            x.to_string()
+                        }
+                    };
+                    Some(MqoFilterRef {
+                        unique_name: hier,
+                        level: if has_meta { Some(label) } else { None },
+                        range_lo: Some(fmt(*lo)),
+                        range_hi: Some(fmt(*hi)),
+                        ..Default::default()
+                    })
+                }
                 _ => None,
             })
             .collect(),

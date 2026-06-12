@@ -1599,6 +1599,98 @@ fn level_exists(catalog: &CatalogSnapshot, hier_norm: &str, level_norm: &str) ->
         .any(|h| h.levels.iter().any(|l| normalize(l) == level_norm))
 }
 
+/// Conservative member-domain check for a `Member` filter that names no level
+/// (`mqo_spec::Filter::Member` is a hierarchy + member keys, no level). Rejects a
+/// member ONLY when it is safe: there is ≥1 enumerated same-type level domain in
+/// the hierarchy, the member is in NONE of them, AND there is NO same-type level
+/// lacking an enumerated domain (a high-cardinality level — e.g. a store name —
+/// the member could legitimately be a key of). This catches a wrong code/value on
+/// a fully-enumerated dimension without false-positiving high-card member filters.
+/// The broad "member silently bound to the wrong level" case (e.g. `Store
+/// State="CA"` grounding to `Store City`) is the binder's responsibility (it must
+/// not silently ground), not this catalog-only guard.
+fn check_member_domain(
+    fref: &MqoFilterRef,
+    catalog: &CatalogSnapshot,
+    rejections: &mut Vec<ParamRejection>,
+) {
+    if fref.members.is_empty() {
+        return;
+    }
+    let hier_norm = normalize(&fref.unique_name);
+    let hiers: Vec<&CatalogHierarchy> = catalog
+        .hierarchies
+        .iter()
+        .filter(|h| normalize(&h.hierarchy_unique_name) == hier_norm)
+        .collect();
+    if hiers.is_empty() {
+        return;
+    }
+    let metas: Vec<&LevelDomainMeta> = hiers.iter().flat_map(|h| h.level_meta.iter()).collect();
+    if metas.iter().all(|m| m.domain.is_none()) {
+        return; // nothing enumerated → cannot decide
+    }
+    let all_levels: Vec<String> = hiers.iter().flat_map(|h| h.levels.clone()).collect();
+
+    for member in &fref.members {
+        let mt = infer_value_type(member);
+        let same_type_doms: Vec<&Vec<String>> = metas
+            .iter()
+            .filter(|m| m.value_type == mt)
+            .filter_map(|m| m.domain.as_ref())
+            .collect();
+        if same_type_doms.is_empty() {
+            continue; // no comparable enumerated level
+        }
+        let in_domain = same_type_doms
+            .iter()
+            .any(|d| d.iter().any(|v| normalize(v) == normalize(member)));
+        if in_domain {
+            continue;
+        }
+        // SAFE GUARD: skip if any same-type level lacks an enumerated domain (a
+        // high-card level the member could be a key of). A level with no meta
+        // entry is treated as possibly-same-type (conservative → skip).
+        let has_unenumerated_same_type = all_levels.iter().any(|lvl| {
+            let lnorm = normalize(lvl);
+            match metas.iter().find(|m| normalize(&m.level) == lnorm) {
+                Some(m) => m.domain.is_none() && m.value_type == mt,
+                None => true,
+            }
+        });
+        if has_unenumerated_same_type {
+            continue; // unsafe to reject
+        }
+        let suggested: Vec<String> = same_type_doms
+            .iter()
+            .flat_map(|d| d.iter().take(12).cloned())
+            .collect();
+        rejections.push(ParamRejection {
+            field: format!("{} member [{}]", fref.unique_name, member),
+            class: FieldClass::Filter,
+            reason: RejectReason::FilterLevelMismatch {
+                filter: fref.unique_name.clone(),
+                target_level: String::new(),
+                reason: format!(
+                    "member [{}] is not in the domain of any level of hierarchy [{}]",
+                    member, fref.unique_name
+                ),
+                suggested: suggested.join(", "),
+            },
+            suggestions: suggested
+                .iter()
+                .take(8)
+                .map(|v| Suggestion {
+                    name: v.clone(),
+                    similarity: jaro_winkler(&normalize(member), &normalize(v)),
+                    note: Some(format!("valid member of [{}]", fref.unique_name)),
+                })
+                .collect(),
+            suggested_calc: None,
+        });
+    }
+}
+
 /// RULE 4: reject a filter whose value type/domain cannot match the target
 /// level, or whose named level does not exist.
 ///
@@ -1619,7 +1711,12 @@ fn check_filter_level(
     for fref in &mqo.filters {
         let level = match &fref.level {
             Some(l) => l,
-            None => continue, // no named level → not this rule's concern
+            None => {
+                // A Member filter names no level — run the conservative
+                // member-domain check against the hierarchy's enumerated levels.
+                check_member_domain(fref, catalog, rejections);
+                continue;
+            }
         };
         let hier_norm = normalize(&fref.unique_name);
         let level_norm = normalize(level);

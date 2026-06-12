@@ -16,7 +16,30 @@
       "kind": "level",
       "hierarchy": "ship_mode",
       "level": "Carrier",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "string",
+      "domain": [
+        "AIRBORNE",
+        "ALLIANCE",
+        "BARIAN",
+        "BOXBUNDLES",
+        "DHL",
+        "DIAMOND",
+        "FEDEX",
+        "GERMA",
+        "GREAT EASTERN",
+        "HARMSTORF",
+        "LATVIAN",
+        "MSC",
+        "ORIENTAL",
+        "PRIVATECARRIER",
+        "RUPEKSA",
+        "TBS",
+        "UPS",
+        "USPS",
+        "ZHOU",
+        "ZOUROS"
+      ]
     },
     {
       "unique_name": "catalog_preferred.[Catalog Preferred]",
@@ -96,7 +119,14 @@
       "kind": "level",
       "hierarchy": "customer_demographics",
       "level": "Credit Rating",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "string",
+      "domain": [
+        "Good",
+        "High Risk",
+        "Low Risk",
+        "Unknown"
+      ]
     },
     {
       "unique_name": "customer_dimension.[Customer Address]",
@@ -248,7 +278,17 @@
       "kind": "level",
       "hierarchy": "customer_demographics",
       "level": "Education Status",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "string",
+      "domain": [
+        "2 yr Degree",
+        "4 yr Degree",
+        "Advanced Degree",
+        "College",
+        "Primary",
+        "Secondary",
+        "Unknown"
+      ]
     },
     {
       "unique_name": "fulfilling_warehouse.[Fulfilling Warehouse]",
@@ -264,7 +304,12 @@
       "kind": "level",
       "hierarchy": "customer_demographics",
       "level": "Gender",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "string",
+      "domain": [
+        "F",
+        "M"
+      ]
     },
     {
       "unique_name": "household_demographics.[Household Demographics]",
@@ -472,7 +517,15 @@
       "kind": "level",
       "hierarchy": "customer_demographics",
       "level": "Marital Status",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "string",
+      "domain": [
+        "D",
+        "M",
+        "S",
+        "U",
+        "W"
+      ]
     },
     {
       "unique_name": "net_profit_tier.[Net Profit Tier]",
@@ -512,7 +565,20 @@
       "kind": "level",
       "hierarchy": "product_dimension",
       "level": "Product Category",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "string",
+      "domain": [
+        "Books",
+        "Children",
+        "Electronics",
+        "Home",
+        "Jewelry",
+        "Men",
+        "Music",
+        "Shoes",
+        "Sports",
+        "Women"
+      ]
     },
     {
       "unique_name": "product_dimension.[Product Class ID]",
@@ -528,7 +594,60 @@
       "kind": "level",
       "hierarchy": "product_dimension",
       "level": "Product Class Name",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "string",
+      "domain": [
+        "accessories",
+        "archery",
+        "athletic",
+        "basketball",
+        "bedding",
+        "camping",
+        "classical",
+        "country",
+        "curtains/drapes",
+        "disk drives",
+        "dresses",
+        "dvd/vcr players",
+        "fiction",
+        "flatware",
+        "football",
+        "fragrances",
+        "gold",
+        "golf",
+        "guns",
+        "history",
+        "home repair",
+        "infants",
+        "jewelry boxes",
+        "karoke",
+        "kids",
+        "maternity",
+        "memory",
+        "mens",
+        "mens watch",
+        "monitors",
+        "newborn",
+        "optics",
+        "pants",
+        "personal",
+        "pools",
+        "pop",
+        "reference",
+        "rings",
+        "rock",
+        "rugs",
+        "scanners",
+        "school-uniforms",
+        "shirts",
+        "sports-apparel",
+        "swimwear",
+        "televisions",
+        "toddlers",
+        "travel",
+        "womens",
+        "womens watch"
+      ]
     },
     {
       "unique_name": "product_dimension.[Product Color]",
@@ -1192,7 +1311,16 @@
       "kind": "level",
       "hierarchy": "ship_mode",
       "level": "Ship Mode Type",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "string",
+      "domain": [
+        "EXPRESS",
+        "LIBRARY",
+        "NEXT DAY",
+        "OVERNIGHT",
+        "REGULAR",
+        "TWO DAY"
+      ]
     },
     {
       "unique_name": "ship_date_dimensions.[Ship Month Name]",
@@ -1280,7 +1408,60 @@
       "kind": "level",
       "hierarchy": "sold_date_week_hierarchy",
       "level": "Sold Calendar Week",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "integer",
+      "domain": [
+        "5148",
+        "5149",
+        "5158",
+        "5159",
+        "5160",
+        "5161",
+        "5162",
+        "5163",
+        "5164",
+        "5165",
+        "5166",
+        "5198",
+        "5200",
+        "5210",
+        "5211",
+        "5212",
+        "5213",
+        "5214",
+        "5215",
+        "5216",
+        "5217",
+        "5218",
+        "5262",
+        "5263",
+        "5264",
+        "5265",
+        "5266",
+        "5267",
+        "5268",
+        "5269",
+        "5270",
+        "5314",
+        "5315",
+        "5316",
+        "5317",
+        "5318",
+        "5319",
+        "5320",
+        "5321",
+        "5322",
+        "5364",
+        "5366",
+        "5367",
+        "5368",
+        "5369",
+        "5370",
+        "5371",
+        "5372",
+        "5373",
+        "5374"
+      ]
     },
     {
       "unique_name": "sold_date_dimensions.[Sold Calendar Year]",
@@ -1368,7 +1549,17 @@
       "kind": "level",
       "hierarchy": "sold_date_dimensions",
       "level": "Sold Day Name",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "string",
+      "domain": [
+        "Friday",
+        "Monday",
+        "Saturday",
+        "Sunday",
+        "Thursday",
+        "Tuesday",
+        "Wednesday"
+      ]
     },
     {
       "unique_name": "sold_date_week_hierarchy.[Sold Day Name Week]",
@@ -1432,7 +1623,22 @@
       "kind": "level",
       "hierarchy": "sold_date_dimensions",
       "level": "Sold Month Name",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "string",
+      "domain": [
+        "April",
+        "August",
+        "December",
+        "February",
+        "January",
+        "July",
+        "June",
+        "March",
+        "May",
+        "November",
+        "October",
+        "September"
+      ]
     },
     {
       "unique_name": "sold_date_dimensions.[Sold Month Sequence]",
@@ -1448,7 +1654,22 @@
       "kind": "level",
       "hierarchy": "sold_date_dimensions",
       "level": "Sold Month of Year",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "integer",
+      "domain": [
+        "1",
+        "10",
+        "11",
+        "12",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9"
+      ]
     },
     {
       "unique_name": "sold_time_dimension.[Sold Morning Time Tier]",
@@ -1464,7 +1685,14 @@
       "kind": "level",
       "hierarchy": "sold_date_dimensions",
       "level": "Sold Quarter of Year",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "integer",
+      "domain": [
+        "1",
+        "2",
+        "3",
+        "4"
+      ]
     },
     {
       "unique_name": "sold_time_dimension.[Sold Second]",
@@ -1544,7 +1772,19 @@
       "kind": "level",
       "hierarchy": "store_dimension",
       "level": "Store County",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "string",
+      "domain": [
+        "Barrow County",
+        "Daviess County",
+        "Fairfield County",
+        "Franklin Parish",
+        "Luce County",
+        "Richland County",
+        "Walker County",
+        "Williamson County",
+        "Ziebach County"
+      ]
     },
     {
       "unique_name": "store_dimension.[Store Floor Space]",
@@ -1728,7 +1968,19 @@
       "kind": "level",
       "hierarchy": "store_dimension",
       "level": "Store State",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "string",
+      "domain": [
+        "AL",
+        "GA",
+        "LA",
+        "MI",
+        "MO",
+        "OH",
+        "SC",
+        "SD",
+        "TN"
+      ]
     },
     {
       "unique_name": "store_dimension.[Store State Name]",
@@ -1736,7 +1988,19 @@
       "kind": "level",
       "hierarchy": "store_dimension",
       "level": "Store State Name",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "string",
+      "domain": [
+        "Alabama",
+        "Georgia",
+        "Louisiana",
+        "Michigan",
+        "Missouri",
+        "Ohio",
+        "South Carolina",
+        "South Dakota",
+        "Tennessee"
+      ]
     },
     {
       "unique_name": "store_dimension.[Store Street Name]",

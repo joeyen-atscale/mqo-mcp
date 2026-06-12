@@ -222,3 +222,74 @@ fn no_level_meta_does_not_reject_valid_level() {
     let result = validate(&mqo, &cat);
     assert!(flm_rejections(&result).is_empty(), "no level_meta → no rejection: {result:?}");
 }
+
+// --- Member filter with NO level (the real mqo_spec::Filter::Member shape) ---
+
+#[test]
+fn member_no_level_safe_skip_when_highcard_sibling() {
+    // A `Member` filter carries no level. geography_dimension has an enumerated
+    // Store State {CA,NY,TX} but ALSO Store City with NO domain (high-card). A
+    // member "ZZ" is not in Store State's domain, but it COULD be a Store City
+    // value — so the conservative guard MUST NOT reject (no false positive).
+    let mqo = BoundMqoInput {
+        filters: vec![MqoFilterRef {
+            unique_name: "geography_dimension".to_string(),
+            level: None, // Member filter — no level
+            members: vec!["ZZ".to_string()],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let result = validate(&mqo, &catalog());
+    assert!(
+        flm_rejections(&result).is_empty(),
+        "member with no level + a high-card sibling level → MUST NOT reject: {result:?}"
+    );
+}
+
+#[test]
+fn member_no_level_rejected_when_hierarchy_fully_enumerated() {
+    // A small flag dimension whose ONLY level is fully enumerated {Y, N}. A
+    // level-less member "MAYBE" is in no same-type domain AND there is no
+    // un-enumerated same-type level it could belong to → safe to reject.
+    let cat = CatalogSnapshot {
+        hierarchies: vec![CatalogHierarchy {
+            dimension_unique_name: "flag_dimension".to_string(),
+            hierarchy_unique_name: "flag_dimension".to_string(),
+            levels: vec!["Flag".to_string()],
+            level_meta: vec![LevelDomainMeta {
+                level: "Flag".to_string(),
+                value_type: LevelValueType::String,
+                domain: Some(vec!["Y".to_string(), "N".to_string()]),
+                expected_key_shape: None,
+            }],
+        }],
+        ..Default::default()
+    };
+    let mqo = BoundMqoInput {
+        filters: vec![MqoFilterRef {
+            unique_name: "flag_dimension".to_string(),
+            level: None,
+            members: vec!["MAYBE".to_string()],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let result = validate(&mqo, &cat);
+    let f = flm_rejections(&result);
+    assert_eq!(f.len(), 1, "out-of-domain member on a fully-enumerated dim → reject: {result:?}");
+    // valid member is accepted
+    let ok = BoundMqoInput {
+        filters: vec![MqoFilterRef {
+            unique_name: "flag_dimension".to_string(),
+            level: None,
+            members: vec!["Y".to_string()],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    assert!(
+        flm_rejections(&validate(&ok, &cat)).is_empty(),
+        "in-domain member → no rejection"
+    );
+}

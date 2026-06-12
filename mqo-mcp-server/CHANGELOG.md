@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.20.0 — 2026-06-12
+
+- **level-domain metadata captured + plumbed** for the validator's filter-level
+  guard (PRD-mqo-catalog-level-domain-metadata). New `tools/capture_level_meta.py`
+  probes a LIVE cluster (one cheap `measure + level` query per level, reading the
+  dimension column) to enumerate each level's member domain (bounded at 1000) and
+  infer its value type — the bounded-DISTINCT capture the static `search_columns`
+  catalog can't provide. `param_validate` now carries `value_type`/`domain`/
+  `expected_key_shape` from level columns into `CatalogHierarchy.level_meta`, and
+  wires `Member.members` + `Range` level/bounds into the validator's filter ref
+  (previously dropped). The TPC-DS fixture is enriched with real domains probed
+  from mcp-aws (states, day/month names, demographics, ship modes, week sequences).
+- **Live mode unaffected:** the live `search_columns` catalog carries no
+  `level_meta`, so Rule 4 stays dormant there (and `Range` filters get no level →
+  the rule skips them) — zero regression to the live benchmark. The guard
+  activates in fixture mode / once a capture step feeds the served catalog.
+
 ## v0.19.0 — 2026-06-12
 
 - **semi-additive flag plumbed into the validator snapshot**
