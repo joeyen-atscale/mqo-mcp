@@ -74,6 +74,32 @@ struct Args {
     #[arg(long, default_value_t = DEFAULT_ROW_THRESHOLD)]
     row_threshold: u64,
 
+    /// Live-mode only: at startup, probe the cluster for each dimension level's
+    /// enumerated member domain (one bounded query per level) and layer
+    /// value_type/domain onto the in-memory catalog — the live source for the
+    /// validator filter-level guard and the binder member-grounding check
+    /// (PRD-mqo-live-catalog-ingestion). Off by default (opt-in); ignored in
+    /// fixture mode. Fail-open: per-level probe errors are skipped, never fatal.
+    #[arg(long)]
+    capture_live_domains: bool,
+
+    /// Max distinct members enumerated per level (domains above this carry a
+    /// descriptor only). Bounds snapshot growth + per-level cost.
+    #[arg(long, default_value_t = 1000)]
+    catalog_domain_cap: usize,
+
+    /// Max number of levels probed during live domain ingestion (bounds startup
+    /// wall-time on wide models).
+    #[arg(long, default_value_t = 200)]
+    catalog_max_levels: usize,
+
+    /// Model (cube) name the domain probe queries against. Defaults to the sole
+    /// discovered XMLA model when there is exactly one; required when the cluster
+    /// exposes multiple cubes (otherwise probe queries bind to an arbitrary model
+    /// and capture nothing).
+    #[arg(long, value_name = "MODEL")]
+    catalog_model: Option<String>,
+
     /// `AtScale` `PGWire` endpoint as `<host:port>` (e.g. `localhost:15432`).
     /// Presence selects live mode; absence (default) selects fixture mode.
     #[arg(long, value_name = "HOST:PORT")]
@@ -196,7 +222,7 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let catalog = load_json(&args.catalog);
+    let mut catalog = load_json(&args.catalog);
     let stats = args.stats.as_deref().map_or_else(
         || serde_json::json!({ "level_cardinalities": {}, "shape_flags": {} }),
         load_json,
@@ -282,6 +308,61 @@ fn main() {
         "mqo-mcp-server: cursor: page_size={} ttl={}s",
         args.page_size, args.cursor_ttl_secs
     );
+
+    // ── Live catalog domain ingestion (opt-in, live mode only) ────────────
+    // PRD-mqo-live-catalog-ingestion: probe the cluster for level member
+    // domains and layer them onto the catalog so the filter-level + member-
+    // grounding guards run on live data instead of a hand-edited snapshot.
+    if args.capture_live_domains {
+        match &engine {
+            ServerEngine::Live(_) => {
+                // Prefer the explicit --catalog-model; else the sole discovered
+                // model; else the first key with a warning (probe may bind wrong).
+                let model = args.catalog_model.clone().or_else(|| {
+                    if xmla_model_coords.len() > 1 {
+                        eprintln!(
+                            "mqo-mcp-server: WARN: --capture-live-domains: {} models discovered \
+                             and no --catalog-model given; probing against an arbitrary one",
+                            xmla_model_coords.len()
+                        );
+                    }
+                    xmla_model_coords.keys().next().cloned()
+                });
+                if let Some(model) = model {
+                    let cfg = mqo_mcp_server::catalog_ingest::IngestConfig {
+                        domain_cap: args.catalog_domain_cap,
+                        max_levels: args.catalog_max_levels,
+                        probe_measure_attempts: 12,
+                    };
+                    let sum = mqo_mcp_server::catalog_ingest::capture_domains(
+                        &mut catalog,
+                        &stats,
+                        &tools,
+                        args.row_threshold,
+                        &engine,
+                        args.force_backend.as_deref(),
+                        &capabilities,
+                        &xmla_model_coords,
+                        &model,
+                        &cfg,
+                    );
+                    eprintln!(
+                        "mqo-mcp-server: live catalog ingestion: {} levels seen, \
+                         {} domains captured, {} over-cap, {} errored, {}ms",
+                        sum.levels_seen, sum.domains_captured, sum.over_cap, sum.errored, sum.wall_ms
+                    );
+                } else {
+                    eprintln!(
+                        "mqo-mcp-server: --capture-live-domains: no model coords \
+                         available; skipping ingestion"
+                    );
+                }
+            }
+            ServerEngine::Fixture => {
+                eprintln!("mqo-mcp-server: --capture-live-domains ignored (fixture mode)");
+            }
+        }
+    }
 
     // ── Enriched catalog (optional; graceful degradation on failure) ──────
     let enriched = build_enriched(&args, &catalog);

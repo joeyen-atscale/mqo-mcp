@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.21.0 — 2026-06-12
+
+- **live catalog domain ingestion** (PRD-mqo-live-catalog-ingestion, slice 1).
+  New `--capture-live-domains` (live mode, opt-in): at startup the server probes
+  the cluster for each dimension level's enumerated member domain — one bounded
+  `measure + level` query per level through the existing `pipeline::run` path —
+  and layers `value_type`/`domain`/`expected_key_shape` onto the in-memory
+  catalog. This is the **live data source** for the validator filter-level guard
+  and the binder member-grounding check, replacing hand-edited fixture domains
+  (the recorded snapshot is now a test fixture only). New `catalog_ingest` module.
+  Verified against mcp-aws: 14/15 levels captured in ~21s.
+  - `--catalog-domain-cap` (default 1000): levels above the cap carry a descriptor.
+  - `--catalog-max-levels` (default 200): bounds startup wall-time.
+  - `--catalog-model <name>`: which cube to probe (required when the cluster
+    exposes >1 model — else the probe binds to an arbitrary one and captures
+    nothing; this was the initial 0-capture bug, now guarded with a WARN).
+  - **Fail-open** (FR-3): per-level probe errors are counted and skipped, never
+    fatal; the server starts regardless. Startup logs a summary (levels seen /
+    domains captured / over-cap / errored / wall-ms).
+  - Scope of this slice: the domain probe (FR-2/3/4). Full live column +
+    `semi_additive` ingestion (FR-1, gated on PRD OQ-1) and disk cache/refresh
+    (FR-5) are follow-on; the measure-pairing strategy (OQ-4) currently tries the
+    first 12 catalog measures per hierarchy.
+- Default behaviour unchanged: without `--capture-live-domains` the server reads
+  the recorded `--catalog` exactly as before — zero regression.
+
 ## v0.20.0 — 2026-06-12
 
 - **level-domain metadata captured + plumbed** for the validator's filter-level
