@@ -21,6 +21,7 @@ fn measure(unique_name: &str) -> ColumnEntry {
         semi_additive: None,
         required_dimension: None,
         is_calc: false,
+        ..Default::default()
     }
 }
 
@@ -34,6 +35,7 @@ fn level(unique_name: &str, hierarchy: &str, lvl: &str) -> ColumnEntry {
         semi_additive: None,
         required_dimension: None,
         is_calc: false,
+        ..Default::default()
     }
 }
 

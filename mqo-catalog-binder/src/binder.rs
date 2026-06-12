@@ -87,6 +87,21 @@ pub struct DateRoleRejection {
     pub valid_hierarchies: Vec<String>,
 }
 
+/// One unbound or ambiguous `Member` filter member: the member value did not
+/// appear in the enumerated domain of any level in the hierarchy, or appeared
+/// in multiple levels.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemberBindError {
+    /// The hierarchy the filter was on.
+    pub hierarchy: String,
+    /// The member value that could not be bound.
+    pub member: String,
+    /// Levels whose domains were checked (each has an enumerated domain).
+    pub candidate_levels: Vec<String>,
+    /// Human-readable explanation, stable for log lines.
+    pub note: String,
+}
+
 /// The result of `bind()` / `bind_with_compat()` / `bind_with_date_roles()`.
 #[derive(Debug)]
 pub enum BindResult {
@@ -100,6 +115,13 @@ pub enum BindResult {
     /// A multi-fact MQO requests a date level not conformed across the referenced
     /// facts (only from `bind_with_date_roles`). Pre-execution, catalog-only.
     DateRoleIncompatible(Vec<DateRoleRejection>),
+    /// One or more `Member` filter values are not in the domain of any level in
+    /// the hierarchy (only when the catalog carries enumerated level domains AND
+    /// all levels in the hierarchy are fully enumerated — conservative).
+    MemberUnbound(Vec<MemberBindError>),
+    /// One or more `Member` filter values match the domains of multiple levels
+    /// in the hierarchy — caller must disambiguate.
+    MemberAmbiguous(Vec<MemberBindError>),
 }
 
 // ── Resolution helpers ────────────────────────────────────────────────────────
@@ -168,6 +190,106 @@ fn resolve_level<'a>(
         0 => Err(vec![]),
         _ => Err(candidates),
     }
+}
+
+// ── Member-filter domain check ────────────────────────────────────────────────
+
+/// Attempt to resolve each `Filter::Member` value against the hierarchy's
+/// enumerated level domains. Conservative: fires ONLY when ALL level columns
+/// in the hierarchy carry a non-empty `domain` (if any level lacks one, a
+/// high-cardinality level could hold the value → safe to skip). Returns
+/// `(unbound, ambiguous)` lists; both empty means no issue found or no data
+/// available.
+fn check_member_filters(
+    mqo: &Mqo,
+    snapshot: &CatalogSnapshot,
+) -> (Vec<MemberBindError>, Vec<MemberBindError>) {
+    let mut unbound: Vec<MemberBindError> = Vec::new();
+    let mut ambiguous: Vec<MemberBindError> = Vec::new();
+
+    for filter in &mqo.filters {
+        let Filter::Member { hierarchy, members } = filter else {
+            continue;
+        };
+        let hier_key = hierarchy.to_lowercase();
+
+        // All level columns in this hierarchy.
+        let hier_levels: Vec<&crate::catalog::ColumnEntry> = snapshot
+            .columns
+            .iter()
+            .filter(|c| {
+                c.kind == "level"
+                    && c.hierarchy
+                        .as_deref()
+                        .is_some_and(|h| h.to_lowercase() == hier_key)
+            })
+            .collect();
+
+        if hier_levels.is_empty() {
+            continue; // Hierarchy unknown — handled by the existing not_found path.
+        }
+
+        // Conservative guard: every level must have a non-empty enumerated domain.
+        // Any level without one (high-cardinality, live mode) means a member could
+        // legitimately belong there — skip the whole hierarchy.
+        let all_enumerated = hier_levels
+            .iter()
+            .all(|c| c.domain.as_ref().is_some_and(|d| !d.is_empty()));
+        if !all_enumerated {
+            continue;
+        }
+
+        let level_names: Vec<String> = hier_levels
+            .iter()
+            .filter_map(|c| c.level.clone())
+            .collect();
+
+        for member in members {
+            let member_norm = member.to_lowercase();
+
+            let matching: Vec<String> = hier_levels
+                .iter()
+                .filter(|c| {
+                    c.domain
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .any(|d| d.to_lowercase() == member_norm)
+                })
+                .filter_map(|c| c.level.clone())
+                .collect();
+
+            match matching.len() {
+                0 => unbound.push(MemberBindError {
+                    hierarchy: hierarchy.clone(),
+                    member: member.clone(),
+                    candidate_levels: level_names.clone(),
+                    note: format!(
+                        "member '{}' is not in the domain of any level of hierarchy '{}'; \
+                         enumerated levels: {}",
+                        member,
+                        hierarchy,
+                        level_names.join(", ")
+                    ),
+                }),
+                1 => {} // Exactly one match — bound, no error.
+                _ => ambiguous.push(MemberBindError {
+                    hierarchy: hierarchy.clone(),
+                    member: member.clone(),
+                    candidate_levels: matching.clone(),
+                    note: format!(
+                        "member '{}' matches multiple levels in hierarchy '{}': {}; \
+                         add a level qualifier to disambiguate",
+                        member,
+                        hierarchy,
+                        matching.join(", ")
+                    ),
+                }),
+            }
+        }
+    }
+
+    (unbound, ambiguous)
 }
 
 // ── Main bind function ────────────────────────────────────────────────────────
@@ -291,12 +413,24 @@ pub fn bind(mqo: &Mqo, snapshot: &CatalogSnapshot) -> BindResult {
         }
     }
 
+    // ── Member-filter domain check ────────────────────────────────────────
+    let (member_unbound, member_ambiguous) = check_member_filters(mqo, snapshot);
+
     // ── Collate results ───────────────────────────────────────────────────
+    // Precedence: ref-resolution errors (ambiguous/not_found) > member filter
+    // errors > bound. Ref errors are authoritative; member errors only surface
+    // when all refs resolved successfully.
     if !ambiguous.is_empty() {
         return BindResult::Ambiguous(ambiguous);
     }
     if !not_found.is_empty() {
         return BindResult::NotFound(not_found);
+    }
+    if !member_unbound.is_empty() {
+        return BindResult::MemberUnbound(member_unbound);
+    }
+    if !member_ambiguous.is_empty() {
+        return BindResult::MemberAmbiguous(member_ambiguous);
     }
 
     BindResult::Bound(Box::new(BoundMqoOutput {
@@ -582,6 +716,7 @@ mod binder_unit_tests {
             semi_additive: None,
             required_dimension: None,
             is_calc: false,
+            ..Default::default()
         }
     }
 
@@ -595,6 +730,7 @@ mod binder_unit_tests {
             semi_additive: None,
             required_dimension: None,
             is_calc: false,
+            ..Default::default()
         }
     }
 
@@ -663,6 +799,7 @@ mod binder_unit_tests {
             }),
             required_dimension: Some("account.type".to_string()),
             is_calc: false,
+            ..Default::default()
         }];
         let snapshot = CatalogSnapshot {
             columns,
@@ -852,6 +989,7 @@ mod binder_unit_tests {
             semi_additive: None,
             required_dimension: None,
             is_calc: false,
+            ..Default::default()
         }];
         let snapshot = CatalogSnapshot {
             columns: cols,

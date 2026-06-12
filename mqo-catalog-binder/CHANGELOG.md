@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.4.0 — 2026-06-12
+
+Member-filter domain check (PRD-mqo-binder-no-silent-member-grounding). `bind()`
+now resolves each `Filter::Member { hierarchy, members }` against the hierarchy's
+enumerated level domains when the catalog carries them (from the level-domain
+capture probe added in mqo-mcp-server v0.20.0). Conservative guard: fires only
+when ALL levels in the hierarchy have an enumerated domain — if any level lacks
+one (high-cardinality, or live mode), the check is skipped to avoid false
+positives. Two new `BindResult` variants:
+- `MemberUnbound(Vec<MemberBindError>)` — member in no level's domain → exit 4
+  (`{"member_unbound": [...]}`) — server maps to `PipelineError::NotGround`
+- `MemberAmbiguous(Vec<MemberBindError>)` — member in multiple levels' domains →
+  exit 3 (`{"member_ambiguous": [...]}`)
+Both carry `hierarchy`, `member`, `candidate_levels`, and `note`.
+Ref-resolution errors (ambiguous/not_found) take precedence. Live mode (no
+`domain` on level columns) is entirely unchanged — zero regression.
+
+`ColumnEntry` gains an optional `domain: Option<Vec<String>>` field (`serde
+default`): absent = no domain = conservative skip; present = member check active.
+
 ## v0.3.0
 
 ### Cross-fact date-role binding + null-path rejection

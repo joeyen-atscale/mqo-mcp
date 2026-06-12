@@ -4,7 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A single column (measure or dimension level) from `search_columns`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ColumnEntry {
     /// Fully-qualified unique name (e.g. `"sales.revenue"`, `"time.calendar.[Year]"`).
     pub unique_name: String,
@@ -34,6 +34,12 @@ pub struct ColumnEntry {
     /// True when this is a calculated member (not stored aggregate).
     #[serde(default)]
     pub is_calc: bool,
+
+    /// For `kind == "level"`: optional enumerated member domain from the
+    /// level-domain capture probe (bounded at 1000). Present when the served
+    /// catalog has been enriched; absent in live mode (skips conservatively).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<Vec<String>>,
 }
 
 /// Semi-additive metadata on a measure.

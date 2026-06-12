@@ -6,8 +6,11 @@
 //!
 //! Exit codes:
 //!   0  — bound successfully; stdout is a `BoundMqo` JSON object
-//!   3  — one or more references are ambiguous; stdout is `{"ambiguous":[...]}`
-//!   4  — one or more references were not found; stdout is `{"not_found":[...]}`
+//!   3  — one or more references are ambiguous, or a Member filter member matches
+//!         multiple levels; stdout is `{"ambiguous":[...]}` or `{"member_ambiguous":[...]}`
+//!   4  — one or more references were not found, or a Member filter member is not
+//!         in the domain of any enumerated level; stdout is `{"not_found":[...]}` or
+//!         `{"member_unbound":[...]}`
 //!   5  — one or more measure×dimension pairs are cross-fact incompatible; stdout is `{"incompatible":[...]}`
 //!   6  — a multi-fact MQO requests a date level not conformed across the referenced facts; stdout is `{"date_role_incompatible":[...]}`
 //!   2  — I/O error, bad arguments, or malformed --enriched-catalog file
@@ -110,6 +113,16 @@ fn main() {
             println!("{}", serde_json::to_string_pretty(&out).expect("serialize"));
             process::exit(6);
         }
+        binder::BindResult::MemberUnbound(errors) => {
+            let out = serde_json::json!({ "member_unbound": errors });
+            println!("{}", serde_json::to_string_pretty(&out).expect("serialize"));
+            process::exit(4);
+        }
+        binder::BindResult::MemberAmbiguous(errors) => {
+            let out = serde_json::json!({ "member_ambiguous": errors });
+            println!("{}", serde_json::to_string_pretty(&out).expect("serialize"));
+            process::exit(3);
+        }
     }
 }
 
@@ -148,6 +161,7 @@ mod integration_tests {
                     semi_additive: None,
                     required_dimension: None,
                     is_calc: false,
+                    ..Default::default()
                 },
                 ColumnEntry {
                     unique_name: "sales.units_sold".to_string(),
@@ -158,6 +172,7 @@ mod integration_tests {
                     semi_additive: None,
                     required_dimension: None,
                     is_calc: false,
+                    ..Default::default()
                 },
                 ColumnEntry {
                     unique_name: "sales.balance".to_string(),
@@ -172,6 +187,7 @@ mod integration_tests {
                     }),
                     required_dimension: Some("account.account_type".to_string()),
                     is_calc: false,
+                    ..Default::default()
                 },
                 // dimension level
                 ColumnEntry {
@@ -183,6 +199,7 @@ mod integration_tests {
                     semi_additive: None,
                     required_dimension: None,
                     is_calc: false,
+                    ..Default::default()
                 },
                 ColumnEntry {
                     unique_name: "time.calendar.[Month]".to_string(),
@@ -193,6 +210,7 @@ mod integration_tests {
                     semi_additive: None,
                     required_dimension: None,
                     is_calc: false,
+                    ..Default::default()
                 },
                 // calc measure
                 ColumnEntry {
@@ -204,6 +222,7 @@ mod integration_tests {
                     semi_additive: None,
                     required_dimension: None,
                     is_calc: true,
+                    ..Default::default()
                 },
             ],
             describe_model: Some(DescribeModelOutput {
@@ -290,7 +309,8 @@ mod integration_tests {
             semi_additive: None,
             required_dimension: None,
             is_calc: false,
-        });
+                    ..Default::default()
+                },);
         let mqo = minimal_mqo("Revenue");
         let result = bind(&mqo, &snapshot);
         match result {
@@ -476,5 +496,150 @@ mod integration_tests {
             }
             other => panic!("expected Bound, got {other:?}"),
         }
+    }
+
+    // ── PRD-mqo-binder-no-silent-member-grounding — AC tests ──────────────────
+
+    fn flag_snapshot() -> CatalogSnapshot {
+        // A fully-enumerated flag dimension: only one level "Flag" with domain {Y, N}.
+        // No high-card siblings → safe to reject out-of-domain members.
+        CatalogSnapshot {
+            columns: vec![
+                ColumnEntry {
+                    unique_name: "sales.revenue".to_string(),
+                    label: "Revenue".to_string(),
+                    kind: "measure".to_string(),
+                    is_calc: false,
+                    ..Default::default()
+                },
+                ColumnEntry {
+                    unique_name: "flag_dimension.[Flag]".to_string(),
+                    label: "Flag".to_string(),
+                    kind: "level".to_string(),
+                    hierarchy: Some("flag_dimension".to_string()),
+                    level: Some("Flag".to_string()),
+                    domain: Some(vec!["Y".to_string(), "N".to_string()]),
+                    ..Default::default()
+                },
+            ],
+            ..CatalogSnapshot::default()
+        }
+    }
+
+    fn geo_snapshot() -> CatalogSnapshot {
+        // geography_dimension: Store State (enumerated, {AL,GA,...}) + Store City (no domain).
+        // Presence of un-enumerated Store City means guard MUST skip (safe).
+        CatalogSnapshot {
+            columns: vec![
+                ColumnEntry {
+                    unique_name: "sales.revenue".to_string(),
+                    label: "Revenue".to_string(),
+                    kind: "measure".to_string(),
+                    is_calc: false,
+                    ..Default::default()
+                },
+                ColumnEntry {
+                    unique_name: "geography_dimension.[Store State]".to_string(),
+                    label: "Store State".to_string(),
+                    kind: "level".to_string(),
+                    hierarchy: Some("geography_dimension".to_string()),
+                    level: Some("Store State".to_string()),
+                    domain: Some(vec!["AL".to_string(), "GA".to_string(), "TX".to_string()]),
+                    ..Default::default()
+                },
+                ColumnEntry {
+                    unique_name: "geography_dimension.[Store City]".to_string(),
+                    label: "Store City".to_string(),
+                    kind: "level".to_string(),
+                    hierarchy: Some("geography_dimension".to_string()),
+                    level: Some("Store City".to_string()),
+                    domain: None, // high-card
+                    ..Default::default()
+                },
+            ],
+            ..CatalogSnapshot::default()
+        }
+    }
+
+    // AC-1: Member filter with an out-of-domain value on a fully-enumerated dim → MemberUnbound.
+    #[test]
+    fn ac1_member_unbound_on_fully_enumerated_dim() {
+        let mut mqo = minimal_mqo("Revenue");
+        mqo.filters.push(Filter::Member {
+            hierarchy: "flag_dimension".to_string(),
+            members: vec!["MAYBE".to_string()],
+        });
+        let result = bind(&mqo, &flag_snapshot());
+        match result {
+            BindResult::MemberUnbound(errs) => {
+                assert_eq!(errs.len(), 1);
+                assert_eq!(errs[0].member, "MAYBE");
+                assert!(errs[0].candidate_levels.contains(&"Flag".to_string()));
+                assert!(errs[0].note.contains("not in the domain"));
+            }
+            other => panic!("expected MemberUnbound, got {other:?}"),
+        }
+    }
+
+    // AC-2: Valid member on a fully-enumerated dim → Bound (no error).
+    #[test]
+    fn ac2_valid_member_in_domain_is_bound() {
+        let mut mqo = minimal_mqo("Revenue");
+        mqo.filters.push(Filter::Member {
+            hierarchy: "flag_dimension".to_string(),
+            members: vec!["Y".to_string()],
+        });
+        let result = bind(&mqo, &flag_snapshot());
+        assert!(
+            matches!(result, BindResult::Bound(_)),
+            "in-domain member must bind successfully: {result:?}"
+        );
+    }
+
+    // AC-3 (conservative guard): Member not in the enumerated state domain,
+    // but a high-card Store City sibling exists → MUST NOT reject.
+    #[test]
+    fn ac3_safe_skip_with_highcard_sibling() {
+        let mut mqo = minimal_mqo("Revenue");
+        mqo.filters.push(Filter::Member {
+            hierarchy: "geography_dimension".to_string(),
+            members: vec!["California".to_string()], // not in {AL,GA,TX}
+        });
+        let result = bind(&mqo, &geo_snapshot());
+        assert!(
+            matches!(result, BindResult::Bound(_)),
+            "high-card sibling → must NOT reject: {result:?}"
+        );
+    }
+
+    // AC-4: No domain data (live mode) → no false reject.
+    #[test]
+    fn ac4_no_domain_data_no_false_reject() {
+        // fixture_snapshot() has no domain fields on any level.
+        let mut mqo = minimal_mqo("Revenue");
+        mqo.filters.push(Filter::Member {
+            hierarchy: "time.calendar".to_string(),
+            members: vec!["not-a-real-year".to_string()],
+        });
+        let result = bind(&mqo, &fixture_snapshot());
+        assert!(
+            matches!(result, BindResult::Bound(_)),
+            "no domain data (live mode) → no reject: {result:?}"
+        );
+    }
+
+    // AC-4 extra: ref errors take precedence over member errors.
+    #[test]
+    fn ac4_ref_error_wins_over_member_error() {
+        let mut mqo = minimal_mqo("NonExistentMeasure"); // will be not_found
+        mqo.filters.push(Filter::Member {
+            hierarchy: "flag_dimension".to_string(),
+            members: vec!["MAYBE".to_string()], // would be member_unbound
+        });
+        let result = bind(&mqo, &flag_snapshot());
+        assert!(
+            matches!(result, BindResult::NotFound(_)),
+            "not_found takes precedence over member_unbound: {result:?}"
+        );
     }
 }

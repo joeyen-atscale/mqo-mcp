@@ -16,6 +16,7 @@ fn make_measure(unique_name: &str) -> ColumnEntry {
         semi_additive: None,
         required_dimension: None,
         is_calc: false,
+        ..Default::default()
     }
 }
 
@@ -29,6 +30,7 @@ fn make_level(unique_name: &str, hierarchy: &str, level: &str) -> ColumnEntry {
         semi_additive: None,
         required_dimension: None,
         is_calc: false,
+        ..Default::default()
     }
 }
 

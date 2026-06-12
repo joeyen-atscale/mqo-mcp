@@ -16,6 +16,7 @@ fn make_measure(unique_name: &str) -> ColumnEntry {
         semi_additive: None,
         required_dimension: None,
         is_calc: false,
+        ..Default::default()
     }
 }
 
@@ -29,6 +30,7 @@ fn make_level(unique_name: &str, hierarchy: &str, level: &str) -> ColumnEntry {
         semi_additive: None,
         required_dimension: None,
         is_calc: false,
+        ..Default::default()
     }
 }
 
@@ -105,6 +107,7 @@ fn ac5_ambiguous_measure_returns_ambiguous_not_incompatible() {
                 semi_additive: None,
                 required_dimension: None,
                 is_calc: false,
+                ..Default::default()
             },
             ColumnEntry {
                 unique_name: "model_b.revenue".to_string(),
@@ -115,6 +118,7 @@ fn ac5_ambiguous_measure_returns_ambiguous_not_incompatible() {
                 semi_additive: None,
                 required_dimension: None,
                 is_calc: false,
+                ..Default::default()
             },
             make_level("returns.reason.[Reason]", "returns.reason", "Reason"),
         ],
