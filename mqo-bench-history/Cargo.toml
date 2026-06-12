@@ -1,0 +1,28 @@
+[package]
+name = "mqo-bench-history"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88.0"
+description = "Longitudinal regression tracker for mqo-bench runs"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "mqo-bench-history"
+path = "src/main.rs"
+
+[lib]
+name = "mqo_bench_history"
+path = "src/lib.rs"
+
+[dependencies]
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+clap        = { workspace = true }
+thiserror   = { workspace = true }
+uuid        = { workspace = true }
+chrono      = { workspace = true }
+sha2        = "0.10"
+hex         = "0.4"
+
+[dev-dependencies]
+tempfile    = "3"
