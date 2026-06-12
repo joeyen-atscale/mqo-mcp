@@ -1,6 +1,6 @@
 [package]
 name = "dh-mcp-server"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.75.0"
 description = "Dataset-handle MCP server — query_multidimensional runs the MQO pipeline, stores the result in dh-store, and returns {summary, handle, capabilities}; a dataset_* tool family works the data in place. Read-only by construction."
@@ -24,6 +24,11 @@ dh-ops = { path = "../dh-ops" }
 dh-summary = { path = "../dh-summary" }
 dh-export = { path = "../dh-export" }
 mqo-mcp-server = { path = "../mqo-mcp-server" }
+mqo-result-profiler = { path = "../mqo-result-profiler" }
+mqo-chart-recommender = { path = "../mqo-chart-recommender" }
+mqo-vega-emitter = { path = "../mqo-vega-emitter" }
+mqo-bi-asset-bundle = { path = "../mqo-bi-asset-bundle" }
+mqo-dashboard-composer = { path = "../mqo-dashboard-composer" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 clap = { version = "4", features = ["derive"] }

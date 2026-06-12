@@ -1049,7 +1049,7 @@ dependencies = [
 
 [[package]]
 name = "dh-mcp-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "dh-export",
@@ -1057,7 +1057,12 @@ dependencies = [
  "dh-spec",
  "dh-store",
  "dh-summary",
+ "mqo-bi-asset-bundle",
+ "mqo-chart-recommender",
+ "mqo-dashboard-composer",
  "mqo-mcp-server",
+ "mqo-result-profiler",
+ "mqo-vega-emitter",
  "serde",
  "serde_json",
 ]

@@ -23,10 +23,11 @@
 #![deny(clippy::all, clippy::pedantic)]
 #![allow(clippy::module_name_repetitions)]
 
+pub mod chart_tools;
 pub mod convert;
 pub mod mcp;
 
-pub use mcp::{tool_descriptors, Server, DATASET_TOOLS, DEFAULT_TTL_SECS, PROTOCOL_VERSION};
+pub use mcp::{tool_descriptors, Server, CHART_TOOLS, DATASET_TOOLS, DEFAULT_TTL_SECS, PROTOCOL_VERSION};
 
 // Re-export the fleet path resolver so binaries / tests can build a Server.
 pub use mqo_mcp_server::pipeline::ToolPaths;

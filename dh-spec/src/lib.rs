@@ -231,7 +231,8 @@ impl DatasetSummary {
 
 /// An operation available on a [`DatasetHandle`].
 ///
-/// Exactly nine variants are defined; the set is exhaustive per spec.
+/// Eleven variants: nine data-transformation ops plus two visualization ops
+/// (`Chart`, `BiAsset`) added in v0.2.0 of the dataset-handle fleet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "PascalCase")]
 pub enum Capability {
@@ -253,12 +254,16 @@ pub enum Capability {
     Describe,
     /// Export the result to a downstream format (CSV, Parquet, …).
     Export,
+    /// Emit a Vega-Lite v5 chart spec from a handle (no rows returned).
+    Chart,
+    /// Emit a full BI asset bundle (title, description, spec, caveats) from a handle.
+    BiAsset,
 }
 
-/// All nine [`Capability`] variants, in declaration order.
+/// All eleven [`Capability`] variants, in declaration order.
 ///
 /// Useful for iterating or asserting the complete capability set.
-pub const ALL_CAPABILITIES: [Capability; 9] = [
+pub const ALL_CAPABILITIES: [Capability; 11] = [
     Capability::Aggregate,
     Capability::Filter,
     Capability::Sort,
@@ -268,6 +273,8 @@ pub const ALL_CAPABILITIES: [Capability; 9] = [
     Capability::Drill,
     Capability::Describe,
     Capability::Export,
+    Capability::Chart,
+    Capability::BiAsset,
 ];
 
 // ── OpRequest / OpResult ───────────────────────────────────────────────────

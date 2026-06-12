@@ -100,6 +100,7 @@ pub fn summarize(dataset: &Dataset, cfg: &SummaryCfg) -> DatasetSummary {
 ///
 /// Rules:
 /// * `Pivot` requires ≥2 dimension columns.
+/// * `Chart` and `BiAsset` require ≥1 row and ≥1 measure column.
 /// * All other capabilities are always advertised.
 #[must_use]
 pub fn capabilities(dataset: &Dataset) -> Vec<Capability> {
@@ -108,8 +109,14 @@ pub fn capabilities(dataset: &Dataset) -> Vec<Capability> {
         .iter()
         .filter(|c| c.role == ColumnRole::Dimension)
         .count();
+    let n_measures = dataset
+        .columns
+        .iter()
+        .filter(|c| c.role == ColumnRole::Measure)
+        .count();
+    let has_rows = dataset.row_count() > 0;
 
-    let mut caps = Vec::with_capacity(9);
+    let mut caps = Vec::with_capacity(11);
     caps.push(Capability::Aggregate);
     caps.push(Capability::Filter);
     caps.push(Capability::Sort);
@@ -121,6 +128,11 @@ pub fn capabilities(dataset: &Dataset) -> Vec<Capability> {
     caps.push(Capability::Drill);
     caps.push(Capability::Describe);
     caps.push(Capability::Export);
+    // Chart and BiAsset are available whenever the dataset has data to visualise.
+    if has_rows && n_measures >= 1 {
+        caps.push(Capability::Chart);
+        caps.push(Capability::BiAsset);
+    }
     caps
 }
 

@@ -55,6 +55,13 @@ pub const DATASET_TOOLS: [&str; 10] = [
     "dataset_export",
 ];
 
+/// The three new BI/chart tool names.
+pub const CHART_TOOLS: [&str; 3] = [
+    "dataset_chart",
+    "build_bi_asset",
+    "compose_dashboard",
+];
+
 /// Server-side state.
 pub struct Server {
     /// Recorded catalog snapshot (grounds the binder; identical contract to the
@@ -150,6 +157,10 @@ impl Server {
             "dataset_drill" => self.dataset_op(Capability::Drill, &args),
             "dataset_describe" => self.dataset_op(Capability::Describe, &args),
             "dataset_export" => self.dataset_export(&args),
+            // BI/chart tools (v0.2.0)
+            "dataset_chart" => crate::chart_tools::handle_dataset_chart(&self.store, &args),
+            "build_bi_asset" => crate::chart_tools::handle_build_bi_asset(&self.store, &args),
+            "compose_dashboard" => crate::chart_tools::handle_compose_dashboard(&self.store, &args),
             other => {
                 return Err(JsonRpcError::invalid_params(&format!(
                     "unknown tool `{other}`"
@@ -246,6 +257,13 @@ impl Server {
             // Export is never routed here; it has its own handler.
             Capability::Export => {
                 return structured_err("internal_error", json!("export is not a dataset_op"))
+            }
+            // Chart/BiAsset are never routed here; they have their own handlers.
+            Capability::Chart | Capability::BiAsset => {
+                return structured_err(
+                    "internal_error",
+                    json!("chart/bi-asset ops are not dataset_op variants"),
+                )
             }
         };
 
@@ -396,6 +414,88 @@ pub fn tool_descriptors() -> Value {
     ];
 
     for (name, desc, schema) in dataset_descs {
+        tools.push(json!({
+            "name": name,
+            "description": desc,
+            "inputSchema": schema,
+            "annotations": { "readOnlyHint": true }
+        }));
+    }
+
+    // ── BI / chart tools (v0.2.0) ──────────────────────────────────────────
+
+    let chart_descs: Vec<(&str, &str, Value)> = vec![
+        (
+            "dataset_chart",
+            "Emit a Vega-Lite v5 JSON spec for a stored handle. Specify chart_type (bar|line|area|point), x_col, y_cols, and optional title. Does NOT return rows — the spec embeds the data inline.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "handle": handle_schema(),
+                    "chart_type": {
+                        "type": "string",
+                        "enum": ["bar", "line", "area", "point"],
+                        "description": "Vega-Lite mark type. Default: 'bar'."
+                    },
+                    "x_col": {
+                        "type": "string",
+                        "description": "Column name for the X (category) axis."
+                    },
+                    "y_cols": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "One or more column names for the Y (metric) axis."
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Optional chart title."
+                    }
+                },
+                "required": ["handle", "x_col", "y_cols"]
+            }),
+        ),
+        (
+            "build_bi_asset",
+            "Build a complete bi-asset.v1 bundle from a stored handle: auto-selects chart type, synthesizes title/description/caveats. Returns {title, description, caveats, vega_spec, profile_summary}. Does NOT return rows.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "handle": handle_schema()
+                },
+                "required": ["handle"]
+            }),
+        ),
+        (
+            "compose_dashboard",
+            "Compose a multi-panel Vega-Lite v5 concat spec from an array of stored handles. Each handle becomes one panel (a bi-asset.v1). Returns a dashboard.v1 payload. Does NOT return rows.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "handles": {
+                        "type": "array",
+                        "items": handle_schema(),
+                        "description": "Array of DatasetHandle objects to compose into panels."
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Dashboard title."
+                    },
+                    "layout": {
+                        "type": "string",
+                        "enum": ["grid", "vertical", "horizontal"],
+                        "description": "Panel layout. Default: 'grid'."
+                    },
+                    "columns": {
+                        "type": "integer",
+                        "description": "Number of columns in grid layout. Default: 2."
+                    }
+                },
+                "required": ["handles", "title"]
+            }),
+        ),
+    ];
+
+    for (name, desc, schema) in chart_descs {
         tools.push(json!({
             "name": name,
             "description": desc,

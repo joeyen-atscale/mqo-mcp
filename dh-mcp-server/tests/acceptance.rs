@@ -1,7 +1,7 @@
 //! Acceptance tests — one (or more) per PRD acceptance criterion (ac1..ac7).
 //!
 //! ac1  `tools/list` advertises `query_multidimensional` + the ten `dataset_*`
-//!      tools, all with `readOnlyHint: true`.
+//!      tools + three BI/chart tools (14 total), all with `readOnlyHint: true`.
 //! ac2  `query_multidimensional` over a fixture returns `{ summary, handle,
 //!      capabilities }` and NO `rows` field; rows are retrievable only via a
 //!      subsequent `dataset_*` call.
@@ -23,7 +23,7 @@
 //! pipeline-dependent ACs are skipped with a printed note (mock-gated); the
 //! pure-protocol assertions still run.
 
-use dh_mcp_server::{tool_descriptors, Server, ToolPaths, DATASET_TOOLS};
+use dh_mcp_server::{tool_descriptors, Server, ToolPaths, CHART_TOOLS, DATASET_TOOLS};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -140,12 +140,15 @@ fn ac1_advertises_all_tools_with_readonly_hints() {
 
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
 
-    // query_multidimensional + the ten dataset_* tools = 11 tools.
+    // query_multidimensional + ten dataset_* tools + three chart tools = 14 tools.
     assert!(names.contains(&"query_multidimensional"), "query tool advertised");
     for d in DATASET_TOOLS {
         assert!(names.contains(&d), "dataset tool `{d}` advertised");
     }
-    assert_eq!(tools.len(), 11, "exactly 11 tools: {names:?}");
+    for c in CHART_TOOLS {
+        assert!(names.contains(&c), "chart tool `{c}` advertised");
+    }
+    assert_eq!(tools.len(), 14, "exactly 14 tools: {names:?}");
 
     // Every tool carries readOnlyHint: true.
     for t in tools {
@@ -158,7 +161,7 @@ fn ac1_advertises_all_tools_with_readonly_hints() {
     }
 
     // tool_descriptors() (public) returns the same shape.
-    assert_eq!(tool_descriptors().as_array().unwrap().len(), 11);
+    assert_eq!(tool_descriptors().as_array().unwrap().len(), 14);
 }
 
 // ── ac2 ──────────────────────────────────────────────────────────────────────
