@@ -17,6 +17,12 @@ pub struct BoundMeasureExt {
     pub semi_additive: bool,
     pub trigger_hierarchies: Vec<String>,
     pub required_dimension: Option<String>,
+    /// Per-measure date-role binding (FR-1): the date hierarchy this measure is
+    /// grouped on, resolved against the measure's fact. `None` when the MQO has
+    /// no date dimension, when no enriched catalog is supplied, or when the date
+    /// role is ambiguous/unresolvable for this measure's fact.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub date_role_hierarchy: Option<String>,
 }
 
 /// Extended `BoundDimension`.
@@ -61,7 +67,27 @@ pub struct IncompatibilityReport {
     pub note: String,
 }
 
-/// The result of `bind()` / `bind_with_compat()`.
+/// A structured cross-fact date-role rejection (FR-2/FR-3).
+///
+/// Emitted when a multi-fact MQO names a single date level that is valid for one
+/// fact's date role but NOT conformed to another referenced measure's fact —
+/// e.g. an inventory measure grouped on a `sold_date_*` hierarchy. The
+/// classification is purely catalog-structural (NFR-1, FR-5): no query is run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DateRoleRejection {
+    /// Stable rejection code for clients/scorers.
+    pub code: String,
+    /// Human-readable explanation. Stable format for log lines.
+    pub detail: String,
+    /// The measure that cannot be grouped on the requested date level.
+    pub measure: String,
+    /// The requested date hierarchy:level the measure was (wrongly) grouped on.
+    pub requested_level: String,
+    /// Date hierarchies that ARE valid for this measure's fact (from the catalog).
+    pub valid_hierarchies: Vec<String>,
+}
+
+/// The result of `bind()` / `bind_with_compat()` / `bind_with_date_roles()`.
 #[derive(Debug)]
 pub enum BindResult {
     Bound(Box<BoundMqoOutput>),
@@ -71,6 +97,9 @@ pub enum BindResult {
     NotFound(Vec<String>),
     /// One or more measure×dimension pairs span different facts (only from `bind_with_compat`).
     Incompatible(Vec<IncompatibilityReport>),
+    /// A multi-fact MQO requests a date level not conformed across the referenced
+    /// facts (only from `bind_with_date_roles`). Pre-execution, catalog-only.
+    DateRoleIncompatible(Vec<DateRoleRejection>),
 }
 
 // ── Resolution helpers ────────────────────────────────────────────────────────
@@ -177,6 +206,7 @@ pub fn bind(mqo: &Mqo, snapshot: &CatalogSnapshot) -> BindResult {
                     semi_additive,
                     trigger_hierarchies,
                     required_dimension: entry.required_dimension.clone(),
+                    date_role_hierarchy: None,
                 });
             }
             Err(candidates) if candidates.is_empty() => {
@@ -347,6 +377,192 @@ fn check_cross_fact_paths(
     });
 
     reports
+}
+
+// ── Per-measure date-role binding (FR-1) + cross-fact date rejection (FR-2/3) ──
+
+/// Heuristic: is this a date/time hierarchy? Catalog-only, name-based.
+/// TPC-DS date roles are named `*date_dimensions` / `*date_week_hierarchy`, and
+/// their levels carry "Calendar"/"Date"/"Week"/"Month"/"Quarter"/"Year" labels.
+fn is_date_hierarchy(hierarchy: &str) -> bool {
+    let h = hierarchy.to_lowercase();
+    h.contains("date") || h.contains("calendar") || h.contains("time")
+}
+
+/// Bind an MQO, then resolve a per-measure date role and reject cross-fact
+/// date incompatibilities — all pre-execution, catalog-only (NFR-1).
+///
+/// Behaviour:
+/// - Single-fact / single-date-dimension MQOs are unchanged: each measure is
+///   tagged with that date hierarchy, no rejection (NFR-2, FR-4).
+/// - When the MQO references measures from different facts AND date dimension(s),
+///   each measure is bound to the date hierarchy whose fact intersects the
+///   measure's fact (FR-1).
+/// - When a measure's fact does NOT intersect ANY requested date dimension's
+///   fact (the conservative incompatible case — e.g. inventory measure under a
+///   `sold_date_*` level), a structured `DateRoleRejection` is emitted (FR-2/3).
+/// - Fail-open: conformed entities (empty/`*` column-group) are never rejected
+///   and never block binding (FR-4, FR-5).
+///
+/// When the MQO has no date dimension, this defers to the same blanket
+/// cross-fact compatibility check as `bind_with_compat`.
+///
+/// Precedence: `NotFound` / `Ambiguous` (from `bind`) > `DateRoleIncompatible`
+/// > `Incompatible` > `Bound`.
+#[must_use]
+pub fn bind_with_date_roles(
+    mqo: &Mqo,
+    snapshot: &CatalogSnapshot,
+    enriched: &EnrichedColumnGroups,
+) -> BindResult {
+    let mut bound = match bind(mqo, snapshot) {
+        BindResult::Bound(b) => b,
+        other => return other,
+    };
+
+    // Date dimensions actually requested in this MQO, with their fact groups.
+    let date_dims: Vec<(BoundDimensionExt, std::collections::BTreeSet<String>)> = bound
+        .dimensions
+        .iter()
+        .filter(|d| is_date_hierarchy(&d.hierarchy))
+        .map(|d| (d.clone(), enriched.groups_for(&d.unique_name).clone()))
+        .collect();
+
+    // No date dimension → no per-measure date role to resolve. Fall back to the
+    // existing blanket cross-fact compatibility check (legacy `bind_with_compat`
+    // behaviour) so non-date incompatibilities are still caught.
+    if date_dims.is_empty() {
+        let reports = check_cross_fact_paths(&bound, enriched);
+        return if reports.is_empty() {
+            BindResult::Bound(bound)
+        } else {
+            BindResult::Incompatible(reports)
+        };
+    }
+
+    // All date hierarchies known in the catalog, with their fact groups — used to
+    // report the *valid* date roles for a measure when we reject.
+    let catalog_date_hiers = collect_catalog_date_hierarchies(snapshot, enriched);
+
+    let mut rejections: Vec<DateRoleRejection> = Vec::new();
+
+    for measure in &mut bound.measures {
+        let m_groups = enriched.groups_for(&measure.unique_name).clone();
+        // Conformed measure (no fact binding) → never rejected, no role tag.
+        if EnrichedColumnGroups::is_conformed(&m_groups) {
+            continue;
+        }
+
+        // Find the requested date dimension whose fact intersects this measure.
+        let compatible = date_dims.iter().find(|(_, d_groups)| {
+            EnrichedColumnGroups::is_conformed(d_groups)
+                || m_groups.iter().any(|g| d_groups.contains(g))
+        });
+
+        if let Some((dim, _)) = compatible {
+            measure.date_role_hierarchy = Some(dim.hierarchy.clone());
+            continue;
+        }
+
+        // The measure's fact intersects NONE of the requested date roles.
+        // Pick a deterministic offending date level to name in the report.
+        let Some(offending) = date_dims
+            .iter()
+            .map(|(d, _)| d)
+            .min_by(|a, b| a.unique_name.cmp(&b.unique_name))
+        else {
+            continue;
+        };
+
+        let mut valid: Vec<String> = catalog_date_hiers
+            .iter()
+            .filter(|(_, groups)| {
+                EnrichedColumnGroups::is_conformed(groups)
+                    || m_groups.iter().any(|g| groups.contains(g))
+            })
+            .map(|(hier, _)| hier.clone())
+            .collect();
+        valid.sort();
+        valid.dedup();
+
+        rejections.push(DateRoleRejection {
+            code: "cross_fact_date_incompatible".to_string(),
+            detail: format!(
+                "measure `{}` (fact groups: {}) cannot be grouped on date level `{}:{}` — \
+                 that date role serves a different fact; valid date roles for this measure: {}",
+                measure.unique_name,
+                m_groups.iter().cloned().collect::<Vec<_>>().join(", "),
+                offending.hierarchy,
+                offending.unique_name,
+                if valid.is_empty() {
+                    "(none in catalog)".to_string()
+                } else {
+                    valid.join(", ")
+                },
+            ),
+            measure: measure.unique_name.clone(),
+            requested_level: offending.unique_name.clone(),
+            valid_hierarchies: valid,
+        });
+    }
+
+    if !rejections.is_empty() {
+        // Deterministic order by measure name.
+        rejections.sort_by(|a, b| a.measure.cmp(&b.measure));
+        return BindResult::DateRoleIncompatible(rejections);
+    }
+
+    // No date-role incompatibility. Defer to the existing cross-fact compat check
+    // for any NON-date measure×dimension incompatibilities (reuses the matrix).
+    //
+    // Date dimensions are intentionally excluded here: in a valid multi-role query
+    // each measure is grouped on its *own* date role, so an inventory measure is
+    // legitimately disjoint from the `sold_date_*` dimension (and vice-versa). The
+    // per-measure pass above already vetted date roles; re-checking them with the
+    // blanket pairwise rule would be a false rejection (FR-4).
+    let non_date = BoundMqoOutput {
+        mqo: bound.mqo.clone(),
+        measures: bound.measures.clone(),
+        dimensions: bound
+            .dimensions
+            .iter()
+            .filter(|d| !is_date_hierarchy(&d.hierarchy))
+            .cloned()
+            .collect(),
+        calc_group_members: bound.calc_group_members.clone(),
+    };
+    let reports = check_cross_fact_paths(&non_date, enriched);
+    if reports.is_empty() {
+        BindResult::Bound(bound)
+    } else {
+        BindResult::Incompatible(reports)
+    }
+}
+
+/// Collect every date hierarchy present in the catalog, paired with the union of
+/// its levels' fact column-groups. Used to report a measure's *valid* date roles.
+fn collect_catalog_date_hierarchies(
+    snapshot: &CatalogSnapshot,
+    enriched: &EnrichedColumnGroups,
+) -> Vec<(String, std::collections::BTreeSet<String>)> {
+    use std::collections::BTreeMap;
+    let mut by_hier: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
+    for c in &snapshot.columns {
+        if c.kind != "level" {
+            continue;
+        }
+        let Some(hier) = c.hierarchy.as_deref() else {
+            continue;
+        };
+        if !is_date_hierarchy(hier) {
+            continue;
+        }
+        let entry = by_hier.entry(hier.to_string()).or_default();
+        for g in enriched.groups_for(&c.unique_name) {
+            entry.insert(g.clone());
+        }
+    }
+    by_hier.into_iter().collect()
 }
 
 #[cfg(test)]
@@ -700,5 +916,208 @@ mod binder_unit_tests {
             }
             other => panic!("expected Bound, got {other:?}"),
         }
+    }
+
+    // ── Per-measure date-role binding + cross-fact date rejection (FR-1/2/3) ──────
+
+    use crate::compat::EnrichedColumnGroups;
+
+    /// Build an `EnrichedColumnGroups` from `(unique_name, &[group])` pairs.
+    fn enriched(entries: &[(&str, &[&str])]) -> EnrichedColumnGroups {
+        use std::io::Write as _;
+        let columns: Vec<Value> = entries
+            .iter()
+            .map(|(name, groups)| serde_json::json!({ "unique_name": name, "column_group": groups }))
+            .collect();
+        let catalog = serde_json::json!({ "schema": "enriched-catalog.v1", "columns": columns });
+        let mut f = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
+        f.write_all(catalog.to_string().as_bytes()).unwrap();
+        EnrichedColumnGroups::from_path(f.path()).unwrap()
+    }
+
+    /// A snapshot with one inventory measure, one sales measure, and the two
+    /// TPC-DS date hierarchies (inventory + sold) each at Month level.
+    fn tpcds_like_snapshot() -> CatalogSnapshot {
+        CatalogSnapshot {
+            columns: vec![
+                make_measure("tpcds.inventory_quantity_on_hand", "Inventory Quantity On Hand"),
+                make_measure("tpcds.total_store_sales", "Total Store Sales"),
+                make_level(
+                    "inventory_date_dimensions.[Inventory Calendar Month]",
+                    "Inventory Calendar Month",
+                    "inventory_date_dimensions",
+                    "Inventory Calendar Month",
+                ),
+                make_level(
+                    "sold_date_dimensions.[Sold Calendar Month]",
+                    "Sold Calendar Month",
+                    "sold_date_dimensions",
+                    "Sold Calendar Month",
+                ),
+            ],
+            ..CatalogSnapshot::default()
+        }
+    }
+
+    fn tpcds_enriched() -> EnrichedColumnGroups {
+        enriched(&[
+            ("tpcds.inventory_quantity_on_hand", &["inventory"]),
+            ("tpcds.total_store_sales", &["store_sales"]),
+            ("inventory_date_dimensions.[Inventory Calendar Month]", &["inventory"]),
+            ("sold_date_dimensions.[Sold Calendar Month]", &["store_sales", "catalog_sales", "web_sales"]),
+        ])
+    }
+
+    fn dr_mqo(measures: &[&str], dims: &[(&str, &str)]) -> Mqo {
+        Mqo {
+            model: "tpcds".to_string(),
+            measures: measures
+                .iter()
+                .map(|m| MeasureRef { unique_name: (*m).to_string() })
+                .collect(),
+            dimensions: dims
+                .iter()
+                .map(|(h, l)| LevelSelection { hierarchy: (*h).to_string(), level: (*l).to_string() })
+                .collect(),
+            filters: vec![],
+            time_intelligence: vec![],
+            order: None,
+            limit: None,
+            non_empty: false,
+        }
+    }
+
+    /// AC-1 unit: inventory + sales measure under `Sold Calendar Month` ONLY →
+    /// the inventory measure is flagged `cross_fact_date_incompatible`.
+    #[test]
+    fn date_role_inventory_under_sold_month_is_rejected() {
+        let snapshot = tpcds_like_snapshot();
+        let e = tpcds_enriched();
+        let mqo = dr_mqo(
+            &["tpcds.inventory_quantity_on_hand", "tpcds.total_store_sales"],
+            &[("sold_date_dimensions", "Sold Calendar Month")],
+        );
+        match bind_with_date_roles(&mqo, &snapshot, &e) {
+            BindResult::DateRoleIncompatible(rs) => {
+                assert_eq!(rs.len(), 1, "only the inventory measure should be flagged");
+                assert_eq!(rs[0].code, "cross_fact_date_incompatible");
+                assert_eq!(rs[0].measure, "tpcds.inventory_quantity_on_hand");
+                assert_eq!(rs[0].requested_level, "sold_date_dimensions.[Sold Calendar Month]");
+                assert!(
+                    rs[0].valid_hierarchies.contains(&"inventory_date_dimensions".to_string()),
+                    "valid roles must name the inventory date hierarchy: {:?}",
+                    rs[0].valid_hierarchies
+                );
+            }
+            other => panic!("expected DateRoleIncompatible, got {other:?}"),
+        }
+    }
+
+    /// AC-1 unit (per-measure binding): inventory + sales each under their OWN
+    /// date role → Bound, each measure tagged with its date_role_hierarchy.
+    #[test]
+    fn date_role_per_measure_binding_both_roles_present() {
+        let snapshot = tpcds_like_snapshot();
+        let e = tpcds_enriched();
+        let mqo = dr_mqo(
+            &["tpcds.inventory_quantity_on_hand", "tpcds.total_store_sales"],
+            &[
+                ("inventory_date_dimensions", "Inventory Calendar Month"),
+                ("sold_date_dimensions", "Sold Calendar Month"),
+            ],
+        );
+        match bind_with_date_roles(&mqo, &snapshot, &e) {
+            BindResult::Bound(b) => {
+                let inv = b.measures.iter().find(|m| m.unique_name.contains("inventory")).unwrap();
+                let sales = b.measures.iter().find(|m| m.unique_name.contains("store_sales")).unwrap();
+                assert_eq!(inv.date_role_hierarchy.as_deref(), Some("inventory_date_dimensions"));
+                assert_eq!(sales.date_role_hierarchy.as_deref(), Some("sold_date_dimensions"));
+            }
+            other => panic!("expected Bound with per-measure date roles, got {other:?}"),
+        }
+    }
+
+    /// AC-2 unit: ONLY sales measures under `Sold Calendar Month` → binds normally.
+    #[test]
+    fn date_role_sales_only_under_sold_month_binds() {
+        let snapshot = tpcds_like_snapshot();
+        let e = tpcds_enriched();
+        let mqo = dr_mqo(
+            &["tpcds.total_store_sales"],
+            &[("sold_date_dimensions", "Sold Calendar Month")],
+        );
+        match bind_with_date_roles(&mqo, &snapshot, &e) {
+            BindResult::Bound(b) => {
+                assert_eq!(
+                    b.measures[0].date_role_hierarchy.as_deref(),
+                    Some("sold_date_dimensions")
+                );
+            }
+            other => panic!("expected Bound (sales-only), got {other:?}"),
+        }
+    }
+
+    /// AC-3 unit: ONLY inventory measures under `Inventory Calendar Month` → binds normally.
+    #[test]
+    fn date_role_inventory_only_under_inventory_month_binds() {
+        let snapshot = tpcds_like_snapshot();
+        let e = tpcds_enriched();
+        let mqo = dr_mqo(
+            &["tpcds.inventory_quantity_on_hand"],
+            &[("inventory_date_dimensions", "Inventory Calendar Month")],
+        );
+        match bind_with_date_roles(&mqo, &snapshot, &e) {
+            BindResult::Bound(b) => {
+                assert_eq!(
+                    b.measures[0].date_role_hierarchy.as_deref(),
+                    Some("inventory_date_dimensions")
+                );
+            }
+            other => panic!("expected Bound (inventory-only), got {other:?}"),
+        }
+    }
+
+    /// FR-4 false-positive guard: no date dimension at all → never rejected,
+    /// no date role tagged.
+    #[test]
+    fn date_role_no_date_dimension_binds_unchanged() {
+        let snapshot = tpcds_like_snapshot();
+        let e = tpcds_enriched();
+        let mqo = dr_mqo(&["tpcds.total_store_sales"], &[]);
+        match bind_with_date_roles(&mqo, &snapshot, &e) {
+            BindResult::Bound(b) => {
+                assert!(b.measures[0].date_role_hierarchy.is_none());
+            }
+            other => panic!("expected Bound (no date dim), got {other:?}"),
+        }
+    }
+
+    /// FR-4 guard: a conformed measure (no fact binding) is never date-rejected.
+    #[test]
+    fn date_role_conformed_measure_not_rejected() {
+        let mut snapshot = tpcds_like_snapshot();
+        snapshot.columns.push(make_measure("tpcds.conformed_count", "Conformed Count"));
+        // conformed_count has NO enriched entry → treated as conformed (fail-open).
+        let e = tpcds_enriched();
+        let mqo = dr_mqo(
+            &["tpcds.conformed_count"],
+            &[("sold_date_dimensions", "Sold Calendar Month")],
+        );
+        match bind_with_date_roles(&mqo, &snapshot, &e) {
+            BindResult::Bound(b) => {
+                assert!(b.measures[0].date_role_hierarchy.is_none());
+            }
+            other => panic!("expected Bound (conformed measure), got {other:?}"),
+        }
+    }
+
+    /// is_date_hierarchy must recognise the TPC-DS date roles and reject non-date dims.
+    #[test]
+    fn is_date_hierarchy_recognises_date_roles() {
+        assert!(is_date_hierarchy("sold_date_dimensions"));
+        assert!(is_date_hierarchy("inventory_date_dimensions"));
+        assert!(is_date_hierarchy("sold_date_week_hierarchy"));
+        assert!(!is_date_hierarchy("store_dimension"));
+        assert!(!is_date_hierarchy("customer_dimension"));
     }
 }

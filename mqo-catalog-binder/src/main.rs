@@ -9,6 +9,7 @@
 //!   3  — one or more references are ambiguous; stdout is `{"ambiguous":[...]}`
 //!   4  — one or more references were not found; stdout is `{"not_found":[...]}`
 //!   5  — one or more measure×dimension pairs are cross-fact incompatible; stdout is `{"incompatible":[...]}`
+//!   6  — a multi-fact MQO requests a date level not conformed across the referenced facts; stdout is `{"date_role_incompatible":[...]}`
 //!   2  — I/O error, bad arguments, or malformed --enriched-catalog file
 
 #![forbid(unsafe_code)]
@@ -80,7 +81,7 @@ fn main() {
     };
 
     let result = match &enriched {
-        Some(e) => binder::bind_with_compat(&mqo, &snapshot, e),
+        Some(e) => binder::bind_with_date_roles(&mqo, &snapshot, e),
         None => binder::bind(&mqo, &snapshot),
     };
 
@@ -103,6 +104,11 @@ fn main() {
             let out = serde_json::json!({ "incompatible": reports });
             println!("{}", serde_json::to_string_pretty(&out).expect("serialize"));
             process::exit(5);
+        }
+        binder::BindResult::DateRoleIncompatible(rejections) => {
+            let out = serde_json::json!({ "date_role_incompatible": rejections });
+            println!("{}", serde_json::to_string_pretty(&out).expect("serialize"));
+            process::exit(6);
         }
     }
 }
