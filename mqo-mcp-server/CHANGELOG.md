@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.19.0 — 2026-06-12
+
+- **semi-additive flag plumbed into the validator snapshot**
+  (PRD-mqo-catalog-semi-additive-metadata). `param_validate` now carries each
+  catalog measure's `semi_additive` (a `SemiAdditiveInfo` object or bool from the
+  catalog-binder `ColumnEntry`) into the validator's `CatalogSnapshot`, so
+  mqo-param-validator RULE 2 (semi-additive sum guard) is no longer dormant. The
+  TPC-DS fixture marks `inventory_quantity_on_hand` semi-additive (a balance/
+  snapshot measure). The guard fires only on an EXPLICIT `sum`/`count`/`total`
+  override (validator v0.5.0) — default-agg "balance by period" queries are
+  unaffected, so no regression to the inventory-by-time benchmark tasks.
+
 ## v0.18.0 — 2026-06-12
 
 - **within-hierarchy `*Name` display preference** in `describe_model`

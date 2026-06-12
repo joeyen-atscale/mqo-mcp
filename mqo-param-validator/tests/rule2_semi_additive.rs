@@ -5,7 +5,8 @@
 //! these tests use a synthetic `semi_additive == true` measure per PRD §7/OQ-1.
 //!
 //! Acceptance criteria:
-//! - AC-1: sum a semi-additive measure over Sold Calendar Month → reject.
+//! - AC-1: EXPLICIT sum of a semi-additive measure over Sold Calendar Month →
+//!   reject. A None/default agg is the model's semi-additive function → safe.
 //! - AC-2: same measure with NO time dimension → no rejection.
 //! - AC-3: a non-semi-additive measure summed over months → no rejection.
 //! - AC-4: semi_additive null → no rejection (dormant).
@@ -79,11 +80,35 @@ fn non_time_dim() -> MqoDimensionRef {
 // --- AC-1: sum semi-additive over time → reject + suggested agg ------------
 
 #[test]
-fn ac1_sum_semi_additive_over_month_rejected() {
+fn ac1_default_agg_semi_additive_over_month_not_rejected() {
+    // A None/default aggregation on a semi-additive measure is NOT a misuse: the
+    // engine applies the measure's semi-additive function (last-non-empty) under
+    // the default, so "balance by period" is legitimate. Rejecting it would
+    // false-positive every inventory-on-hand-by-month query. Only an EXPLICIT
+    // additive override (sum) is rejected — see the explicit-sum test below.
     let mqo = BoundMqoInput {
         measures: vec![MqoMeasureRef {
             unique_name: "Inventory On Hand".to_string(),
-            aggregation: None, // default == additive
+            aggregation: None, // default → engine applies semi-additive agg → safe
+        }],
+        dimensions: vec![time_dim()],
+        ..Default::default()
+    };
+    let result = validate(&mqo, &catalog());
+    let sa = sa_rejections(&result);
+    assert_eq!(
+        sa.len(),
+        0,
+        "default-agg semi-additive over time must NOT be rejected: {result:?}"
+    );
+}
+
+#[test]
+fn ac1_explicit_sum_semi_additive_with_policy_suggests_last() {
+    let mqo = BoundMqoInput {
+        measures: vec![MqoMeasureRef {
+            unique_name: "Inventory On Hand".to_string(),
+            aggregation: Some("sum".to_string()), // explicit override → misuse
         }],
         dimensions: vec![time_dim()],
         ..Default::default()

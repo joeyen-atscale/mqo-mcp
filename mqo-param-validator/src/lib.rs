@@ -545,6 +545,20 @@ fn agg_is_additive(agg: Option<&str>) -> bool {
     }
 }
 
+/// Is this an EXPLICIT additive aggregation override (`sum`/`count`/`total`)?
+/// Unlike [`agg_is_additive`], a `None` (default) is NOT explicit: for a
+/// semi-additive measure the default resolves to the model's semi-additive
+/// function (last-non-empty) at the engine, which is correct. Only an explicit
+/// additive override double-counts the balance, so the semi-additive guard
+/// keys off this — rejecting the default would false-positive every legitimate
+/// "balance by period" query.
+fn agg_is_explicit_additive(agg: Option<&str>) -> bool {
+    matches!(
+        agg.map(|a| a.trim().to_lowercase()).as_deref(),
+        Some("sum") | Some("count") | Some("total")
+    )
+}
+
 /// Is this aggregation an averaging aggregation (`avg`/`average`/`mean`)?
 fn agg_is_average(agg: Option<&str>) -> bool {
     matches!(
@@ -1338,13 +1352,17 @@ fn dimension_is_time(dref: &MqoDimensionRef) -> bool {
             .unwrap_or(false)
 }
 
-/// RULE 2: reject an additive aggregation of a `semi_additive` measure over a
-/// time dimension. Fires only when ALL hold (PRD FR-2/FR-4):
+/// RULE 2: reject an EXPLICIT additive aggregation of a `semi_additive` measure
+/// over a time dimension. Fires only when ALL hold (PRD FR-2/FR-4):
 ///   * the catalog measure has `semi_additive == Some(true)`,
 ///   * a time-typed dimension is in the grouping,
-///   * the aggregation is additive (sum/default — `agg_is_additive`).
+///   * the aggregation is an EXPLICIT additive override (sum/count/total —
+///     `agg_is_explicit_additive`). A None/default agg is NOT a misuse: the
+///     engine applies the measure's semi-additive function under the default,
+///     so flagging it would false-positive every "balance by period" query.
 ///
-/// Dormant when `semi_additive` is null/false (the recorded fixture).
+/// No longer dormant once the served catalog carries `semi_additive` (see
+/// `mqo-mcp-server` pipeline snapshot build); inert on measures lacking it.
 fn check_semi_additive_sum(
     mqo: &BoundMqoInput,
     catalog: &CatalogSnapshot,
@@ -1375,8 +1393,13 @@ fn check_semi_additive_sum(
         if measure.semi_additive != Some(true) {
             continue;
         }
-        // FR-4: only when the aggregation is additive (sum/default).
-        if !agg_is_additive(mref.aggregation.as_deref()) {
+        // FR-4: fire ONLY on an EXPLICIT additive override (sum/count/total).
+        // A None/default aggregation on a semi-additive measure resolves to the
+        // model's semi-additive function (last-non-empty) at the engine, which
+        // is correct — rejecting it would false-positive every "balance by
+        // period" query (e.g. inventory-on-hand by month). Only an explicit
+        // additive override double-counts the balance.
+        if !agg_is_explicit_additive(mref.aggregation.as_deref()) {
             continue;
         }
         let suggested = measure

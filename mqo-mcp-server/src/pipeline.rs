@@ -536,12 +536,23 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
                 }
                 let label = c.get("label").and_then(Value::as_str).map(str::to_string);
                 let is_calc = c.get("is_calc").and_then(Value::as_bool);
+                // Carry the source `semi_additive` flag into the validator's
+                // snapshot so RULE 2 (semi-additive sum guard) is no longer
+                // dormant. The catalog-binder `ColumnEntry` exposes it as a
+                // `SemiAdditiveInfo` object (present ⇒ semi-additive) in live
+                // mode; a plain bool is also accepted. Absent/null ⇒ None.
+                let semi_additive = match c.get("semi_additive") {
+                    Some(Value::Bool(b)) => Some(*b),
+                    Some(Value::Object(_)) => Some(true),
+                    _ => None,
+                };
                 // Primary entry under unique_name.
                 measures.push(CatalogMeasure {
                     unique_name: un.to_string(),
                     subject_area: None,
                     label: label.clone(),
                     is_calc,
+                    semi_additive,
                     ..Default::default()
                 });
                 // Alias entry under label when it differs (callers reference the
@@ -553,6 +564,7 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
                             subject_area: None,
                             label: Some(l.clone()),
                             is_calc,
+                            semi_additive,
                             ..Default::default()
                         });
                     }

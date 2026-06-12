@@ -1,3 +1,17 @@
+## v0.5.0
+
+Semi-additive guard (RULE 2) activated and made false-positive-safe
+(PRD-mqo-catalog-semi-additive-metadata). The rule was complete since v0.3.0 but
+dormant because the served catalog never carried the `semi_additive` flag; the
+server now plumbs it through (see mqo-mcp-server v0.19.0). Critically, the rule
+now fires **only on an EXPLICIT additive override** (`sum`/`count`/`total`) — a
+`None`/default aggregation on a semi-additive measure resolves to the model's
+semi-additive function (last-non-empty) at the engine and is correct, so flagging
+it would false-positive every legitimate "balance by period" query (e.g.
+inventory-on-hand by month). New `agg_is_explicit_additive` helper; RULE 2 keys
+off it instead of `agg_is_additive`. Tests updated: default-agg over time is NOT
+rejected; explicit `sum` over time IS.
+
 ## v0.4.0
 
 Path-incompatible decline guard for the `NonCanonicalNearTwin` near-twin rule
