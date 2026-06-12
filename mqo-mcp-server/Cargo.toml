@@ -1,6 +1,6 @@
 [package]
 name = "mqo-mcp-server"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2021"
 rust-version = "1.88.0"
 description = "MQO MCP server — exposes query_multidimensional (bind→route→compile→execute) plus read-only catalog tools over JSON-RPC stdio"
@@ -24,7 +24,14 @@ mcp-cluster-registry = { path = "../mcp-cluster-registry" }
 mcp-cluster-health-monitor = { path = "../mcp-cluster-health-monitor" }
 mcp-cross-cluster-diff = { path = "../mcp-cross-cluster-diff" }
 mqo-result-profiler = { path = "../mqo-result-profiler" }
+# cursor.rs still uses the MemStore-backed cursor store (P1: cursor unification deferred).
 mqo-duckdb-handle-store = { path = "../mqo-duckdb-handle-store" }
+# Typed columnar handle store + op kernel — backs handle_ops.rs and the size-gated query path.
+dh-spec = { path = "../dh-spec" }
+dh-store = { path = "../dh-store" }
+dh-ops = { path = "../dh-ops" }
+dh-summary = { path = "../dh-summary" }
+dh-export = { path = "../dh-export" }
 mqo-chart-recommender = { path = "../mqo-chart-recommender", default-features = false }
 mqo-vega-emitter = { path = "../mqo-vega-emitter" }
 serde = { version = "1", features = ["derive"] }

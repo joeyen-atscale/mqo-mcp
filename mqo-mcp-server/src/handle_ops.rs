@@ -1,46 +1,71 @@
-//! Handle-operation MCP tools: `dataset_aggregate`, `dataset_slice`,
-//! `dataset_period_over_period`, `dataset_chart`.
+//! Handle-operation MCP tools backed by **`dh-store` + `dh-ops`** (typed
+//! columnar), replacing the former `mqo-duckdb-handle-store` `MemStore`
+//! Rust-over-`serde_json::Value` op path.
 //!
-//! Each tool operates over an in-memory result store (immutable derive-new
-//! semantics: input handle is never mutated; a new handle is minted for every
-//! derived result).  All computation is pure Rust over [`serde_json::Value`] rows
-//! — no `AtScale` engine round-trip is issued after the initial
-//! `query_multidimensional` call.
+//! Each tool operates over an in-memory result store ([`dh_store::Store`]) with
+//! immutable derive-new semantics: the input handle is never mutated; a new
+//! handle is minted for every derived result.  All computation is server-side
+//! over typed columns — no `AtScale` engine round-trip is issued after the
+//! initial `query_multidimensional` call.
 //!
-//! **Inline threshold**: [`INLINE_THRESHOLD`] controls the maximum number of
-//! raw rows included in any `head_sample`.  When a result's `row_count` exceeds
-//! this constant, the summary carries at most K rows and no full row dump is
-//! ever emitted.
+//! The full 10-op `dataset_*` family is exposed:
+//! `aggregate, filter, sort, top_n, pivot, compare, drill, describe` (from the
+//! `dh-ops` kernel) plus `slice, period_over_period` and the visualization op
+//! `dataset_chart` (bespoke here).
+//!
+//! **Inline threshold**: each derived result's response carries a bounded
+//! `summary` + the new `handle` + `row_count`; raw `rows` are inlined only when
+//! `row_count <= inline_threshold` (configured per server, default 25).
 
-use std::collections::{BTreeMap, HashMap};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
-use mqo_duckdb_handle_store::{ColumnSchema, DatasetHandle, MemStore, ResultStore};
-use serde_json::{json, Value};
+use dh_spec::{ColumnRole, ColumnSchema, DatasetHandle, DType};
+use dh_store::{ColumnData, Dataset, Store};
+use dh_summary::{capabilities as dh_capabilities, summarize, SummaryCfg};
+use serde_json::{json, Map, Value};
 
-/// Maximum number of raw rows to include in any `head_sample` or inline
-/// `data.values` payload.  Shared across all four handle-op tools (R11).
-pub const INLINE_THRESHOLD: usize = 20;
+/// Default maximum number of raw rows to inline in a handle-op or query
+/// response.  Overridable at launch via `--inline-threshold`.
+pub const INLINE_THRESHOLD: usize = 25;
+
+/// TTL applied to every stored / derived dataset, in seconds.
+const STORE_TTL_SECS: u64 = 3600;
+
+/// Total byte cap for the dh-store (256 MiB).  `0` would be unlimited.
+const STORE_MAX_BYTES: usize = 256 * 1024 * 1024;
 
 // ── Store accessor type ───────────────────────────────────────────────────────
 
-/// A shared, locked [`MemStore`].  Wrapped in `Arc<Mutex<…>>` inside [`HandleStore`].
-pub type SharedStore = std::sync::Arc<std::sync::Mutex<MemStore>>;
+/// A shared, locked [`dh_store::Store`].
+pub type SharedStore = Arc<Mutex<Store>>;
 
-/// Public wrapper that owns the shared store and exposes the four tool handlers.
+/// Public wrapper that owns the shared store and exposes the tool handlers.
 pub struct HandleStore {
+    /// The shared typed columnar store.
     pub store: SharedStore,
 }
 
 impl HandleStore {
-    /// Create a new [`HandleStore`] backed by a freshly-allocated [`MemStore`].
+    /// Create a new [`HandleStore`] backed by a freshly-allocated dh-store.
     #[must_use]
     pub fn new() -> Self {
         HandleStore {
-            store: std::sync::Arc::new(std::sync::Mutex::new(
-                mqo_duckdb_handle_store::MemStore::with_defaults(),
-            )),
+            store: Arc::new(Mutex::new(Store::new(STORE_MAX_BYTES))),
         }
+    }
+
+    /// Ingest a set of JSON result rows (as produced by the query pipeline) into
+    /// the store and return the minted handle.  Used by `query_multidimensional`
+    /// to size-gate its response.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` if the store lock is poisoned.
+    pub fn put_rows(&self, rows: &[Value]) -> Result<DatasetHandle, String> {
+        let ds = json_rows_to_dataset(rows);
+        let guard = self.store.lock().map_err(|_| "store lock poisoned".to_string())?;
+        Ok(guard.put(ds, STORE_TTL_SECS))
     }
 }
 
@@ -50,55 +75,169 @@ impl Default for HandleStore {
     }
 }
 
-// ── Internal helpers ──────────────────────────────────────────────────────────
+// ── JSON ⇆ Dataset conversion ─────────────────────────────────────────────────
 
-/// Wall-clock seconds since epoch.
-fn unix_now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
+/// Infer the typed columnar [`Dataset`] from JSON object rows.
+///
+/// Column order and names follow the first row's key order.  Each column's
+/// dtype is inferred by scanning all values (numbers → Int unless any is
+/// fractional → Float; bools → Bool; otherwise Str).  Roles are heuristic:
+/// numeric columns are `Measure`, everything else `Dimension`.
+#[must_use]
+pub fn json_rows_to_dataset(rows: &[Value]) -> Dataset {
+    // Collect column names in first-seen order across rows (robust to ragged rows).
+    let mut col_names: Vec<String> = Vec::new();
+    for row in rows {
+        if let Some(obj) = row.as_object() {
+            for k in obj.keys() {
+                if !col_names.iter().any(|c| c == k) {
+                    col_names.push(k.clone());
+                }
+            }
+        }
+    }
+
+    let mut columns: Vec<ColumnSchema> = Vec::with_capacity(col_names.len());
+    let mut data: Vec<ColumnData> = Vec::with_capacity(col_names.len());
+
+    for name in &col_names {
+        let (dtype, role, col) = build_column(name, rows);
+        columns.push(ColumnSchema {
+            name: name.clone(),
+            unique_name: name.clone(),
+            dtype,
+            nullable: true,
+            role,
+        });
+        data.push(col);
+    }
+
+    // Empty result: produce a zero-row, zero-col dataset (still valid).
+    Dataset::new(columns, data).unwrap_or_else(|_| {
+        Dataset::new(Vec::new(), Vec::new()).expect("empty dataset is always valid")
+    })
 }
 
-/// Infer a `Vec<ColumnSchema>` from the first row's keys.
-fn infer_schema(rows: &[Value]) -> Vec<ColumnSchema> {
-    let Some(first) = rows.first() else {
-        return vec![];
-    };
-    let Some(obj) = first.as_object() else {
-        return vec![];
-    };
-    obj.keys()
-        .map(|k| ColumnSchema {
-            name: k.clone(),
-            ty: infer_type(first.get(k).unwrap_or(&Value::Null)),
+/// Decide a column's dtype/role and build its typed `ColumnData` from the rows.
+fn build_column(name: &str, rows: &[Value]) -> (DType, ColumnRole, ColumnData) {
+    let mut all_int = true;
+    let mut any_num = false;
+    let mut all_bool = true;
+    let mut any_present = false;
+
+    for row in rows {
+        let v = row.get(name).unwrap_or(&Value::Null);
+        match v {
+            Value::Null => {}
+            Value::Number(n) => {
+                any_present = true;
+                any_num = true;
+                all_bool = false;
+                if n.is_f64() && n.as_i64().is_none() {
+                    all_int = false;
+                }
+            }
+            Value::Bool(_) => {
+                any_present = true;
+                all_int = false;
+            }
+            _ => {
+                any_present = true;
+                all_int = false;
+                all_bool = false;
+            }
+        }
+    }
+
+    if any_num {
+        if all_int {
+            let v: Vec<Option<i64>> = rows
+                .iter()
+                .map(|r| r.get(name).and_then(Value::as_i64))
+                .collect();
+            return (DType::Int, ColumnRole::Measure, ColumnData::Int(v));
+        }
+        let v: Vec<Option<f64>> = rows
+            .iter()
+            .map(|r| r.get(name).and_then(Value::as_f64))
+            .collect();
+        return (DType::Float, ColumnRole::Measure, ColumnData::Float(v));
+    }
+
+    if all_bool && any_present {
+        let v: Vec<Option<bool>> = rows
+            .iter()
+            .map(|r| r.get(name).and_then(Value::as_bool))
+            .collect();
+        return (DType::Bool, ColumnRole::Dimension, ColumnData::Bool(v));
+    }
+
+    // Default: string dimension.
+    let v: Vec<Option<String>> = rows
+        .iter()
+        .map(|r| match r.get(name) {
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(Value::Null) | None => None,
+            Some(other) => Some(other.to_string()),
+        })
+        .collect();
+    (DType::Str, ColumnRole::Dimension, ColumnData::Str(v))
+}
+
+/// Render a single column cell at `row_idx` back to a JSON value.
+fn cell_to_json(col: &ColumnData, row_idx: usize) -> Value {
+    match col {
+        ColumnData::Int(v) => v
+            .get(row_idx)
+            .and_then(|o| *o)
+            .map_or(Value::Null, Value::from),
+        ColumnData::Float(v) => v
+            .get(row_idx)
+            .and_then(|o| *o)
+            .and_then(serde_json::Number::from_f64)
+            .map_or(Value::Null, Value::Number),
+        ColumnData::Bool(v) => v
+            .get(row_idx)
+            .and_then(|o| *o)
+            .map_or(Value::Null, Value::Bool),
+        ColumnData::Decimal(v) | ColumnData::Str(v) | ColumnData::Date(v) | ColumnData::Time(v) => {
+            v.get(row_idx)
+                .and_then(|o| o.as_deref())
+                .map_or(Value::Null, |s| Value::String(s.to_string()))
+        }
+        _ => Value::Null,
+    }
+}
+
+/// Convert a [`Dataset`] back to JSON object rows (column-name keyed).
+#[must_use]
+pub fn dataset_to_json_rows(ds: &Dataset) -> Vec<Value> {
+    let n = ds.row_count();
+    (0..n)
+        .map(|ri| {
+            let mut obj = Map::with_capacity(ds.columns.len());
+            for (ci, col) in ds.columns.iter().enumerate() {
+                obj.insert(col.name.clone(), cell_to_json(&ds.data[ci], ri));
+            }
+            Value::Object(obj)
         })
         .collect()
 }
 
-/// Heuristic type inference for a JSON value.
-fn infer_type(v: &Value) -> String {
-    match v {
-        Value::Number(n) if n.is_f64() => "double".to_string(),
-        Value::Number(_) => "integer".to_string(),
-        Value::Bool(_) => "boolean".to_string(),
-        _ => "string".to_string(),
-    }
+// ── Query-path size gate (shared with mcp.rs structured_ok) ────────────────────
+
+/// Whether a result of `row_count` rows should have its raw `rows` inlined in a
+/// response, given the configured `inline_threshold` (K).
+///
+/// The structural anti-calculator guarantee: a result is inlined **iff**
+/// `row_count <= inline_threshold`.  Above K the caller must omit `rows` and
+/// rely on the handle + bounded summary instead.
+#[must_use]
+pub fn should_inline(row_count: usize, inline_threshold: usize) -> bool {
+    row_count <= inline_threshold
 }
 
-/// Build the standard `{new_handle, row_count, schema, head_sample}` result envelope.
-#[must_use]
-fn handle_result(handle: &DatasetHandle, row_count: usize, schema: &[ColumnSchema], head: &[Value]) -> Value {
-    let schema_json: Vec<Value> = schema
-        .iter()
-        .map(|c| json!({ "name": c.name, "ty": c.ty }))
-        .collect();
-    json!({
-        "new_handle": handle.0,
-        "row_count": row_count,
-        "schema": schema_json,
-        "head_sample": head
-    })
-}
+// ── Response envelopes ─────────────────────────────────────────────────────────
 
 /// Structured MCP error envelope (`isError: true`).
 fn handle_err(code: &str, detail: &str) -> Value {
@@ -119,341 +258,220 @@ fn handle_ok(payload: &Value) -> Value {
     })
 }
 
-/// Retrieve all rows for a handle from the store.
-fn get_all_rows(store: &MemStore, handle: &DatasetHandle) -> Result<(Vec<Value>, Vec<ColumnSchema>), String> {
-    let meta = store.metadata(handle).map_err(|e| e.to_string())?;
-    let rows = store
-        .get_rows(handle, 0, meta.row_count)
-        .map_err(|e| e.to_string())?;
-    Ok((rows, meta.schema))
+/// Map a [`LookupError`] / [`dh_ops::OpError`] string to a structured envelope.
+fn op_err_to_envelope(e: &dh_ops::OpError) -> Value {
+    let code = match e {
+        dh_ops::OpError::HandleNotFound(_) => "handle_not_found",
+        dh_ops::OpError::BadParam(_) => "invalid_params",
+        dh_ops::OpError::UnknownColumn(_) => "unknown_column",
+        dh_ops::OpError::Unsupported(_) => "unsupported",
+        dh_ops::OpError::Internal(_) => "internal_error",
+    };
+    handle_err(code, &e.to_string())
 }
 
-/// Parse a handle string from `args["handle"]` into a [`DatasetHandle`].
+/// Build the size-gated result payload for a derived dataset.
+///
+/// Always carries `{new_handle, row_count, schema, summary, capabilities}`;
+/// inlines `rows` only when `row_count <= inline_threshold`.
+fn derived_payload(handle: &DatasetHandle, ds: &Dataset, inline_threshold: usize) -> Value {
+    let row_count = ds.row_count();
+    let cfg = SummaryCfg::default();
+    let summary = summarize(ds, &cfg);
+    let caps = dh_capabilities(ds);
+    let schema: Vec<Value> = ds
+        .columns
+        .iter()
+        .map(|c| json!({ "name": c.name, "ty": format!("{:?}", c.dtype) }))
+        .collect();
+
+    let mut payload = json!({
+        "new_handle": handle.id,
+        "row_count": row_count,
+        "schema": schema,
+        "summary": summary,
+        "capabilities": caps,
+    });
+
+    if should_inline(row_count, inline_threshold) {
+        payload["rows"] = Value::Array(dataset_to_json_rows(ds));
+    }
+    payload
+}
+
+/// Parse a handle string from `args["handle"]` and resolve it to the stored
+/// dataset's [`DatasetHandle`] (reconstructed minimally for op dispatch).
 fn parse_handle(args: &Value) -> Result<DatasetHandle, Value> {
     let Some(s) = args.get("handle").and_then(Value::as_str) else {
         return Err(handle_err("invalid_params", "missing required field 'handle'"));
     };
-    Ok(DatasetHandle(s.to_string()))
+    Ok(reconstruct_handle(s))
 }
 
-// ── Filter evaluation ─────────────────────────────────────────────────────────
+/// Reconstruct a minimal [`DatasetHandle`] from an id string.  dh-store looks up
+/// purely by `id`, so the other fields are not load-bearing for `get`/`derive`.
+fn reconstruct_handle(id: &str) -> DatasetHandle {
+    DatasetHandle {
+        id: id.to_string(),
+        created_at: 0,
+        ttl_secs: STORE_TTL_SECS,
+        derived_from: None,
+    }
+}
 
-/// Apply a single filter `{col, op, value}` against a JSON row.
-/// Returns `true` if the row satisfies the filter.
-fn eval_filter(row: &Value, filter: &Value) -> bool {
-    let Some(col) = filter.get("col").and_then(Value::as_str) else {
-        return true; // malformed filter → pass-through
+// ── dh-ops backed handlers (aggregate/filter/sort/top_n/pivot/compare/drill/describe) ──
+
+/// Generic dispatcher for the single-handle dh-ops functions.
+fn run_dh_op<F>(store: &SharedStore, args: &Value, inline_threshold: usize, op: F) -> Value
+where
+    F: FnOnce(&mut Store, &DatasetHandle, &Value) -> Result<dh_spec::OpResult, dh_ops::OpError>,
+{
+    let handle = match parse_handle(args) {
+        Ok(h) => h,
+        Err(e) => return e,
     };
-    let op = filter.get("op").and_then(Value::as_str).unwrap_or("=");
-    let fv = filter.get("value").unwrap_or(&Value::Null);
-    let rv = row.get(col).unwrap_or(&Value::Null);
-
-    if op == "in" {
-        let Some(arr) = fv.as_array() else {
-            return false;
-        };
-        return arr.iter().any(|v| values_eq(rv, v));
-    }
-
-    // Attempt numeric comparison first; fall back to string.
-    let num_cmp: Option<std::cmp::Ordering> = if let (Some(rf), Some(ff)) = (rv.as_f64(), fv.as_f64()) {
-        rf.partial_cmp(&ff)
-    } else {
-        let rs = rv.as_str().unwrap_or("");
-        let fs = fv.as_str().unwrap_or("");
-        Some(rs.cmp(fs))
+    let Ok(mut guard) = store.lock() else {
+        return handle_err("store_error", "store lock poisoned");
     };
-
-    match (op, num_cmp) {
-        ("=" | "==", Some(o)) => o == std::cmp::Ordering::Equal,
-        ("!=" | "<>", Some(o)) => o != std::cmp::Ordering::Equal,
-        ("<", Some(o)) => o == std::cmp::Ordering::Less,
-        ("<=", Some(o)) => matches!(o, std::cmp::Ordering::Less | std::cmp::Ordering::Equal),
-        (">", Some(o)) => o == std::cmp::Ordering::Greater,
-        (">=", Some(o)) => matches!(o, std::cmp::Ordering::Greater | std::cmp::Ordering::Equal),
-        _ => true,
-    }
-}
-
-/// Equality check that compares JSON values semantically.
-fn values_eq(a: &Value, b: &Value) -> bool {
-    if let (Some(af), Some(bf)) = (a.as_f64(), b.as_f64()) {
-        return (af - bf).abs() < f64::EPSILON;
-    }
-    a == b
-}
-
-/// Apply all filters from the `filters` slice; returns `true` if all pass.
-fn eval_filters(row: &Value, filters: &[Value]) -> bool {
-    filters.iter().all(|f| eval_filter(row, f))
-}
-
-// ── Aggregation ───────────────────────────────────────────────────────────────
-
-/// Supported aggregation functions.
-#[derive(Debug, Clone)]
-enum Agg {
-    Sum,
-    Avg,
-    Min,
-    Max,
-    Count,
-    CountDistinct,
-}
-
-impl Agg {
-    fn from_str(s: &str) -> Option<Agg> {
-        match s.to_lowercase().as_str() {
-            "sum" => Some(Agg::Sum),
-            "avg" | "mean" => Some(Agg::Avg),
-            "min" => Some(Agg::Min),
-            "max" => Some(Agg::Max),
-            "count" => Some(Agg::Count),
-            "count_distinct" => Some(Agg::CountDistinct),
-            _ => None,
-        }
-    }
-}
-
-/// Aggregate a column over a slice of row references using the given function.
-fn agg_col(rows: &[&Value], col: &str, agg: &Agg) -> Value {
-    match agg {
-        Agg::Count => Value::from(rows.len()),
-        Agg::CountDistinct => {
-            let mut seen = std::collections::HashSet::new();
-            for row in rows {
-                if let Some(v) = row.get(col) {
-                    seen.insert(v.to_string());
-                }
-            }
-            Value::from(seen.len())
-        }
-        Agg::Sum => {
-            let total: f64 = rows
-                .iter()
-                .filter_map(|r| r.get(col).and_then(Value::as_f64))
-                .sum();
-            Value::from(total)
-        }
-        Agg::Avg => {
-            let vals: Vec<f64> = rows
-                .iter()
-                .filter_map(|r| r.get(col).and_then(Value::as_f64))
-                .collect();
-            if vals.is_empty() {
-                Value::Null
-            } else {
-                #[allow(clippy::cast_precision_loss)]
-                let mean = vals.iter().sum::<f64>() / (vals.len() as f64);
-                Value::from(mean)
+    match op(&mut guard, &handle, args) {
+        Ok(res) => {
+            // Re-fetch the derived dataset to build the size-gated payload.
+            match guard.get(&res.handle) {
+                Ok(ds) => handle_ok(&derived_payload(&res.handle, &ds, inline_threshold)),
+                Err(e) => handle_err("internal_error", &e.to_string()),
             }
         }
-        Agg::Min => rows
-            .iter()
-            .filter_map(|r| r.get(col).and_then(Value::as_f64))
-            .reduce(f64::min)
-            .map_or(Value::Null, Value::from),
-        Agg::Max => rows
-            .iter()
-            .filter_map(|r| r.get(col).and_then(Value::as_f64))
-            .reduce(f64::max)
-            .map_or(Value::Null, Value::from),
+        Err(e) => op_err_to_envelope(&e),
     }
 }
 
-// ── Aggregate helper (factored out for line-count) ────────────────────────────
+/// `dataset_aggregate` — group-by + aggregation via the dh-ops kernel.
+pub fn handle_dataset_aggregate(store: &SharedStore, args: &Value, inline_threshold: usize) -> Value {
+    let params = aggregate_args_to_params(args);
+    run_dh_op(store, &params, inline_threshold, dh_ops::aggregate)
+}
 
-/// Parse measure specs from args — returns `Err(error_value)` on bad input.
-fn parse_measure_specs(args: &Value) -> Result<Vec<(String, Agg)>, Value> {
-    let measures_raw: Vec<&Value> = args
+/// Translate the legacy `{group_by, measures:[{col,agg}], filters}` arg shape
+/// into the dh-ops `aggregate` params `{group_by, agg, measure}`.
+///
+/// dh-ops `aggregate` accepts a single agg+measure; when multiple measures are
+/// supplied we use the first (callers wanting multiple should chain).  The
+/// `handle` field is preserved.
+fn aggregate_args_to_params(args: &Value) -> Value {
+    // If the caller already uses dh-ops native shape (agg + measure), pass through.
+    if args.get("agg").is_some() {
+        return args.clone();
+    }
+    let mut out = Map::new();
+    if let Some(h) = args.get("handle") {
+        out.insert("handle".to_string(), h.clone());
+    }
+    if let Some(gb) = args.get("group_by") {
+        out.insert("group_by".to_string(), gb.clone());
+    }
+    if let Some(first) = args
         .get("measures")
         .and_then(Value::as_array)
-        .map_or(vec![], |a| a.iter().collect());
-
-    if measures_raw.is_empty() {
-        return Err(handle_err("invalid_params", "measures must be a non-empty array"));
+        .and_then(|a| a.first())
+    {
+        if let Some(col) = first.get("col") {
+            out.insert("measure".to_string(), col.clone());
+        }
+        let agg = first
+            .get("agg")
+            .and_then(Value::as_str)
+            .unwrap_or("sum");
+        out.insert("agg".to_string(), Value::from(agg));
     }
-
-    let mut specs = Vec::new();
-    for m in &measures_raw {
-        let Some(col) = m.get("col").and_then(Value::as_str) else {
-            return Err(handle_err("invalid_params", "each measure must have a 'col' field"));
-        };
-        let agg_str = m.get("agg").and_then(Value::as_str).unwrap_or("sum");
-        let Some(agg) = Agg::from_str(agg_str) else {
-            return Err(handle_err("invalid_params", &format!("unsupported agg '{agg_str}'; valid: sum, avg, min, max, count, count_distinct")));
-        };
-        specs.push((col.to_string(), agg));
-    }
-    Ok(specs)
+    Value::Object(out)
 }
 
-/// Group rows and compute aggregations — returns the sorted result rows.
-fn compute_aggregate(
-    rows: &[Value],
-    group_by: &[String],
-    measure_specs: &[(String, Agg)],
-    filters: &[Value],
-) -> Vec<Value> {
-    // Pre-filter.
-    let filtered: Vec<&Value> = rows.iter().filter(|r| eval_filters(r, filters)).collect();
+/// `dataset_filter` — compound AND/OR predicate filter via the dh-ops kernel.
+pub fn handle_dataset_filter(store: &SharedStore, args: &Value, inline_threshold: usize) -> Value {
+    run_dh_op(store, args, inline_threshold, dh_ops::filter)
+}
 
-    // Group by key = null-separated group column values.
-    let mut groups: HashMap<String, Vec<&Value>> = HashMap::new();
-    let mut group_key_rows: HashMap<String, Value> = HashMap::new();
+/// `dataset_sort` — multi-key stable sort via the dh-ops kernel.
+pub fn handle_dataset_sort(store: &SharedStore, args: &Value, inline_threshold: usize) -> Value {
+    run_dh_op(store, args, inline_threshold, dh_ops::sort)
+}
 
-    for row in &filtered {
-        let key: String = group_by
-            .iter()
-            .map(|col| row.get(col).map_or_else(String::new, std::string::ToString::to_string))
-            .collect::<Vec<_>>()
-            .join("\x00");
+/// `dataset_top_n` — top/bottom N by measure via the dh-ops kernel.
+pub fn handle_dataset_top_n(store: &SharedStore, args: &Value, inline_threshold: usize) -> Value {
+    run_dh_op(store, args, inline_threshold, dh_ops::top_n)
+}
 
-        group_key_rows.entry(key.clone()).or_insert_with(|| {
-            let mut gb_map = serde_json::Map::new();
-            for col in group_by {
-                gb_map.insert(col.clone(), row.get(col).cloned().unwrap_or(Value::Null));
-            }
-            Value::Object(gb_map)
-        });
-        groups.entry(key).or_default().push(row);
+/// `dataset_pivot` — crosstab via the dh-ops kernel.
+pub fn handle_dataset_pivot(store: &SharedStore, args: &Value, inline_threshold: usize) -> Value {
+    run_dh_op(store, args, inline_threshold, dh_ops::pivot)
+}
+
+/// `dataset_compare` — two-handle delta/pct-change via the dh-ops kernel.
+pub fn handle_dataset_compare(store: &SharedStore, args: &Value, inline_threshold: usize) -> Value {
+    run_dh_op(store, args, inline_threshold, dh_ops::compare)
+}
+
+/// `dataset_drill` — expand a grouped row to detail rows via lineage.
+pub fn handle_dataset_drill(store: &SharedStore, args: &Value, inline_threshold: usize) -> Value {
+    run_dh_op(store, args, inline_threshold, dh_ops::drill)
+}
+
+/// `dataset_describe` — per-column stats via the dh-ops kernel.
+pub fn handle_dataset_describe(store: &SharedStore, args: &Value, inline_threshold: usize) -> Value {
+    run_dh_op(store, args, inline_threshold, dh_ops::describe)
+}
+
+// ── dataset_slice (filter compatibility shim) ──────────────────────────────────
+
+/// `dataset_slice` — filter rows matching all `[{col, op, value}]` predicates.
+///
+/// Kept for backward compatibility with the prior server API.  Translates the
+/// `filters` array into a dh-ops AND predicate and delegates to `dh_ops::filter`.
+pub fn handle_dataset_slice(store: &SharedStore, args: &Value, inline_threshold: usize) -> Value {
+    let params = slice_args_to_filter_params(args);
+    run_dh_op(store, &params, inline_threshold, dh_ops::filter)
+}
+
+/// Map the legacy slice op tokens (`=`, `!=`, `<`, …, `in`) to dh-ops ops.
+fn map_slice_op(op: &str) -> &'static str {
+    match op {
+        "!=" | "<>" => "ne",
+        "<" => "lt",
+        "<=" => "le",
+        ">" => "gt",
+        ">=" => "ge",
+        "in" => "in",
+        _ => "eq",
     }
+}
 
-    // Produce output rows: one per group.
-    let mut result_rows: Vec<Value> = groups
+/// Build dh-ops `{predicate:{and:[…]}}` params from a legacy slice arg object.
+fn slice_args_to_filter_params(args: &Value) -> Value {
+    let filters = args
+        .get("filters")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let preds: Vec<Value> = filters
         .iter()
-        .map(|(key, group_rows)| {
-            let mut out = group_key_rows[key].as_object().cloned().unwrap_or_default();
-            for (col, agg) in measure_specs {
-                let agg_key = format!("{col}_{}", format!("{agg:?}").to_lowercase());
-                out.insert(agg_key, agg_col(group_rows, col, agg));
-            }
-            Value::Object(out)
+        .filter_map(|f| {
+            let col = f.get("col").and_then(Value::as_str)?;
+            let op = map_slice_op(f.get("op").and_then(Value::as_str).unwrap_or("="));
+            let val = f.get("value").cloned().unwrap_or(Value::Null);
+            Some(json!({ "col": col, "op": op, "val": val }))
         })
         .collect();
-
-    // Sort deterministically by group_by values.
-    result_rows.sort_by(|a, b| {
-        let ka: String = group_by
-            .iter()
-            .map(|c| a.get(c).map_or_else(String::new, std::string::ToString::to_string))
-            .collect();
-        let kb: String = group_by
-            .iter()
-            .map(|c| b.get(c).map_or_else(String::new, std::string::ToString::to_string))
-            .collect();
-        ka.cmp(&kb)
-    });
-
-    result_rows
-}
-
-// ── Public tool handlers ──────────────────────────────────────────────────────
-
-/// Handle the `dataset_aggregate` MCP tool.
-///
-/// Groups the input result by `group_by` columns, applies `measures` aggregations,
-/// optionally pre-filters via `filters`, persists the result as a new handle,
-/// and returns `{new_handle, row_count, schema, head_sample}`.
-pub fn handle_dataset_aggregate(store: &SharedStore, args: &Value) -> Value {
-    let handle = match parse_handle(args) {
-        Ok(h) => h,
-        Err(e) => return e,
-    };
-
-    let group_by: Vec<String> = args
-        .get("group_by")
-        .and_then(Value::as_array)
-        .map_or(vec![], |a| {
-            a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
-        });
-
-    if group_by.is_empty() {
-        return handle_err("invalid_params", "group_by must be a non-empty array of column names");
+    let mut out = Map::new();
+    if let Some(h) = args.get("handle") {
+        out.insert("handle".to_string(), h.clone());
     }
-
-    let measure_specs = match parse_measure_specs(args) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-
-    let filters: Vec<Value> = args
-        .get("filters")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-
-    let Ok(mut store_guard) = store.lock() else {
-        return handle_err("store_error", "store lock poisoned");
-    };
-    let (all_rows, _) = match get_all_rows(&store_guard, &handle) {
-        Ok(r) => r,
-        Err(e) => return handle_err("handle_not_found", &e),
-    };
-
-    let result_rows = compute_aggregate(&all_rows, &group_by, &measure_specs, &filters);
-    let schema = infer_schema(&result_rows);
-    let row_count = result_rows.len();
-    let head: Vec<Value> = result_rows.iter().take(INLINE_THRESHOLD).cloned().collect();
-
-    let envelope = match store_guard.put(&result_rows, &schema, unix_now()) {
-        Ok(e) => e,
-        Err(e) => return handle_err("store_error", &e.to_string()),
-    };
-
-    handle_ok(&handle_result(&envelope.handle, row_count, &schema, &head))
+    out.insert("predicate".to_string(), json!({ "and": preds }));
+    Value::Object(out)
 }
 
-/// Handle the `dataset_slice` MCP tool.
-///
-/// Filters the input result to rows matching all `filters`, persists the result,
-/// and returns `{new_handle, row_count, schema, head_sample}`.
-/// An empty match is a valid result with `row_count` 0 (not an error).
-pub fn handle_dataset_slice(store: &SharedStore, args: &Value) -> Value {
-    let handle = match parse_handle(args) {
-        Ok(h) => h,
-        Err(e) => return e,
-    };
+// ── dataset_period_over_period (bespoke) ───────────────────────────────────────
 
-    let filters: Vec<Value> = args
-        .get("filters")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-
-    let Ok(mut store_guard) = store.lock() else {
-        return handle_err("store_error", "store lock poisoned");
-    };
-    let (all_rows, input_schema) = match get_all_rows(&store_guard, &handle) {
-        Ok(r) => r,
-        Err(e) => return handle_err("handle_not_found", &e),
-    };
-
-    let result_rows: Vec<Value> = all_rows
-        .into_iter()
-        .filter(|r| eval_filters(r, &filters))
-        .collect();
-
-    // For empty result, re-use the input schema so callers can see column names.
-    let schema = if result_rows.is_empty() {
-        input_schema
-    } else {
-        infer_schema(&result_rows)
-    };
-    let row_count = result_rows.len();
-    let head: Vec<Value> = result_rows.iter().take(INLINE_THRESHOLD).cloned().collect();
-
-    let envelope = match store_guard.put(&result_rows, &schema, unix_now()) {
-        Ok(e) => e,
-        Err(e) => return handle_err("store_error", &e.to_string()),
-    };
-
-    handle_ok(&handle_result(&envelope.handle, row_count, &schema, &head))
-}
-
-// ── Period-over-period helpers ────────────────────────────────────────────────
-
-/// Bucket a date string by the given period specifier.
+/// Bucket an ISO date/timestamp string by the given period specifier.
 fn bucket_date(v: &str, period: &str) -> String {
     match period {
         "day" | "week" => v.get(..10).unwrap_or(v).to_string(),
@@ -471,167 +489,151 @@ fn bucket_date(v: &str, period: &str) -> String {
     }
 }
 
-/// Build the period-over-period output rows from bucketed data.
-fn build_pop_rows(
-    bucket_rows: &BTreeMap<String, Vec<&Value>>,
-    buckets: &[String],
-    measure_cols: &[String],
-) -> Vec<Value> {
-    let mut result_rows = Vec::with_capacity(buckets.len());
-    for (i, bucket) in buckets.iter().enumerate() {
-        let rows = &bucket_rows[bucket];
-        let mut out = serde_json::Map::new();
-        out.insert("period_bucket".to_string(), Value::String(bucket.clone()));
-
-        let mut current_vals: HashMap<&str, f64> = HashMap::new();
-        for col in measure_cols {
-            let total: f64 = rows
-                .iter()
-                .filter_map(|r| r.get(col.as_str()).and_then(Value::as_f64))
-                .sum();
-            out.insert(col.clone(), Value::from(total));
-            current_vals.insert(col.as_str(), total);
-        }
-
-        if i > 0 {
-            let prior_bucket = &buckets[i - 1];
-            let prior_rows = &bucket_rows[prior_bucket];
-            for col in measure_cols {
-                let prior_total: f64 = prior_rows
-                    .iter()
-                    .filter_map(|r| r.get(col.as_str()).and_then(Value::as_f64))
-                    .sum();
-                let current = current_vals[col.as_str()];
-                let delta = current - prior_total;
-                let pct_delta = if prior_total.abs() > f64::EPSILON {
-                    (delta / prior_total) * 100.0
-                } else {
-                    f64::NAN
-                };
-                out.insert(format!("{col}_prior"), Value::from(prior_total));
-                out.insert(format!("{col}_delta"), Value::from(delta));
-                out.insert(
-                    format!("{col}_pct_delta"),
-                    if pct_delta.is_nan() { Value::Null } else { Value::from(pct_delta) },
-                );
-            }
-        } else {
-            for col in measure_cols {
-                out.insert(format!("{col}_prior"), Value::Null);
-                out.insert(format!("{col}_delta"), Value::Null);
-                out.insert(format!("{col}_pct_delta"), Value::Null);
-            }
-        }
-
-        result_rows.push(Value::Object(out));
-    }
-    result_rows
-}
-
-/// Handle the `dataset_period_over_period` MCP tool.
-///
-/// Buckets `date_col` by `period`, aggregates `measure_cols` per bucket, and adds
-/// LAG-style prior-period delta columns.
-/// Returns `{new_handle, row_count, schema, head_sample}`.
-pub fn handle_dataset_period_over_period(store: &SharedStore, args: &Value) -> Value {
+/// `dataset_period_over_period` — bucket `date_col` by `period`, sum
+/// `measure_cols` per bucket, add prior/delta/pct-delta columns, derive a new
+/// handle.  Computed over the typed dataset, but using a JSON intermediate for
+/// the LAG-style logic (kept identical to the prior behavior).
+#[allow(clippy::too_many_lines)]
+pub fn handle_dataset_period_over_period(
+    store: &SharedStore,
+    args: &Value,
+    inline_threshold: usize,
+) -> Value {
     let handle = match parse_handle(args) {
         Ok(h) => h,
         Err(e) => return e,
     };
-
     let Some(date_col) = args.get("date_col").and_then(Value::as_str) else {
         return handle_err("invalid_params", "missing required field 'date_col'");
     };
     let date_col = date_col.to_string();
-
     let period = args.get("period").and_then(Value::as_str).unwrap_or("year");
-
     let measure_cols: Vec<String> = args
         .get("measure_cols")
         .and_then(Value::as_array)
         .map_or(vec![], |a| {
             a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
         });
-
     if measure_cols.is_empty() {
         return handle_err("invalid_params", "measure_cols must be a non-empty array");
     }
 
-    let Ok(mut store_guard) = store.lock() else {
+    let Ok(guard) = store.lock() else {
         return handle_err("store_error", "store lock poisoned");
     };
-    let (all_rows, _) = match get_all_rows(&store_guard, &handle) {
-        Ok(r) => r,
-        Err(e) => return handle_err("handle_not_found", &e),
+    let src_ds = match guard.get(&handle) {
+        Ok(d) => d,
+        Err(e) => return handle_err("handle_not_found", &e.to_string()),
     };
+    let rows = dataset_to_json_rows(&src_ds);
 
     // Group rows by bucket (BTreeMap → naturally sorted).
     let mut bucket_rows: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
-    for row in &all_rows {
+    for row in &rows {
         let date_str = row.get(&date_col).and_then(Value::as_str).unwrap_or("");
         let bucket = bucket_date(date_str, period);
         bucket_rows.entry(bucket).or_default().push(row);
     }
-
     let buckets: Vec<String> = bucket_rows.keys().cloned().collect();
-    let result_rows = build_pop_rows(&bucket_rows, &buckets, &measure_cols);
-    let schema = infer_schema(&result_rows);
-    let row_count = result_rows.len();
-    let head: Vec<Value> = result_rows.iter().take(INLINE_THRESHOLD).cloned().collect();
 
-    let envelope = match store_guard.put(&result_rows, &schema, unix_now()) {
-        Ok(e) => e,
-        Err(e) => return handle_err("store_error", &e.to_string()),
+    // Build output rows.
+    let mut result_rows: Vec<Value> = Vec::with_capacity(buckets.len());
+    for (i, bucket) in buckets.iter().enumerate() {
+        let brows = &bucket_rows[bucket];
+        let mut out = Map::new();
+        out.insert("period_bucket".to_string(), Value::String(bucket.clone()));
+        let mut current_vals: std::collections::HashMap<&str, f64> =
+            std::collections::HashMap::new();
+        for col in &measure_cols {
+            let total: f64 = brows
+                .iter()
+                .filter_map(|r| r.get(col.as_str()).and_then(Value::as_f64))
+                .sum();
+            out.insert(col.clone(), Value::from(total));
+            current_vals.insert(col.as_str(), total);
+        }
+        if i > 0 {
+            let prior_rows = &bucket_rows[&buckets[i - 1]];
+            for col in &measure_cols {
+                let prior_total: f64 = prior_rows
+                    .iter()
+                    .filter_map(|r| r.get(col.as_str()).and_then(Value::as_f64))
+                    .sum();
+                let current = current_vals[col.as_str()];
+                let delta = current - prior_total;
+                let pct = if prior_total.abs() > f64::EPSILON {
+                    Value::from((delta / prior_total) * 100.0)
+                } else {
+                    Value::Null
+                };
+                out.insert(format!("{col}_prior"), Value::from(prior_total));
+                out.insert(format!("{col}_delta"), Value::from(delta));
+                out.insert(format!("{col}_pct_delta"), pct);
+            }
+        } else {
+            for col in &measure_cols {
+                out.insert(format!("{col}_prior"), Value::Null);
+                out.insert(format!("{col}_delta"), Value::Null);
+                out.insert(format!("{col}_pct_delta"), Value::Null);
+            }
+        }
+        result_rows.push(Value::Object(out));
+    }
+
+    let out_ds = json_rows_to_dataset(&result_rows);
+    let new_handle = match guard.derive(
+        &handle,
+        dh_spec::Capability::Compare,
+        args.clone(),
+        out_ds.clone(),
+        STORE_TTL_SECS,
+    ) {
+        Ok(h) => h,
+        Err(e) => return handle_err("internal_error", &e.to_string()),
     };
-
-    handle_ok(&handle_result(&envelope.handle, row_count, &schema, &head))
+    handle_ok(&derived_payload(&new_handle, &out_ds, inline_threshold))
 }
 
-/// Handle the `dataset_chart` MCP tool.
-///
-/// Reads at most [`INLINE_THRESHOLD`] rows from the handle and emits a
-/// Vega-Lite v5 JSON spec binding `x_col` and `y_cols` per the requested
-/// `chart_type`.  Returns the spec directly — no new handle is created.
-pub fn handle_dataset_chart(store: &SharedStore, args: &Value) -> Value {
+// ── dataset_chart (bespoke; emits Vega-Lite spec, no new handle) ───────────────
+
+/// `dataset_chart` — read at most `inline_threshold` rows from the handle and
+/// emit a Vega-Lite v5 spec.  Returns the spec directly; no new handle.
+pub fn handle_dataset_chart(store: &SharedStore, args: &Value, inline_threshold: usize) -> Value {
     let handle = match parse_handle(args) {
         Ok(h) => h,
         Err(e) => return e,
     };
-
     let chart_type = args.get("chart_type").and_then(Value::as_str).unwrap_or("bar");
-
     let Some(x_col) = args.get("x_col").and_then(Value::as_str) else {
         return handle_err("invalid_params", "missing required field 'x_col'");
     };
     let x_col = x_col.to_string();
-
     let y_cols: Vec<String> = args
         .get("y_cols")
         .and_then(Value::as_array)
         .map_or(vec![], |a| {
             a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()
         });
-
     if y_cols.is_empty() {
         return handle_err("invalid_params", "y_cols must be a non-empty array");
     }
-
     let title = args.get("title").and_then(Value::as_str).unwrap_or("");
-
     let vl_mark = match chart_type {
         "bar" | "line" | "area" | "point" => chart_type,
         other => return handle_err("invalid_params", &format!("unsupported chart_type '{other}'")),
     };
 
-    let Ok(store_guard) = store.lock() else {
-        return handle_err("store_error", "store lock poisoned");
+    let ds = {
+        let Ok(guard) = store.lock() else {
+            return handle_err("store_error", "store lock poisoned");
+        };
+        match guard.get(&handle) {
+            Ok(d) => d,
+            Err(e) => return handle_err("handle_not_found", &e.to_string()),
+        }
     };
-
-    let rows = match store_guard.get_rows(&handle, 0, INLINE_THRESHOLD) {
-        Ok(r) => r,
-        Err(e) => return handle_err("handle_not_found", &e.to_string()),
-    };
-
+    let mut rows = dataset_to_json_rows(&ds);
+    rows.truncate(inline_threshold);
     let spec = build_vega_spec(vl_mark, &x_col, &y_cols, title, &rows);
     handle_ok(&spec)
 }
@@ -667,111 +669,176 @@ fn build_vega_spec(mark: &str, x_col: &str, y_cols: &[String], title: &str, rows
             "layer": layer
         })
     };
-
     if !title.is_empty() {
         spec["title"] = Value::String(title.to_string());
     }
     spec
 }
 
-// ── MCP tool descriptor helpers ───────────────────────────────────────────────
+// ── MCP tool descriptors ───────────────────────────────────────────────────────
 
-/// Return the four handle-op MCP tool descriptor objects for inclusion in
-/// `tool_descriptors()`.
+/// The full 10-op `dataset_*` family descriptors plus `dataset_chart`.
+///
+/// All carry `readOnlyHint: true`.
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn handle_op_descriptors() -> Vec<Value> {
     vec![
         json!({
             "name": "dataset_aggregate",
-            "description": "Aggregate a result-set handle by grouping on dimensions and rolling up measures (sum/avg/min/max/count). Computes server-side — no AtScale round-trip. Returns {new_handle, row_count, schema, head_sample}.",
+            "description": "Aggregate a result-set handle by grouping on dimensions and rolling up a measure (sum/mean/min/max/count/count_distinct). Computes server-side over typed columns — no AtScale round-trip. Derives a new handle; returns {new_handle, row_count, summary, capabilities} (rows inlined only when row_count ≤ inline_threshold).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "handle": { "type": "string", "description": "UUID of the input result handle." },
-                    "group_by": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Column names to group by."
-                    },
-                    "measures": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "col": { "type": "string" },
-                                "agg": { "type": "string", "enum": ["sum","avg","min","max","count","count_distinct"] }
-                            },
-                            "required": ["col","agg"]
-                        },
-                        "description": "Aggregations to compute."
-                    },
-                    "filters": {
-                        "type": "array",
-                        "items": { "type": "object" },
-                        "description": "Optional pre-aggregate row filters."
-                    }
+                    "handle": { "type": "string", "description": "Handle id of the input result." },
+                    "group_by": { "type": "array", "items": { "type": "string" }, "description": "Column names to group by." },
+                    "agg": { "type": "string", "enum": ["sum","mean","min","max","count","count_distinct"], "description": "Aggregation function." },
+                    "measure": { "type": "string", "description": "Column to aggregate (not needed for count)." },
+                    "measures": { "type": "array", "items": { "type": "object" }, "description": "Legacy multi-measure shape [{col,agg}]; first is used." }
                 },
-                "required": ["handle","group_by","measures"],
-                "additionalProperties": false
+                "required": ["handle","group_by"]
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "dataset_filter",
+            "description": "Filter a result-set handle by a compound AND/OR predicate over columns (ops: eq, ne, lt, le, gt, ge, in, contains, is_null, is_not_null). Computes server-side — no AtScale round-trip. Derives a new handle.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "handle": { "type": "string", "description": "Handle id of the input result." },
+                    "predicate": { "type": "object", "description": "Predicate tree: {col,op,val} or {and:[…]} / {or:[…]}." }
+                },
+                "required": ["handle","predicate"]
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "dataset_sort",
+            "description": "Sort a result-set handle by one or more keys (asc/desc, stable). Computes server-side — no AtScale round-trip. Derives a new handle.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "handle": { "type": "string", "description": "Handle id of the input result." },
+                    "keys": { "type": "array", "items": { "type": "object", "properties": { "col": { "type": "string" }, "dir": { "type": "string", "enum": ["asc","desc"] } }, "required": ["col"] }, "description": "Sort keys in priority order." }
+                },
+                "required": ["handle","keys"]
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "dataset_top_n",
+            "description": "Return the top or bottom N rows of a handle by a measure column (deterministic tie-break). Computes server-side — no AtScale round-trip. Derives a new handle.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "handle": { "type": "string", "description": "Handle id of the input result." },
+                    "n": { "type": "integer", "description": "Number of rows to keep." },
+                    "measure": { "type": "string", "description": "Measure column to rank by." },
+                    "dir": { "type": "string", "enum": ["top","bottom"], "description": "Top (default) or bottom." }
+                },
+                "required": ["handle","n","measure"]
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "dataset_pivot",
+            "description": "Pivot a handle's rows × columns × measure into a crosstab. Computes server-side — no AtScale round-trip. Derives a new handle.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "handle": { "type": "string", "description": "Handle id of the input result." },
+                    "row_dim": { "type": "string", "description": "Column for pivot rows." },
+                    "col_dim": { "type": "string", "description": "Column for pivot columns." },
+                    "measure": { "type": "string", "description": "Measure to aggregate per cell." },
+                    "agg": { "type": "string", "enum": ["sum","mean","min","max","count"], "description": "Cell aggregation (default sum)." }
+                },
+                "required": ["handle","row_dim","col_dim","measure"]
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "dataset_compare",
+            "description": "Compare two handles by joining on keys and computing delta + pct-change for a measure. Computes server-side — no AtScale round-trip. Derives a new handle (multi-parent lineage).",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "handle": { "type": "string", "description": "Handle id of the first (A) result." },
+                    "handle_b": { "type": "object", "description": "The second result's full DatasetHandle JSON." },
+                    "join_keys": { "type": "array", "items": { "type": "string" }, "description": "Columns to join on." },
+                    "measure": { "type": "string", "description": "Measure column to diff." }
+                },
+                "required": ["handle","handle_b","join_keys","measure"]
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "dataset_drill",
+            "description": "Expand a grouped row of a handle back to its constituent detail rows via lineage. Computes server-side — no AtScale round-trip. Derives a new handle.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "handle": { "type": "string", "description": "Handle id of the grouped result." },
+                    "group_row": { "type": "object", "description": "Column→value map identifying the group to drill into." }
+                },
+                "required": ["handle","group_row"]
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "dataset_describe",
+            "description": "Produce per-column stats (min/max/sum/mean/distinct) for a handle without changing rows. Computes server-side — no AtScale round-trip. Derives a new handle.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "handle": { "type": "string", "description": "Handle id of the input result." },
+                    "topk": { "type": "integer", "description": "Top-k cardinality to consider (default 10)." }
+                },
+                "required": ["handle"]
             },
             "annotations": { "readOnlyHint": true }
         }),
         json!({
             "name": "dataset_slice",
-            "description": "Filter a result-set handle to rows matching all supplied filters. Returns a new handle with the matching subset (row_count=0 for no matches — not an error). Computes server-side — no AtScale round-trip.",
+            "description": "Filter a result-set handle to rows matching all supplied [{col, op, value}] filters (op: =, !=, <, <=, >, >=, in). Compatibility alias for dataset_filter. row_count=0 for no matches is not an error. Computes server-side — no AtScale round-trip. Derives a new handle.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "handle": { "type": "string", "description": "UUID of the input result handle." },
-                    "filters": {
-                        "type": "array",
-                        "items": { "type": "object" },
-                        "description": "Row filters: [{col, op, value}] where op is =, !=, <, <=, >, >=, in."
-                    }
+                    "handle": { "type": "string", "description": "Handle id of the input result." },
+                    "filters": { "type": "array", "items": { "type": "object" }, "description": "Row filters: [{col, op, value}]." }
                 },
-                "required": ["handle","filters"],
-                "additionalProperties": false
+                "required": ["handle","filters"]
             },
             "annotations": { "readOnlyHint": true }
         }),
         json!({
             "name": "dataset_period_over_period",
-            "description": "Compute period-over-period deltas by bucketing date_col by period, summing measure_cols per bucket, and adding prior-period value, absolute delta, and percentage delta columns. Computes server-side — no AtScale round-trip.",
+            "description": "Compute period-over-period deltas by bucketing date_col by period, summing measure_cols per bucket, and adding prior-period value, absolute delta, and percentage delta columns. Computes server-side — no AtScale round-trip. Derives a new handle.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "handle": { "type": "string", "description": "UUID of the input result handle." },
+                    "handle": { "type": "string", "description": "Handle id of the input result." },
                     "date_col": { "type": "string", "description": "Column containing date/timestamp values." },
                     "period": { "type": "string", "enum": ["day","week","month","quarter","year"], "description": "Bucketing period." },
-                    "measure_cols": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Measure columns to aggregate and compare across periods."
-                    }
+                    "measure_cols": { "type": "array", "items": { "type": "string" }, "description": "Measure columns to aggregate and compare across periods." }
                 },
-                "required": ["handle","date_col","period","measure_cols"],
-                "additionalProperties": false
+                "required": ["handle","date_col","period","measure_cols"]
             },
             "annotations": { "readOnlyHint": true }
         }),
         json!({
             "name": "dataset_chart",
-            "description": "Produce a Vega-Lite v5 JSON spec from a result handle. Reads at most 20 rows for inline data.values. Returns the spec directly — no new handle is created. Computes server-side — no AtScale round-trip.",
+            "description": "Produce a Vega-Lite v5 JSON spec from a result handle. Reads at most inline_threshold rows for inline data.values. Returns the spec directly — no new handle. Computes server-side — no AtScale round-trip.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "handle": { "type": "string", "description": "UUID of the input result handle." },
+                    "handle": { "type": "string", "description": "Handle id of the input result." },
                     "chart_type": { "type": "string", "enum": ["bar","line","area","point"], "description": "Vega-Lite mark type." },
                     "x_col": { "type": "string", "description": "Column to bind to the x-axis." },
-                    "y_cols": {
-                        "type": "array",
-                        "items": { "type": "string" },
-                        "description": "Column(s) to bind to the y-axis."
-                    },
+                    "y_cols": { "type": "array", "items": { "type": "string" }, "description": "Column(s) to bind to the y-axis." },
                     "title": { "type": "string", "description": "Optional chart title." }
                 },
-                "required": ["handle","chart_type","x_col","y_cols"],
-                "additionalProperties": false
+                "required": ["handle","chart_type","x_col","y_cols"]
             },
             "annotations": { "readOnlyHint": true }
         }),

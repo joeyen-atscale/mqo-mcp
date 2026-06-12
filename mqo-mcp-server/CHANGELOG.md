@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.13.0 — 2026-06-11
+
+Merge the dataset-handle capability into the one canonical server
+(PRD-mqo-mcp-handle-merge). `mqo-mcp-server` is now the union: live execution +
+catalog + cursor + federation + charts + the full handle-op family.
+
+- **Store/op kernel swap.** `handle_ops.rs` is re-backed by **`dh-store` +
+  `dh-ops`** (typed columnar), replacing the `mqo-duckdb-handle-store` `MemStore`
+  Rust-over-`serde_json::Value` op path. `dh-store`/`dh-ops`/`dh-summary`/
+  `dh-export` added as path deps. The bundled DuckDB C++ build is **not** enabled
+  (`libduckdb-sys` stays out of the binary).
+- **Size-gated `query_multidimensional`.** Always returns
+  `{summary, handle, capabilities, row_count}`; raw `rows` are inlined **only**
+  when `row_count <= inline_threshold`. New `--inline-threshold` launch flag,
+  default **25**. Above K: a handle + bounded summary and **no** row dump — the
+  structural anti-calculator guarantee.
+- **Full 10-op `dataset_*` family.** Adds `dataset_filter`, `dataset_sort`,
+  `dataset_top_n`, `dataset_pivot`, `dataset_compare`, `dataset_drill`,
+  `dataset_describe` alongside the existing `dataset_aggregate`,
+  `dataset_slice`, `dataset_period_over_period`, `dataset_chart`. All carry
+  `readOnlyHint: true`. Tool count: 23 (12 core + 11 dataset ops).
+- **Compatibility.** Existing tools unchanged for ≤K results. The live
+  bind→route→compile→execute path is untouched; only the result handling
+  (store + size-gate) changed. `dataset_aggregate` still accepts the legacy
+  `measures:[{col,agg}]` shape; `dataset_slice` remains a `[{col,op,value}]`
+  filter alias.
+
+Remaining (follow-on): cursor `next_page` still uses the separate MemStore-backed
+cursor store (one-store unification deferred); the dh-ops-vs-DuckDB differential
+test is stubbed (test-only DuckDB dev-dep deferred to keep the build gate fast).
+
 ## v0.11.0 — 2026-06-11
 
 Add end-to-end functional test suites (`tests/e2e_scenarios.rs` and `tests/binary_stdio_test.rs`). Seven NLQ→BI scenario tests and four binary stdio JSON-RPC tests covering all 13 acceptance criteria from PRD-mqo-mcp-e2e-functional-tests. Fix tool count assertion from 14 to 16 (now includes `build_bi_asset`, `compose_dashboard`, and four handle-ops tools). All 43 tests pass.

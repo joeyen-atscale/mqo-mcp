@@ -152,6 +152,13 @@ struct Args {
     #[arg(long, default_value_t = DEFAULT_PAGE_SIZE)]
     page_size: usize,
 
+    /// Inline-row threshold (K). `query_multidimensional` and every `dataset_*`
+    /// op inline raw `rows` only when the result's `row_count` is at or below
+    /// this value. Above K the response carries a bounded summary + a handle and
+    /// NO `rows` — the structural anti-calculator guarantee. Default: 25.
+    #[arg(long, default_value_t = mqo_mcp_server::INLINE_THRESHOLD)]
+    inline_threshold: usize,
+
     /// Path to a pre-derived `enriched-catalog.v1` JSON file (from
     /// `mqoguard-column-group-enrichment`). When provided, skip auto-derivation
     /// and load this file directly. When absent, the server attempts to derive the
@@ -292,6 +299,7 @@ fn main() {
         handle_store: Some(mqo_mcp_server::HandleStore::new()),
         cursor_store: Some(cursor_store),
         page_size: args.page_size,
+        inline_threshold: args.inline_threshold,
         enriched,
         xmla_model_coords,
     };

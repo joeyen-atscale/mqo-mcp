@@ -40,7 +40,9 @@ pub use mqo_auth_bridge::{
     OidcConfig, RowSource,
 };
 
-pub use handle_ops::{HandleStore, INLINE_THRESHOLD};
+pub use handle_ops::{
+    dataset_to_json_rows, json_rows_to_dataset, HandleStore, INLINE_THRESHOLD,
+};
 pub use mcp::{discover_xmla_coords, tool_descriptors, Server, ServerEnrichedData, ServerEngine, PROTOCOL_VERSION};
 pub use pipeline::{error_class, error_class_values, PipelineError, PipelineOutput, ToolPaths};
 pub use probe::{BackendCapabilities, PortStatus};
