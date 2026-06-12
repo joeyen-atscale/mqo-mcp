@@ -186,7 +186,14 @@ fn normalize_label(label: &str) -> String {
 /// shorter than the core-token window (nothing meaningful to disambiguate).
 fn core_label(label: &str) -> Option<String> {
     let norm = normalize_label(label);
-    let toks: Vec<&str> = norm.split(' ').filter(|t| !t.is_empty()).collect();
+    let mut toks: Vec<&str> = norm.split(' ').filter(|t| !t.is_empty()).collect();
+    // FIX 2: drop a trailing "name" token so a human-readable display attribute
+    // (e.g. "Customer State Name") shares a bucket with its code-like sibling
+    // ("Customer State") — that bucket's `canonical_for` then prefers the
+    // *Name* member (see `label_is_name`). Keep a single bare "name" as-is.
+    if toks.len() > 1 && toks.last() == Some(&"name") {
+        toks.pop();
+    }
     if toks.len() < NEAR_TWIN_CORE_TOKENS {
         // Too short to carry a hierarchy-role prefix; group on the whole label.
         if toks.is_empty() {
@@ -195,6 +202,17 @@ fn core_label(label: &str) -> Option<String> {
         return Some(toks.join(" "));
     }
     Some(toks[toks.len() - NEAR_TWIN_CORE_TOKENS..].join(" "))
+}
+
+/// Does this label name a human-readable display attribute? True when the
+/// trailing concept word is "name" (e.g. "Store State Name", "Sold Day Name",
+/// "Product Brand Name"). Used by the `canonical_for` heuristic (FIX 2) to
+/// prefer the named display attribute over a code-like sibling.
+fn label_is_name(label: &str) -> bool {
+    normalize_label(label)
+        .split(' ')
+        .next_back()
+        .is_some_and(|w| w == "name")
 }
 
 /// Build the `near_twins` block for a set of `describe_model` columns.
@@ -248,12 +266,19 @@ fn build_near_twins(columns: &[Value]) -> Vec<Value> {
         // Stable order for determinism.
         members.sort_by(|a, b| a.0.cmp(&b.0));
 
-        // Canonical = shortest hierarchy name, ties broken by unique_name.
+        // FIX 2: canonical selection prefers the human-readable display
+        // attribute — the member whose label is/contains the word "Name"
+        // (e.g. "Store State Name" over the code-like "Store State",
+        // "Sold Day Name" over "Sold Day of Week"). When multiple (or no)
+        // members are named, fall back to the existing shortest-hierarchy-name
+        // primacy as the tiebreak.
         let canonical_un = members
             .iter()
             .min_by(|a, b| {
-                a.1.len()
-                    .cmp(&b.1.len())
+                // `false` (is a Name attr) sorts before `true`, so invert.
+                (!label_is_name(&a.2))
+                    .cmp(&(!label_is_name(&b.2)))
+                    .then_with(|| a.1.len().cmp(&b.1.len()))
                     .then_with(|| a.1.cmp(&b.1))
                     .then_with(|| a.0.cmp(&b.0))
             })
@@ -339,14 +364,34 @@ fn build_measure_twins(columns: &[Value]) -> Vec<Value> {
             continue;
         }
         members.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // FIX 2 (conservative): if exactly one member is a human-readable
+        // "*Name*" measure, mark it canonical. Measures rarely end in "Name",
+        // so this is purely additive and never fires for the
+        // Catalog/Store/Web fact-group twins (which carry no canonical hint).
+        let name_members: Vec<&str> = members
+            .iter()
+            .filter(|(_, _, l)| label_is_name(l))
+            .map(|(un, _, _)| un.as_str())
+            .collect();
+        let canonical_un: Option<String> = if name_members.len() == 1 {
+            Some(name_members[0].to_string())
+        } else {
+            None
+        };
+
         let twins: Vec<Value> = members
             .iter()
             .map(|(un, prefix, label)| {
-                json!({
+                let mut entry = json!({
                     "unique_name": un,
                     "measure_group": prefix,
                     "label": label,
-                })
+                });
+                if Some(un) == canonical_un.as_ref() {
+                    entry["canonical_for"] = json!("generic");
+                }
+                entry
             })
             .collect();
         groups.push(json!({
@@ -382,6 +427,46 @@ fn date_role_hierarchies(columns: &[Value]) -> Vec<String> {
         }
     }
     roles.into_iter().collect()
+}
+
+/// Surface packaged-calc metadata on a single `describe_model` measure column.
+///
+/// Adds two additive fields, reusing the `mqo-param-validator` calc heuristics
+/// (`is_packaged_calc` / `calc_triggers`) so the model can prefer a packaged
+/// calc (e.g. `Web and Catalog Sales Price Growth`) over a plain base measure
+/// when the NL phrasing asks for a derived concept:
+///
+///   * `is_calc: bool`   — true when the measure is a packaged calculated
+///     measure. An explicit `is_calc:true` in the catalog wins; otherwise the
+///     validator's name heuristic decides (`* Growth`, `* Increase`,
+///     `* Change`, `* YoY`, `* vs Prior`, `Price Growth`, …).
+///   * `triggers: [String]` — the NL phrases that should map to this calc
+///     (from `calc_triggers()`). Empty array for non-calc measures.
+///
+/// The column's `unique_name` / `label` / `is_calc` are deserialized into the
+/// validator's `CatalogMeasure` so the two crates share one source of truth.
+fn annotate_calc(col: &mut Value) {
+    use mqo_param_validator::{calc_triggers, is_packaged_calc, CatalogMeasure};
+
+    let measure = CatalogMeasure {
+        unique_name: col
+            .get("unique_name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        label: col.get("label").and_then(Value::as_str).map(str::to_string),
+        is_calc: col.get("is_calc").and_then(Value::as_bool),
+        ..Default::default()
+    };
+
+    let is_calc = is_packaged_calc(&measure);
+    let triggers: Vec<String> = if is_calc {
+        calc_triggers(&measure)
+    } else {
+        Vec::new()
+    };
+    col["is_calc"] = json!(is_calc);
+    col["triggers"] = json!(triggers);
 }
 
 /// Estimate serialized byte size of a JSON value (UTF-8 length of compact form).
@@ -863,6 +948,9 @@ impl Server {
         for col in &mut columns {
             if col.get("kind").and_then(Value::as_str) == Some("measure") {
                 col["date_roles"] = date_roles_val.clone();
+                // FIX 1: surface packaged-calc metadata (is_calc + NL triggers)
+                // so the model prefers a packaged calc over a plain base measure.
+                annotate_calc(col);
             }
         }
 
@@ -1869,5 +1957,159 @@ mod disambiguation_tests {
         let b = json_byte_size(&json!(build_near_twins(&cols)));
         assert_eq!(a, b);
         let _ = (measure("m.x", "X"),); // keep helper used
+    }
+
+    // ── FIX 1: packaged-calc surfacing (is_calc + triggers) ──────────────────
+
+    /// FIX 1: a `*Growth` measure is flagged `is_calc:true` with a non-empty
+    /// trigger list (year-over-year / growth / price growth …), even when the
+    /// catalog carries a stale explicit `is_calc:false`.
+    #[test]
+    fn calc_measure_surfaces_is_calc_and_triggers() {
+        let mut m = json!({
+            "unique_name": "tpcds_benchmark_model.web_and_catalog_sales_price_growth",
+            "label": "Web and Catalog Sales Price Growth",
+            "kind": "measure",
+            "is_calc": false
+        });
+        annotate_calc(&mut m);
+        assert_eq!(m["is_calc"], json!(true), "Growth measure is a calc: {m}");
+        let triggers: Vec<String> = m["triggers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t.as_str().unwrap().to_string())
+            .collect();
+        assert!(!triggers.is_empty(), "calc has non-empty triggers: {m}");
+        assert!(
+            triggers.iter().any(|t| t.contains("growth")),
+            "growth trigger present: {triggers:?}"
+        );
+        assert!(
+            triggers.iter().any(|t| t == "year over year" || t == "yoy"),
+            "yoy/year-over-year trigger present: {triggers:?}"
+        );
+    }
+
+    /// FIX 1 (negative): a plain base measure is `is_calc:false` with empty
+    /// triggers.
+    #[test]
+    fn base_measure_is_not_calc() {
+        let mut m = json!({
+            "unique_name": "tpcds_benchmark_model.store_ext_sales_price",
+            "label": "Store Ext Sales Price",
+            "kind": "measure"
+        });
+        annotate_calc(&mut m);
+        assert_eq!(m["is_calc"], json!(false));
+        assert_eq!(m["triggers"], json!([]), "no triggers for base measure");
+    }
+
+    /// FIX 1: an `*Increase` measure is likewise flagged as a calc.
+    #[test]
+    fn increase_measure_is_calc() {
+        let mut m = json!({
+            "unique_name": "tpcds_benchmark_model.web_sales_increase",
+            "label": "Web Sales Increase",
+            "kind": "measure",
+            "is_calc": false
+        });
+        annotate_calc(&mut m);
+        assert_eq!(m["is_calc"], json!(true), "Increase measure is a calc: {m}");
+        assert!(!m["triggers"].as_array().unwrap().is_empty());
+    }
+
+    // ── FIX 2: *Name* preference for canonical_for ───────────────────────────
+
+    /// FIX 2: a `*Name*` display attribute and its code-like sibling co-bucket
+    /// (the trailing "name" token is dropped from the core key), and the
+    /// `*Name*` member wins `canonical_for` even though its hierarchy name is
+    /// LONGER — the Name-preference beats the shortest-hierarchy tiebreak.
+    #[test]
+    fn name_member_preferred_over_shorter_hierarchy() {
+        let cols = vec![
+            // Code-like sibling on the SHORTER hierarchy name → core "store state".
+            lvl("h.[Store State]", "Store State", "h"),
+            // *Name* display sibling on a LONGER hierarchy name → core "store state".
+            lvl(
+                "store_geography_dim.[Store State Name]",
+                "Store State Name",
+                "store_geography_dim",
+            ),
+        ];
+        let groups = build_near_twins(&cols);
+        assert_eq!(groups.len(), 1, "one near-twin group: {groups:?}");
+        let twins = groups[0]["near_twins"].as_array().unwrap();
+        let canonical: Vec<&str> = twins
+            .iter()
+            .filter(|t| t.get("canonical_for").is_some())
+            .map(|t| t["unique_name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            canonical,
+            vec!["store_geography_dim.[Store State Name]"],
+            "the *Name* display attribute is canonical, not the code-like sibling on the shorter hierarchy"
+        );
+    }
+
+    /// FIX 2: the fixture's cross-hierarchy "Customer State" family — code-like
+    /// `Customer State` plus display `Customer State Name` across the customer
+    /// address hierarchies — resolves canonical_for to the `*Name*` member.
+    #[test]
+    fn customer_state_name_is_canonical() {
+        let cols = vec![
+            lvl(
+                "customer_address.[Customer State]",
+                "Customer State",
+                "customer_address",
+            ),
+            lvl(
+                "customer_address.[Customer State Name]",
+                "Customer State Name",
+                "customer_address",
+            ),
+            lvl(
+                "return_customer_address.[Return Customer State]",
+                "Return Customer State",
+                "return_customer_address",
+            ),
+            lvl(
+                "return_customer_address.[Return Customer State Name]",
+                "Return Customer State Name",
+                "return_customer_address",
+            ),
+        ];
+        let groups = build_near_twins(&cols);
+        assert_eq!(groups.len(), 1, "one 'customer state' group: {groups:?}");
+        let twins = groups[0]["near_twins"].as_array().unwrap();
+        let canonical: Vec<&str> = twins
+            .iter()
+            .filter(|t| t.get("canonical_for").is_some())
+            .map(|t| t["unique_name"].as_str().unwrap())
+            .collect();
+        // *Name* preference + shortest-hierarchy tiebreak → customer_address Name.
+        assert_eq!(canonical, vec!["customer_address.[Customer State Name]"]);
+    }
+
+    /// FIX 2 (regression guard): the Brand Name group still resolves to
+    /// `product_dimension.[Product Brand Name]` (all *Name*, shortest hierarchy).
+    #[test]
+    fn brand_name_group_still_resolves_to_product_brand_name() {
+        let cols = vec![
+            lvl("product_dimension.[Product Brand Name]", "Product Brand Name", "product_dimension"),
+            lvl(
+                "store_item_product_dimension.[Store Item Product Brand Name]",
+                "Store Item Product Brand Name",
+                "store_item_product_dimension",
+            ),
+        ];
+        let groups = build_near_twins(&cols);
+        let twins = groups[0]["near_twins"].as_array().unwrap();
+        let canonical: Vec<&str> = twins
+            .iter()
+            .filter(|t| t.get("canonical_for").is_some())
+            .map(|t| t["unique_name"].as_str().unwrap())
+            .collect();
+        assert_eq!(canonical, vec!["product_dimension.[Product Brand Name]"]);
     }
 }
