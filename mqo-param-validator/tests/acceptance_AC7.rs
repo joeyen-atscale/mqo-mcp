@@ -17,10 +17,14 @@ fn full_catalog() -> CatalogSnapshot {
             CatalogMeasure {
                 unique_name: "Sales Amount".to_string(),
                 subject_area: Some("Sales".to_string()),
+                label: None,
+                is_calc: None,
             },
             CatalogMeasure {
                 unique_name: "Inventory Count".to_string(),
                 subject_area: Some("Inventory".to_string()),
+                label: None,
+                is_calc: None,
             },
         ],
         dimensions: vec![

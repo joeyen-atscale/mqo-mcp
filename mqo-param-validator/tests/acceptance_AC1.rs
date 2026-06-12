@@ -9,8 +9,8 @@ use mqo_param_validator::{
 fn catalog() -> CatalogSnapshot {
     CatalogSnapshot {
         measures: vec![
-            CatalogMeasure { unique_name: "Sales Amount".to_string(), subject_area: None },
-            CatalogMeasure { unique_name: "Order Count".to_string(), subject_area: None },
+            CatalogMeasure { unique_name: "Sales Amount".to_string(), subject_area: None, label: None, is_calc: None },
+            CatalogMeasure { unique_name: "Order Count".to_string(), subject_area: None, label: None, is_calc: None },
         ],
         dimensions: vec![
             CatalogDimension { unique_name: "Customer".to_string(), subject_areas: vec![] },
