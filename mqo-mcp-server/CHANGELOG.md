@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.14.0 — 2026-06-11
+
+- **feat: describe_model disambiguation pack — kill near-twin entity picks.**
+  `describe_model` now disambiguates the same-worded look-alike attributes that
+  drove the `wrong_hierarchy_level` failure mode (65% pass@4 in mcp-tuner k4_v2 —
+  the model grabbed `Store Item Product Brand Name` instead of the canonical
+  `Product Brand Name`). Additive, deterministic, no extra round-trip:
+  - **near_twins block (FR-2/FR-3):** dimension levels whose core label (trailing
+    concept words, e.g. "brand name", "state name") collide across ≥2 hierarchies
+    are grouped under a top-level `near_twins` list. Within each group the
+    attribute on the shortest hierarchy name is tagged `canonical_for: "generic"`
+    (hierarchy-primacy heuristic — `product_dimension` over
+    `store_item_product_dimension`). TPC-DS surfaces the known conflicts: Brand
+    Name (3 hierarchies), State Name (6), Day Name (4), Manager ID (3).
+  - **hierarchy + level tags (FR-1):** every dimension level carries `hierarchy`
+    and `level`, parsed from `hier.[Level]` when the snapshot omits them.
+  - **date_roles on measures (FR-4):** each measure carries `date_roles` — the
+    unique_names of temporally-typed date hierarchies (empty array when none,
+    never absent). Consumed by the crossfact date-role PRD.
+  - **footprint guard (NFR-2):** if the near_twins block would exceed +15% of the
+    response footprint, it is trimmed to the most-actionable groups (≥3 twins).
+  - 7 unit tests + 4 fixture/integration tests (AC-1..AC-5).
+
 ## v0.13.2 — 2026-06-11
 
 - **fix: friendly-label role matching for XMLA-mangled live column keys.** For

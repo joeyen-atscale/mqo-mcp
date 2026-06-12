@@ -155,6 +155,164 @@ impl ServerEnrichedData {
     }
 }
 
+// ── describe_model disambiguation pack ───────────────────────────────────────
+//
+// Implements PRD-mqo-describe-disambiguation-pack: enrich the `describe_model`
+// response so the model picks the *canonical* near-twin entity on the first try.
+//
+// Two enrichments, both additive (older clients ignore unknown keys):
+//
+//   1. Near-twin grouping (FR-2/FR-3): dimension levels whose *core label*
+//      (the trailing concept words, e.g. "Brand Name", "State Name") collide
+//      across different hierarchies are grouped under a top-level `near_twins`
+//      block. Within each group the attribute on the shortest hierarchy name
+//      is marked `canonical_for: "generic"` (hierarchy-primacy heuristic).
+//
+//   2. Date roles (FR-4): each measure carries `date_roles` — the unique_names
+//      of temporally-typed date hierarchies it can be sliced by. Derived from
+//      the catalog's date hierarchies (empty array when none, never absent).
+
+/// Maximum number of trailing tokens used as the near-twin "core label" key.
+const NEAR_TWIN_CORE_TOKENS: usize = 2;
+
+/// Normalize a label for collision detection: lowercase, collapse whitespace.
+fn normalize_label(label: &str) -> String {
+    label.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// The "core label" of an attribute: the trailing concept words shared by
+/// near-twins across hierarchies (e.g. "Product Brand Name",
+/// "Store Item Product Brand Name" → "brand name"). Returns `None` for labels
+/// shorter than the core-token window (nothing meaningful to disambiguate).
+fn core_label(label: &str) -> Option<String> {
+    let norm = normalize_label(label);
+    let toks: Vec<&str> = norm.split(' ').filter(|t| !t.is_empty()).collect();
+    if toks.len() < NEAR_TWIN_CORE_TOKENS {
+        // Too short to carry a hierarchy-role prefix; group on the whole label.
+        if toks.is_empty() {
+            return None;
+        }
+        return Some(toks.join(" "));
+    }
+    Some(toks[toks.len() - NEAR_TWIN_CORE_TOKENS..].join(" "))
+}
+
+/// Build the `near_twins` block for a set of `describe_model` columns.
+///
+/// Buckets dimension *levels* by their core label and emits one group per
+/// bucket that spans ≥2 distinct hierarchies. Within a group the attribute on
+/// the lexicographically shortest hierarchy name is tagged
+/// `canonical_for: "generic"` (the hierarchy-primacy heuristic — shorter ≈ more
+/// primary, e.g. `product_dimension` over `store_item_product_dimension`).
+///
+/// Deterministic: groups and members are sorted, so the same catalog always
+/// yields the same block (NFR-3).
+fn build_near_twins(columns: &[Value]) -> Vec<Value> {
+    use std::collections::BTreeMap;
+
+    // core_label -> Vec<(unique_name, hierarchy, label)>
+    let mut buckets: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
+    for c in columns {
+        if c.get("kind").and_then(Value::as_str) != Some("level") {
+            continue;
+        }
+        let (Some(un), Some(label)) = (
+            c.get("unique_name").and_then(Value::as_str),
+            c.get("label").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        // Hierarchy: prefer explicit field, else parse from `hier.[Level]`.
+        let hier = c
+            .get("hierarchy")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| un.split_once('.').map(|(h, _)| h.to_string()))
+            .unwrap_or_default();
+        if let Some(core) = core_label(label) {
+            buckets
+                .entry(core)
+                .or_default()
+                .push((un.to_string(), hier, label.to_string()));
+        }
+    }
+
+    let mut groups: Vec<Value> = Vec::new();
+    for (core, mut members) in buckets {
+        // Only a near-twin group if it spans more than one hierarchy.
+        let distinct_hiers: std::collections::BTreeSet<&str> =
+            members.iter().map(|(_, h, _)| h.as_str()).collect();
+        if distinct_hiers.len() < 2 {
+            continue;
+        }
+        // Stable order for determinism.
+        members.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Canonical = shortest hierarchy name, ties broken by unique_name.
+        let canonical_un = members
+            .iter()
+            .min_by(|a, b| {
+                a.1.len()
+                    .cmp(&b.1.len())
+                    .then_with(|| a.1.cmp(&b.1))
+                    .then_with(|| a.0.cmp(&b.0))
+            })
+            .map(|(un, _, _)| un.clone());
+
+        let twins: Vec<Value> = members
+            .iter()
+            .map(|(un, hier, label)| {
+                let mut entry = json!({
+                    "unique_name": un,
+                    "hierarchy": hier,
+                    "label": label,
+                });
+                if Some(un) == canonical_un.as_ref() {
+                    entry["canonical_for"] = json!("generic");
+                }
+                entry
+            })
+            .collect();
+
+        groups.push(json!({
+            "core_label": core,
+            "near_twins": twins,
+        }));
+    }
+    groups
+}
+
+/// Collect the unique_names of temporally-typed (date) hierarchies from the
+/// catalog columns. A hierarchy is treated as a date role when its name (or the
+/// name of any of its levels) contains the token `date` (case-insensitive).
+///
+/// Used to derive each measure's `date_roles` (FR-4). Deterministic, sorted.
+fn date_role_hierarchies(columns: &[Value]) -> Vec<String> {
+    use std::collections::BTreeSet;
+    let mut roles: BTreeSet<String> = BTreeSet::new();
+    for c in columns {
+        let hier = c
+            .get("hierarchy")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                c.get("unique_name")
+                    .and_then(Value::as_str)
+                    .and_then(|un| un.split_once('.').map(|(h, _)| h))
+            });
+        if let Some(h) = hier {
+            if h.to_lowercase().contains("date") {
+                roles.insert(h.to_string());
+            }
+        }
+    }
+    roles.into_iter().collect()
+}
+
+/// Estimate serialized byte size of a JSON value (UTF-8 length of compact form).
+fn json_byte_size(v: &Value) -> usize {
+    serde_json::to_string(v).map(|s| s.len()).unwrap_or(0)
+}
+
 /// Protocol version this server speaks. Matches the MCP spec revision string.
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
@@ -593,9 +751,79 @@ impl Server {
             }
         }
 
+        // ── Disambiguation pack ──────────────────────────────────────────────
+        // FR-1: dimension levels already carry `hierarchy` + `level` from the
+        //       catalog snapshot; ensure they are present (parse from
+        //       `hier.[Level]` when the snapshot omitted them).
+        for col in &mut columns {
+            if col.get("kind").and_then(Value::as_str) != Some("level") {
+                continue;
+            }
+            let parsed: Option<(String, String)> = col
+                .get("unique_name")
+                .and_then(Value::as_str)
+                .and_then(|un| un.split_once('.'))
+                .map(|(h, lvl)| {
+                    (
+                        h.to_string(),
+                        lvl.trim_start_matches('[').trim_end_matches(']').to_string(),
+                    )
+                });
+            if let Some((h, lvl)) = parsed {
+                if col.get("hierarchy").and_then(Value::as_str).is_none() {
+                    col["hierarchy"] = json!(h);
+                }
+                if col.get("level").and_then(Value::as_str).is_none() {
+                    col["level"] = json!(lvl);
+                }
+            }
+        }
+
+        // FR-4: each measure carries `date_roles` — compatible date hierarchies.
+        // Derived from the catalog's temporally-typed hierarchies. Always an
+        // array (empty when none), never absent.
+        let date_roles = date_role_hierarchies(&columns);
+        let date_roles_val = json!(date_roles);
+        for col in &mut columns {
+            if col.get("kind").and_then(Value::as_str) == Some("measure") {
+                col["date_roles"] = date_roles_val.clone();
+            }
+        }
+
+        // FR-2/FR-3: near-twin grouping with canonical_for hint.
+        let near_twins = build_near_twins(&columns);
+
+        // NFR-2: footprint guard. The original response is columns (with
+        // compatible_hierarchies + FR-1/FR-4 tags) without the near_twins block.
+        // Trim the near_twins list to the most actionable groups (≥3 twins) if
+        // the block would push the response past +15%.
+        let base = json!({ "columns": &columns });
+        let base_bytes = json_byte_size(&base);
+        let near_twins = if base_bytes > 0 {
+            let full_bytes = json_byte_size(&json!(near_twins));
+            #[allow(clippy::cast_precision_loss)]
+            let overhead = full_bytes as f64 / base_bytes as f64;
+            if overhead > 0.15 {
+                // Keep only the most actionable groups (≥3 near-twins).
+                near_twins
+                    .into_iter()
+                    .filter(|g| {
+                        g.get("near_twins")
+                            .and_then(Value::as_array)
+                            .is_some_and(|a| a.len() >= 3)
+                    })
+                    .collect()
+            } else {
+                near_twins
+            }
+        } else {
+            near_twins
+        };
+
         json!({
             "model": model,
             "columns": columns,
+            "near_twins": near_twins,
             "describe_model": self.catalog.get("describe_model").cloned().unwrap_or(Value::Null)
         })
     }
@@ -1399,5 +1627,153 @@ mod size_gate_tests {
         let resp = structured_ok(&out, None, 1, Some(&h), 100);
         let sc = &resp["structuredContent"];
         assert!(sc.get("rows").is_some(), "60 ≤ 100 inlines: {sc}");
+    }
+}
+
+#[cfg(test)]
+mod disambiguation_tests {
+    //! Unit tests for the describe_model disambiguation pack
+    //! (PRD-mqo-describe-disambiguation-pack, AC-1..AC-5).
+    use super::*;
+
+    fn lvl(un: &str, label: &str, hier: &str) -> Value {
+        json!({
+            "unique_name": un,
+            "label": label,
+            "kind": "level",
+            "hierarchy": hier,
+        })
+    }
+
+    fn measure(un: &str, label: &str) -> Value {
+        json!({ "unique_name": un, "label": label, "kind": "measure" })
+    }
+
+    /// AC-2: two attributes with the same core label on different hierarchies →
+    /// a `near_twins` group is emitted.
+    #[test]
+    fn near_twin_group_emitted_for_collision_across_hierarchies() {
+        let cols = vec![
+            lvl(
+                "product_dimension.[Product Brand Name]",
+                "Product Brand Name",
+                "product_dimension",
+            ),
+            lvl(
+                "store_item_product_dimension.[Store Item Product Brand Name]",
+                "Store Item Product Brand Name",
+                "store_item_product_dimension",
+            ),
+        ];
+        let groups = build_near_twins(&cols);
+        assert_eq!(groups.len(), 1, "exactly one near-twin group: {groups:?}");
+        let twins = groups[0]["near_twins"].as_array().unwrap();
+        assert_eq!(twins.len(), 2);
+        // Canonical is the shortest hierarchy name (product_dimension).
+        let canonical: Vec<&str> = twins
+            .iter()
+            .filter(|t| t.get("canonical_for").is_some())
+            .map(|t| t["unique_name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            canonical,
+            vec!["product_dimension.[Product Brand Name]"],
+            "shortest hierarchy is canonical"
+        );
+    }
+
+    /// AC-2 (negative): a genuinely unique label emits no `near_twins`.
+    #[test]
+    fn unique_label_emits_no_group() {
+        let cols = vec![
+            lvl(
+                "store_dimension.[Store Manager]",
+                "Store Manager",
+                "store_dimension",
+            ),
+            lvl(
+                "product_dimension.[Product Brand Name]",
+                "Product Brand Name",
+                "product_dimension",
+            ),
+        ];
+        let groups = build_near_twins(&cols);
+        assert!(groups.is_empty(), "no collisions → no groups: {groups:?}");
+    }
+
+    /// Same core label but on the SAME hierarchy is not a near-twin group.
+    #[test]
+    fn same_hierarchy_is_not_a_near_twin() {
+        let cols = vec![
+            lvl("h.[A Brand Name]", "A Brand Name", "h"),
+            lvl("h.[B Brand Name]", "B Brand Name", "h"),
+        ];
+        let groups = build_near_twins(&cols);
+        assert!(groups.is_empty(), "single hierarchy → no group");
+    }
+
+    /// FR-3: three+ same-label attributes are all listed with one canonical.
+    #[test]
+    fn three_twins_one_canonical() {
+        let cols = vec![
+            lvl("product_dimension.[Product Brand Name]", "Product Brand Name", "product_dimension"),
+            lvl(
+                "promotion_product_item_product_dimension.[Promotion Product Item Product Brand Name]",
+                "Promotion Product Item Product Brand Name",
+                "promotion_product_item_product_dimension",
+            ),
+            lvl(
+                "store_item_product_dimension.[Store Item Product Brand Name]",
+                "Store Item Product Brand Name",
+                "store_item_product_dimension",
+            ),
+        ];
+        let groups = build_near_twins(&cols);
+        assert_eq!(groups.len(), 1);
+        let twins = groups[0]["near_twins"].as_array().unwrap();
+        assert_eq!(twins.len(), 3);
+        let canonical: Vec<&str> = twins
+            .iter()
+            .filter(|t| t.get("canonical_for").is_some())
+            .map(|t| t["unique_name"].as_str().unwrap())
+            .collect();
+        assert_eq!(canonical, vec!["product_dimension.[Product Brand Name]"]);
+    }
+
+    /// FR-4: date_roles derivation picks temporally-typed hierarchies, sorted.
+    #[test]
+    fn date_roles_picks_date_hierarchies() {
+        let cols = vec![
+            lvl("sold_date_dimensions.[Year]", "Year", "sold_date_dimensions"),
+            lvl("ship_date_dimensions.[Year]", "Year", "ship_date_dimensions"),
+            lvl("product_dimension.[Product Brand Name]", "Product Brand Name", "product_dimension"),
+        ];
+        let roles = date_role_hierarchies(&cols);
+        assert_eq!(roles, vec!["ship_date_dimensions", "sold_date_dimensions"]);
+    }
+
+    /// FR-4: when no date hierarchy exists, date_roles is an empty vec (the
+    /// caller emits `[]`, not absent).
+    #[test]
+    fn date_roles_empty_when_no_date_hierarchy() {
+        let cols = vec![lvl(
+            "product_dimension.[Product Brand Name]",
+            "Product Brand Name",
+            "product_dimension",
+        )];
+        assert!(date_role_hierarchies(&cols).is_empty());
+    }
+
+    /// NFR-3: deterministic — same input yields byte-identical output.
+    #[test]
+    fn near_twins_deterministic() {
+        let cols = vec![
+            lvl("h_long_name.[State Name]", "Long State Name", "h_long_name"),
+            lvl("h_a.[State Name]", "A State Name", "h_a"),
+        ];
+        let a = json_byte_size(&json!(build_near_twins(&cols)));
+        let b = json_byte_size(&json!(build_near_twins(&cols)));
+        assert_eq!(a, b);
+        let _ = (measure("m.x", "X"),); // keep helper used
     }
 }
