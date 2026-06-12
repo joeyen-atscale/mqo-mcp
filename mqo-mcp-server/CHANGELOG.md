@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.17.0 — 2026-06-12
+
+- **describe_model measure disambiguation — distinguishing qualifier tokens**
+  (PRD-mqo-describe-measure-disambiguation). The measure-twin pass
+  (`build_measure_twins`) now groups near-twin measures by their **family stem**
+  (concept tokens with channel/qualifier words stripped, so all "Net Paid"
+  variants collapse to one `net paid` family) and annotates each member with
+  `distinguishing` — the contiguous runs of its label tokens that are NOT common
+  to every member of the family (set-difference of the member's tokens vs the
+  family's shared tokens). For the "Net Paid" family this surfaces
+  `Web Net Paid Incl Ship` → `["Web", "Incl Ship"]`,
+  `Store Net Paid Incl Tax` → `["Store", "Incl Tax"]`, and the base
+  `Web Net Paid Amount` → `["Web", "Amount"]` (no incl/tax/ship), so the model
+  picks the precise measure by matching the question's wording.
+  - Advisory grounding hint ONLY — **no validator change**; measure intent is
+    too question-dependent to hard-reject (the dimension near-twin
+    false-positive lesson). mqo-param-validator is untouched.
+  - Deterministic, catalog-only. Families capped to ≥2 members; the
+    footprint guard keeps level twins and trims the smallest measure families
+    first if the `near_twins` block would exceed +15% of the columns payload
+    (on the tpcds fixture the block is ~3.6% overhead — 18 measure families,
+    none trimmed).
+
 ## v0.16.0 — 2026-06-12
 
 - **describe_model grounding fixes (k=1 residual gaps).** Two focused fixes to

@@ -334,22 +334,99 @@ fn measure_group_prefix(label: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Qualifier / channel-scope tokens that distinguish *members* of a measure
+/// family rather than naming the family's core concept. Stripped when computing
+/// a measure's family stem so that, e.g., `Web Net Paid Amount`,
+/// `Web Net Paid Incl Ship`, `Catalog Net Paid Inc Tax Amount`, and
+/// `Total Net Paid Amount` all collapse to the same stem ("net paid") and group
+/// together. These are exactly the tokens that should surface as a member's
+/// `distinguishing` qualifier (channel prefix, incl-tax/ship, amount, average).
+///
+/// Lowercased, matched token-wise. Deliberately conservative: concept words like
+/// "sales", "price", "profit", "quantity" are NOT here, so distinct concepts stay
+/// in distinct families.
+const MEASURE_QUALIFIER_TOKENS: &[&str] = &[
+    "web", "store", "catalog", "total", "and", "incl", "inc", "tax", "ship",
+    "amount", "average", "avg",
+];
+
+/// True for a token that is a member-distinguishing qualifier (see
+/// [`MEASURE_QUALIFIER_TOKENS`]).
+fn is_measure_qualifier_token(tok: &str) -> bool {
+    MEASURE_QUALIFIER_TOKENS.contains(&tok.to_lowercase().as_str())
+}
+
+/// The "family stem" of a measure label: its concept tokens with the
+/// member-distinguishing qualifier/channel tokens removed (see
+/// [`MEASURE_QUALIFIER_TOKENS`]), lowercased and joined. Measures sharing a stem
+/// form a near-twin family (e.g. all "Net Paid" variants → "net paid").
+///
+/// Returns `None` when nothing concept-bearing remains (a label made entirely of
+/// qualifier tokens has no stem to group on).
+fn measure_family_stem(label: &str) -> Option<String> {
+    let stem: Vec<String> = normalize_label(label)
+        .split(' ')
+        .filter(|t| !t.is_empty() && !is_measure_qualifier_token(t))
+        .map(str::to_string)
+        .collect();
+    if stem.is_empty() {
+        None
+    } else {
+        Some(stem.join(" "))
+    }
+}
+
+/// Compute a member's `distinguishing` qualifier phrases: the contiguous runs of
+/// the member's label tokens that are NOT in `common` (the set of lowercased
+/// tokens shared by every member of the family). Tokens are kept in original
+/// label order and casing; adjacent distinguishing tokens are joined into a
+/// single phrase (so "Web Net Paid Incl Ship" with common {net,paid} →
+/// `["Web", "Incl Ship"]`). A base member whose only extra tokens are absent
+/// yields `[]`.
+fn distinguishing_runs(label: &str, common: &std::collections::BTreeSet<String>) -> Vec<String> {
+    let mut runs: Vec<String> = Vec::new();
+    let mut cur: Vec<&str> = Vec::new();
+    for tok in label.split_whitespace() {
+        if common.contains(&tok.to_lowercase()) {
+            if !cur.is_empty() {
+                runs.push(cur.join(" "));
+                cur.clear();
+            }
+        } else {
+            cur.push(tok);
+        }
+    }
+    if !cur.is_empty() {
+        runs.push(cur.join(" "));
+    }
+    runs
+}
+
 /// Build the *measure-side* `near_twins` groups.
 ///
-/// Buckets `kind=="measure"` columns by their core label (trailing concept
-/// words, e.g. "sales price", "wholesale cost") and emits one group per bucket
-/// whose members span ≥2 distinct measure-group prefixes (the leading
-/// "Catalog"/"Store"/"Web"/"Total" qualifier). This surfaces the
-/// `lookalike_measure` problem: many measures share the same concept tail but
-/// belong to different fact groups, and the model must pick the right one.
+/// Implements PRD-mqo-describe-measure-disambiguation. Buckets
+/// `kind=="measure"` columns by their **family stem** ([`measure_family_stem`] —
+/// concept tokens with channel/qualifier words removed, e.g. all "Net Paid"
+/// variants → "net paid") and emits one group per stem shared by ≥2 members.
+/// This surfaces the `lookalike_measure` problem: many measures share the same
+/// core concept but differ only by a qualifier (channel scope, incl-tax/ship,
+/// average), and the model must pick the one the question's wording means.
 ///
+/// FR-2: each member carries `distinguishing` — the contiguous runs of its label
+/// tokens that are NOT common to every member of its family (the set-difference
+/// of its tokens vs the family's common tokens). So within the "Net Paid"
+/// family, `Web Net Paid Incl Ship` carries `["Web", "Incl Ship"]` and the base
+/// `Web Net Paid Amount` carries `["Web", "Amount"]`, showing the model exactly
+/// what separates them.
+///
+/// FR-3: advisory hint data only — no validator rejection is keyed off this.
 /// No canonical hint is emitted for measures: unlike dimension hierarchies,
-/// there is no primacy heuristic — the caller must choose the fact group that
-/// matches intent. Deterministic: buckets and members are sorted.
+/// there is no primacy heuristic — the caller must choose the variant that
+/// matches intent. Deterministic (FR-4): buckets and members are sorted.
 fn build_measure_twins(columns: &[Value]) -> Vec<Value> {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
-    // core_label -> Vec<(unique_name, group_prefix, label)>
+    // family_stem -> Vec<(unique_name, group_prefix, label)>
     let mut buckets: BTreeMap<String, Vec<(String, String, String)>> = BTreeMap::new();
     for c in columns {
         if c.get("kind").and_then(Value::as_str) != Some("measure") {
@@ -362,55 +439,50 @@ fn build_measure_twins(columns: &[Value]) -> Vec<Value> {
             continue;
         };
         let prefix = measure_group_prefix(label).unwrap_or_default();
-        if let Some(core) = core_label(label) {
+        if let Some(stem) = measure_family_stem(label) {
             buckets
-                .entry(core)
+                .entry(stem)
                 .or_default()
                 .push((un.to_string(), prefix, label.to_string()));
         }
     }
 
     let mut groups: Vec<Value> = Vec::new();
-    for (core, mut members) in buckets {
-        // Only a near-twin group if it spans more than one measure-group prefix.
-        let distinct_prefixes: std::collections::BTreeSet<&str> =
-            members.iter().map(|(_, p, _)| p.as_str()).collect();
-        if distinct_prefixes.len() < 2 {
+    for (stem, mut members) in buckets {
+        // FR-1/FR-5: only a near-twin family if it has ≥2 members.
+        if members.len() < 2 {
             continue;
         }
         members.sort_by(|a, b| a.0.cmp(&b.0));
 
-        // FIX 2 (conservative): if exactly one member is a human-readable
-        // "*Name*" measure, mark it canonical. Measures rarely end in "Name",
-        // so this is purely additive and never fires for the
-        // Catalog/Store/Web fact-group twins (which carry no canonical hint).
-        let name_members: Vec<&str> = members
-            .iter()
-            .filter(|(_, _, l)| label_is_name(l))
-            .map(|(un, _, _)| un.as_str())
-            .collect();
-        let canonical_un: Option<String> = if name_members.len() == 1 {
-            Some(name_members[0].to_string())
-        } else {
-            None
-        };
+        // Tokens (lowercased) common to EVERY member: the family's shared core.
+        // distinguishing = a member's tokens minus this set.
+        let mut common: Option<BTreeSet<String>> = None;
+        for (_, _, label) in &members {
+            let toks: BTreeSet<String> = label
+                .split_whitespace()
+                .map(|t| t.to_lowercase())
+                .collect();
+            common = Some(match common {
+                None => toks,
+                Some(prev) => prev.intersection(&toks).cloned().collect(),
+            });
+        }
+        let common = common.unwrap_or_default();
 
         let twins: Vec<Value> = members
             .iter()
             .map(|(un, prefix, label)| {
-                let mut entry = json!({
+                json!({
                     "unique_name": un,
                     "measure_group": prefix,
                     "label": label,
-                });
-                if Some(un) == canonical_un.as_ref() {
-                    entry["canonical_for"] = json!("generic");
-                }
-                entry
+                    "distinguishing": distinguishing_runs(label, &common),
+                })
             })
             .collect();
         groups.push(json!({
-            "core_label": core,
+            "core_label": stem,
             "twin_kind": "measure",
             "near_twins": twins,
         }));
@@ -984,37 +1056,52 @@ impl Server {
             .get("columns")
             .and_then(Value::as_array)
             .map_or(&columns[..], Vec::as_slice);
-        let mut near_twins = build_near_twins(all_columns);
-        // Measure-side near-twins (lookalike_measure): same concept tail across
-        // different fact-group prefixes.
-        near_twins.extend(build_measure_twins(all_columns));
+        let level_twins = build_near_twins(all_columns);
+        // Measure-side near-twins (lookalike_measure): variants of one core
+        // concept that differ only by a qualifier (channel / incl-tax-ship /
+        // average), each annotated with its `distinguishing` qualifier tokens
+        // (PRD-mqo-describe-measure-disambiguation).
+        let measure_twins = build_measure_twins(all_columns);
 
-        // NFR-2: footprint guard. The original response is columns (with
+        // FR-5 footprint guard. The original response is columns (with
         // compatible_hierarchies + FR-1/FR-4 tags) without the near_twins block.
-        // Trim the near_twins list to the most actionable groups (≥3 twins) if
-        // the block would push the response past +15%.
+        // Level twins are few and always kept (the disambiguation-pack contract).
+        // The measure-twin families are the larger, growable block, so they are
+        // the ones trimmed under budget pressure: drop the smallest (least
+        // confusable) families first until the whole near_twins block is within
+        // +15% of the columns payload. Every kept family still has ≥2 members.
         let base = json!({ "columns": &columns });
         let base_bytes = json_byte_size(&base);
-        let near_twins = if base_bytes > 0 {
-            let full_bytes = json_byte_size(&json!(near_twins));
-            #[allow(clippy::cast_precision_loss)]
-            let overhead = full_bytes as f64 / base_bytes as f64;
-            if overhead > 0.15 {
-                // Keep only the most actionable groups (≥3 near-twins).
-                near_twins
-                    .into_iter()
-                    .filter(|g| {
-                        g.get("near_twins")
-                            .and_then(Value::as_array)
-                            .is_some_and(|a| a.len() >= 3)
+        let level_bytes = json_byte_size(&json!(level_twins));
+        let mut measure_twins = measure_twins;
+        if base_bytes > 0 {
+            // Sort smallest-family-first so `pop()` drops the least confusable.
+            measure_twins.sort_by(|a, b| {
+                let len = |g: &Value| {
+                    g.get("near_twins")
+                        .and_then(Value::as_array)
+                        .map_or(0, Vec::len)
+                };
+                len(a)
+                    .cmp(&len(b))
+                    .then_with(|| {
+                        a.get("core_label")
+                            .and_then(Value::as_str)
+                            .cmp(&b.get("core_label").and_then(Value::as_str))
                     })
-                    .collect()
-            } else {
-                near_twins
+            });
+            #[allow(clippy::cast_precision_loss)]
+            let over_budget = |measures: &[Value]| -> bool {
+                let total = level_bytes + json_byte_size(&json!(measures));
+                (total as f64 / base_bytes as f64) > 0.15
+            };
+            while over_budget(&measure_twins) && !measure_twins.is_empty() {
+                measure_twins.remove(0);
             }
-        } else {
-            near_twins
-        };
+        }
+
+        let mut near_twins = level_twins;
+        near_twins.extend(measure_twins);
 
         json!({
             "model": model,
@@ -1972,6 +2059,124 @@ mod disambiguation_tests {
         let b = json_byte_size(&json!(build_near_twins(&cols)));
         assert_eq!(a, b);
         let _ = (measure("m.x", "X"),); // keep helper used
+    }
+
+    // ── Measure disambiguation: distinguishing qualifier tokens ─────────────
+    // (PRD-mqo-describe-measure-disambiguation, FR-1/FR-2/FR-4)
+
+    /// FR-1/FR-2: the "Net Paid" family groups into one `measure_twins` group
+    /// whose members each carry `distinguishing` = their label tokens minus the
+    /// family's common tokens. `Web Net Paid Incl Ship` carries "Incl Ship"
+    /// (and "Ship"); a base member (`Web Net Paid Amount`) carries no
+    /// incl/tax/ship qualifier.
+    #[test]
+    fn net_paid_family_distinguishing_qualifiers() {
+        let cols = vec![
+            measure("m.web_net_paid_amount", "Web Net Paid Amount"),
+            measure("m.web_net_paid_incl_ship", "Web Net Paid Incl Ship"),
+            measure("m.web_net_paid_incl_tax", "Web Net Paid Incl Tax"),
+            measure("m.store_net_paid_amount", "Store Net Paid Amount"),
+            measure("m.catalog_net_paid_amount", "Catalog Net Paid Amount"),
+        ];
+        let groups = build_measure_twins(&cols);
+        let net_paid = groups
+            .iter()
+            .find(|g| g.get("core_label").and_then(Value::as_str) == Some("net paid"))
+            .expect("a 'net paid' measure_twins group");
+        assert_eq!(
+            net_paid["twin_kind"].as_str(),
+            Some("measure"),
+            "twin_kind is measure"
+        );
+        let members = net_paid["near_twins"].as_array().unwrap();
+        assert!(members.len() >= 2, "family has ≥2 members (FR-1): {members:?}");
+
+        // Helper: collect a member's distinguishing tokens (flattened across the
+        // contiguous phrase runs) for membership checks.
+        let dist_of = |label: &str| -> Vec<String> {
+            members
+                .iter()
+                .find(|m| m["label"].as_str() == Some(label))
+                .unwrap_or_else(|| panic!("member {label} present"))
+                ["distinguishing"]
+                .as_array()
+                .expect("distinguishing array present")
+                .iter()
+                .map(|p| p.as_str().unwrap().to_string())
+                .collect()
+        };
+
+        // Incl-Ship variant: distinguishing surfaces the "Incl Ship" qualifier.
+        let ship = dist_of("Web Net Paid Incl Ship");
+        let ship_flat = ship.join(" ");
+        assert!(
+            ship.iter().any(|p| p == "Incl Ship") || ship_flat.contains("Ship"),
+            "Web Net Paid Incl Ship distinguishes on Incl Ship / Ship: {ship:?}"
+        );
+
+        // Incl-Tax variant: distinguishing surfaces the "Incl Tax" qualifier.
+        let tax = dist_of("Web Net Paid Incl Tax");
+        assert!(
+            tax.join(" ").contains("Tax"),
+            "Web Net Paid Incl Tax distinguishes on Tax: {tax:?}"
+        );
+
+        // Base member: NO incl/tax/ship qualifier (it is the "base" amount).
+        let base = dist_of("Web Net Paid Amount");
+        let base_flat = base.join(" ").to_lowercase();
+        assert!(
+            !base_flat.contains("incl")
+                && !base_flat.contains("tax")
+                && !base_flat.contains("ship"),
+            "base Web Net Paid Amount carries no incl/tax/ship qualifier: {base:?}"
+        );
+
+        // The shared concept tokens (net, paid) are NEVER in any distinguishing
+        // list — they are common to every member.
+        for m in members {
+            let flat = m["distinguishing"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| p.as_str().unwrap().to_lowercase())
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                !flat.split_whitespace().any(|t| t == "net" || t == "paid"),
+                "common tokens (net/paid) excluded from distinguishing: {flat:?}"
+            );
+        }
+    }
+
+    /// FR-1 (negative): a measure with a unique stem (no family) → not grouped.
+    #[test]
+    fn unique_measure_not_grouped() {
+        let cols = vec![
+            measure("m.inventory_qoh", "Inventory Quantity On Hand"),
+            measure("m.web_net_paid_amount", "Web Net Paid Amount"),
+            measure("m.store_net_paid_amount", "Store Net Paid Amount"),
+        ];
+        let groups = build_measure_twins(&cols);
+        // Only "net paid" groups (2 members); the lone inventory measure does not.
+        assert_eq!(groups.len(), 1, "exactly one family: {groups:?}");
+        assert_eq!(
+            groups[0]["core_label"].as_str(),
+            Some("net paid"),
+            "the only family is net paid"
+        );
+    }
+
+    /// FR-4: deterministic — same input yields byte-identical measure twins.
+    #[test]
+    fn measure_twins_deterministic() {
+        let cols = vec![
+            measure("m.web_net_paid_incl_ship", "Web Net Paid Incl Ship"),
+            measure("m.web_net_paid_amount", "Web Net Paid Amount"),
+            measure("m.store_net_paid_amount", "Store Net Paid Amount"),
+        ];
+        let a = json_byte_size(&json!(build_measure_twins(&cols)));
+        let b = json_byte_size(&json!(build_measure_twins(&cols)));
+        assert_eq!(a, b);
     }
 
     // ── FIX 1: packaged-calc surfacing (is_calc + triggers) ──────────────────
