@@ -430,6 +430,42 @@ pub fn run<S: std::hash::BuildHasher>(
         }
     };
 
+    // ── Result-completeness guard (PRD-mqo-null-path-result-guard-wiring) ──
+    // A measure that is not materializable against the requested dimensions is
+    // silently DROPPED by the DAX engine: `SUMMARIZECOLUMNS('t'[Net Profit Tier],
+    // "Catalog Sales", [Catalog Sales])` returns dimension rows with NO measure
+    // column. Returning those measure-less rows reads as a real answer (fm3-012).
+    // Detect it catalog-independently: in a DAX result, measure columns are the
+    // keys mangled as `[Measure]` → they start with `_x005b_`; dimension columns
+    // are table-qualified (`atscale_catalogs_x005b_…`). If a non-empty result has
+    // fewer measure columns than requested measures, ≥1 measure was dropped →
+    // surface a typed cross-fact/non-materializable error instead of the rows.
+    // (The group-based null-path detector can't catch this case: the enriched
+    // catalog binds net_profit_tier to the catalog fact, so the groups intersect.)
+    // Live DAX only: the fixture engine emits plain (non-XMLA-mangled) keys and
+    // never drops measures, so the `_x005b_` column-shape test does not apply there.
+    if is_live && backend == "dax" && !mqo.measures.is_empty() {
+        if let Some(first) = rows.first().and_then(Value::as_object) {
+            let measure_cols = dax_measure_column_count(first);
+            if measure_cols < mqo.measures.len() {
+                let report = serde_json::json!({
+                    "null_path_incompatible": {
+                        "reason": "the engine returned rows without all requested measure \
+                                   columns — the measure(s) are not materializable against \
+                                   the requested dimensions (cross-fact / non-materializable path)",
+                        "requested_measures": mqo.measures.iter().map(|m| &m.unique_name).collect::<Vec<_>>(),
+                        "measure_columns_returned": measure_cols,
+                        "dimensions": mqo.dimensions.iter()
+                            .map(|d| format!("{}.[{}]", d.hierarchy, d.level))
+                            .collect::<Vec<_>>(),
+                        "compiled_query": compiled_query,
+                    }
+                });
+                return Err(PipelineError::CrossFactIncompatible { report });
+            }
+        }
+    }
+
     Ok(PipelineOutput {
         backend,
         estimated_rows,
@@ -944,4 +980,38 @@ fn run_tool(
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     })
+}
+
+/// Count DAX measure columns in a result row. In a live DAX `SUMMARIZECOLUMNS`
+/// result, measure columns are mangled `[Measure]` → keys start with `_x005b_`;
+/// dimension columns are table-qualified (`atscale_catalogs_x005b_…`). A
+/// non-materializable measure is silently dropped, so this count drops below the
+/// number of requested measures — the signal the result-completeness guard uses.
+fn dax_measure_column_count(row: &serde_json::Map<String, Value>) -> usize {
+    row.keys().filter(|k| k.starts_with("_x005b_")).count()
+}
+
+#[cfg(test)]
+mod result_guard_tests {
+    use super::dax_measure_column_count;
+    use serde_json::json;
+
+    #[test]
+    fn counts_measure_columns_not_dimensions() {
+        // Healthy row: one measure ([Catalog Sales]) + one dimension (table[Product Category]).
+        let row = json!({
+            "_x005b_Catalog_x0020_Sales_x005d_": 123.0,
+            "atscale_catalogs_x005b_Product_x0020_Category_x005d_": "Books"
+        });
+        assert_eq!(dax_measure_column_count(row.as_object().unwrap()), 1);
+    }
+
+    #[test]
+    fn dropped_measure_yields_zero() {
+        // fm3-012 shape: the measure column was dropped; only the dimension remains.
+        let row = json!({
+            "atscale_catalogs_x005b_Net_x0020_Profit_x0020_Tier_x005d_": "300-2000"
+        });
+        assert_eq!(dax_measure_column_count(row.as_object().unwrap()), 0);
+    }
 }

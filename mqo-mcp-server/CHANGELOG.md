@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.24.0 — 2026-06-12
+
+- **result-completeness guard** — fixes the fm3-012 cross-fact leak
+  (PRD-mqo-null-path-result-guard-wiring). When a measure is not materializable
+  against the requested dimensions, the live DAX engine silently DROPS the measure
+  column (`SUMMARIZECOLUMNS('t'[Net Profit Tier], "Catalog Sales", [Catalog Sales])`
+  returns dimension rows with no measure column) and the server returned those
+  measure-less rows with `error: null`. `pipeline::run` now checks, post-execution
+  (live + DAX only), that a non-empty result carries a column for every requested
+  measure — measure columns are the `[Measure]`-mangled keys (start with `_x005b_`);
+  dimension columns are table-qualified. If a measure column is missing, it returns
+  a typed `CrossFactIncompatible` error (report payload `null_path_incompatible`)
+  instead of the rows. Verified live: `Catalog Sales × net_profit_tier` now declines;
+  a compatible breakdown is unaffected.
+  - Catalog-independent by design: the group-based `mqoguard-null-path-detector`
+    can't catch this case — the enriched catalog binds `net_profit_tier` to
+    `[store_sales, catalog_sales, web_sales]`, which INTERSECTS `Catalog Sales`'s
+    `catalog_sales` group, so its disjoint-group test returns `EmptyButValid` (OQ-1).
+  - Fixture mode unaffected (the fixture engine emits plain keys and never drops
+    measures; the guard is gated to live DAX). Zero regression to the server suite.
+
 ## v0.23.0 — 2026-06-12
 
 - **OQ-5 name mapping** for live MDSCHEMA ingestion. AtScale exposes most levels
