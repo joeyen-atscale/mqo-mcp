@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.23.0 — 2026-06-12
+
+- **OQ-5 name mapping** for live MDSCHEMA ingestion. AtScale exposes most levels
+  as ATTRIBUTE hierarchies named after the attribute
+  (`[Customer Address].[Customer State Name]`), while the catalog groups them under
+  the DIMENSION (`customer_address`); user hierarchies (e.g. week) are grouped under
+  the hierarchy caption. `catalog_ingest` now registers each MDSCHEMA level under
+  BOTH the dimension key and the hierarchy-caption key, and the `snake` helper is
+  hyphen/punctuation-aware. Live coverage rises to **221/231 levels (96%)** and
+  **86/86 measures** mapped (was 209). The 10 residual unmapped levels are
+  week-hierarchy edge levels (`*Day Name Week`, `*Week Sequence`).
+- Note: full catalog construction from MDSCHEMA (no `--catalog` file, FR-1) is
+  NOT pursued — MDSCHEMA does not losslessly reproduce the catalog's
+  search_columns naming (attribute-vs-dimension grouping is ambiguous to invert;
+  10 levels don't map at all). The faithful full-column-list source is AtScale's
+  `search_columns` API — a separate investigation. This release keeps the
+  layering model (live metadata onto the recorded column list).
+
 ## v0.22.0 — 2026-06-12
 
 - **live catalog ingestion via XMLA MDSCHEMA** (PRD-mqo-live-catalog-ingestion

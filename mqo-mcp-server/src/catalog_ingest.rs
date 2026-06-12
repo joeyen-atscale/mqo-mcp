@@ -53,9 +53,35 @@ fn strip_brackets(unique_name: &str) -> String {
     first.trim_start_matches('[').trim_end_matches(']').to_string()
 }
 
-/// `Store Dimension` → `store_dimension` (the catalog hierarchy convention).
+/// The catalog hierarchy key from a `HIERARCHY_UNIQUE_NAME` — `snake` of its LAST
+/// bracket segment (the hierarchy caption). This matches the server catalog's
+/// hierarchy naming for ALL hierarchies, including week hierarchies that share a
+/// dimension (e.g. `[Sold Date Dimensions].[Sold Date Week Hierarchy]` →
+/// `sold_date_week_hierarchy`), where keying on the DIMENSION caption fails (OQ-5).
+fn hierarchy_key(hierarchy_unique_name: &str) -> String {
+    let last = hierarchy_unique_name
+        .rsplit("].[")
+        .next()
+        .unwrap_or(hierarchy_unique_name);
+    snake(last.trim_start_matches('[').trim_end_matches(']'))
+}
+
+/// `Store Dimension` → `store_dimension`; `Avg … 1998-1999` → `avg_…_1998_1999`.
+/// Lowercases and replaces every run of non-alphanumeric chars with a single
+/// underscore (the catalog's snake convention, incl. hyphens/punctuation).
 fn snake(caption: &str) -> String {
-    caption.to_lowercase().replace(' ', "_")
+    let mut out = String::with_capacity(caption.len());
+    let mut prev_us = false;
+    for c in caption.to_lowercase().chars() {
+        if c.is_ascii_alphanumeric() {
+            out.push(c);
+            prev_us = false;
+        } else if !prev_us {
+            out.push('_');
+            prev_us = true;
+        }
+    }
+    out.trim_matches('_').to_string()
 }
 
 /// Map an OLE DB `LEVEL_DBTYPE` to the validator's `value_type`.
@@ -145,7 +171,18 @@ pub fn ingest_live_metadata(
                 if r.get("LEVEL_NUMBER").map(String::as_str) == Some("0") {
                     continue;
                 }
-                let hier = r
+                // AtScale exposes most levels as ATTRIBUTE hierarchies named after
+                // the attribute (`[Customer Address].[Customer State Name]`), while
+                // the catalog groups them under the DIMENSION (`customer_address`);
+                // user hierarchies (week) are grouped under the hierarchy caption.
+                // Neither key alone matches — so register under BOTH the dimension
+                // key and the hierarchy-caption key (OQ-5). The merge looks up the
+                // catalog's actual hierarchy and finds whichever applies.
+                let hier_key_v = r
+                    .get("HIERARCHY_UNIQUE_NAME")
+                    .map(|h| hierarchy_key(h))
+                    .unwrap_or_default();
+                let dim_key_v = r
                     .get("DIMENSION_UNIQUE_NAME")
                     .map(|d| snake(&strip_brackets(d)))
                     .unwrap_or_default();
@@ -155,7 +192,13 @@ pub fn ingest_live_metadata(
                     .get("LEVEL_CARDINALITY")
                     .and_then(|s| s.parse::<usize>().ok())
                     .unwrap_or(usize::MAX);
-                level_meta.insert((hier, level_name.to_string()), (vt, lun, card));
+                for key in [hier_key_v, dim_key_v] {
+                    if !key.is_empty() {
+                        level_meta
+                            .entry((key, level_name.to_string()))
+                            .or_insert_with(|| (vt, lun.clone(), card));
+                    }
+                }
             }
         }
         Err(_) => summary.errored += 1,
@@ -258,10 +301,15 @@ mod tests {
     #[test]
     fn name_mapping() {
         assert_eq!(strip_brackets("[Store Dimension]"), "Store Dimension");
-        assert_eq!(strip_brackets("[Sold Date Dimensions].[Sold Calendar Week]"), "Sold Date Dimensions");
         assert_eq!(snake("Store Dimension"), "store_dimension");
-        assert_eq!(snake("Sold Date Dimensions"), "sold_date_dimensions");
         assert_eq!(snake("Ship Mode"), "ship_mode");
+        // hierarchy_key uses the LAST caption segment — week hierarchies map.
+        assert_eq!(hierarchy_key("[Store Dimension].[Store Dimension]"), "store_dimension");
+        assert_eq!(
+            hierarchy_key("[Sold Date Dimensions].[Sold Date Week Hierarchy]"),
+            "sold_date_week_hierarchy"
+        );
+        assert_eq!(hierarchy_key("[Ship Mode]"), "ship_mode");
     }
 
     #[test]
