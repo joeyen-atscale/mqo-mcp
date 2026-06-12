@@ -14,17 +14,22 @@ use std::process::Command;
 
 /// Return the path to the compiled `mqo-mdx` binary under `target/`.
 fn mqo_mdx_bin() -> PathBuf {
-    // `cargo test` compiles the binary alongside tests; CARGO_BIN_EXE_mqo_mdx
+    // `cargo test` compiles the binary alongside tests; CARGO_BIN_EXE_mqo-mdx
     // is set by cargo's test harness to the exact path.
-    // Fallback for manual runs: look in target/debug then target/release.
+    // Fallback for manual runs: look in target/debug then target/release,
+    // checking both the package manifest dir and the workspace root (parent).
     if let Ok(p) = std::env::var("CARGO_BIN_EXE_mqo-mdx") {
         return PathBuf::from(p);
     }
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for profile in &["debug", "release"] {
-        let p = manifest.join("target").join(profile).join("mqo-mdx");
-        if p.exists() {
-            return p;
+    // In a workspace, the shared target dir lives one level up.
+    let workspace_root = manifest.parent().unwrap_or(&manifest);
+    for base in &[manifest.as_path(), workspace_root] {
+        for profile in &["debug", "release"] {
+            let p = base.join("target").join(profile).join("mqo-mdx");
+            if p.exists() {
+                return p;
+            }
         }
     }
     panic!("mqo-mdx binary not found; run `cargo build` first");
