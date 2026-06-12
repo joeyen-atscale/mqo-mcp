@@ -1,3 +1,32 @@
+## v0.4.0
+
+Path-incompatible decline guard for the `NonCanonicalNearTwin` near-twin rule
+(PRD-mqo-path-incompatible-decline-guard). The near-twin canonical reroute
+previously chose a canonical sibling purely by label/hierarchy structure, with no
+regard for fact-compatibility with the MQO's measures — so when the requested
+twin was path-incompatible with the measures but the canonical happened to be
+compatible, it rerouted and the model fabricated rows on a query that should
+decline (fm3-010: `Ship Customer State` → `Customer State Name`).
+
+Before emitting a `NonCanonicalNearTwin` suggestion, the rule now checks
+fact-compatibility of BOTH the picked twin and the proposed canonical against the
+MQO's measures, reusing the same subject-area conformance signal already present
+in the `CatalogSnapshot` (a measure's `subject_area` vs the twin hierarchy's
+owning-dimension `subject_areas` — the same signal `check_cross_fact_paths`
+uses). Rule:
+
+- picked twin INCOMPATIBLE and canonical COMPATIBLE → WITHHOLD the reroute (no
+  suggestion); the query proceeds to the binder which surfaces the genuine
+  cross-fact incompatibility (the correct decline);
+- both compatible → suggest the canonical as before (Brand Name unchanged);
+- both incompatible / undeterminable → no behavior change.
+
+CONSERVATIVE: when compatibility cannot be determined (no subject-area signal,
+conformed dimension, or missing catalog entry) the rule falls back to the current
+behavior, so the working Brand Name reroute is unaffected. Deterministic,
+pre-execution, catalog-only — no new dependency (the compatibility signal was
+already reachable from the validator's `CatalogSnapshot`).
+
 ## v0.3.0
 
 Validator semantic enforcement — four new conservative pre-execution rules

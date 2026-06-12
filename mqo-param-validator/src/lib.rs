@@ -1132,6 +1132,83 @@ fn build_twin_groups(catalog: &CatalogSnapshot) -> Vec<TwinGroup> {
     groups
 }
 
+/// Fact-compatibility of a single (twin) hierarchy against the MQO's measures.
+///
+/// Reuses the same subject-area conformance signal as [`check_cross_fact_paths`]:
+/// a hierarchy maps to a catalog dimension (via `dimension_unique_name`) carrying
+/// the `subject_areas` it is available in; a measure carries its `subject_area`.
+/// The pair is incompatible when a measure's subject area is set and the
+/// hierarchy's dimension lists subject areas that do NOT include it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Compat {
+    /// At least one of the MQO's measures cannot reach this hierarchy.
+    Incompatible,
+    /// Every measure can reach this hierarchy (no cross-fact boundary).
+    Compatible,
+    /// Compatibility cannot be determined (no subject-area signal, conformed
+    /// dim, or the dimension/measure isn't in the catalog) — be conservative.
+    Unknown,
+}
+
+/// Classify a twin hierarchy's fact-compatibility with the MQO's measures
+/// (PRD-mqo-path-incompatible-decline-guard FR-1). Returns [`Compat::Unknown`]
+/// whenever the subject-area signal is absent so the caller falls back to the
+/// existing reroute behavior (CONSERVATIVE — never break the Brand Name reroute).
+fn twin_hierarchy_compat(
+    hier_unique_name: &str,
+    mqo: &BoundMqoInput,
+    catalog: &CatalogSnapshot,
+) -> Compat {
+    let hier_norm = normalize(hier_unique_name);
+    // Hierarchy → owning dimension unique_name (default to the hierarchy name,
+    // matching the common case where hierarchy_unique_name == dimension name).
+    let dim_unique_name = catalog
+        .hierarchies
+        .iter()
+        .find(|h| normalize(&h.hierarchy_unique_name) == hier_norm)
+        .map_or(hier_unique_name.to_string(), |h| {
+            h.dimension_unique_name.clone()
+        });
+    let dim = catalog
+        .dimensions
+        .iter()
+        .find(|d| normalize(&d.unique_name) == normalize(&dim_unique_name));
+    let dim = match dim {
+        Some(d) => d,
+        None => return Compat::Unknown, // no catalog dimension → can't tell
+    };
+    // Conformed dimension (no subject-area restriction) → reaches every fact.
+    if dim.subject_areas.is_empty() {
+        return Compat::Unknown;
+    }
+
+    let mut saw_signal = false;
+    for mref in &mqo.measures {
+        let mnorm = normalize(&mref.unique_name);
+        let measure = match catalog
+            .measures
+            .iter()
+            .find(|m| normalize(&m.unique_name) == mnorm)
+        {
+            Some(m) => m,
+            None => continue,
+        };
+        let measure_sa = match &measure.subject_area {
+            Some(sa) => sa,
+            None => continue, // no subject area on this measure → no signal
+        };
+        saw_signal = true;
+        if !dim.subject_areas.contains(measure_sa) {
+            return Compat::Incompatible;
+        }
+    }
+    if saw_signal {
+        Compat::Compatible
+    } else {
+        Compat::Unknown
+    }
+}
+
 /// RULE 1: reject a non-canonical near-twin *dimension* pick.
 ///
 /// Conservative — fires only when ALL hold (PRD FR-3/FR-4/FR-5):
@@ -1141,6 +1218,15 @@ fn build_twin_groups(catalog: &CatalogSnapshot) -> Vec<TwinGroup> {
 ///   * INTENT GUARD (FR-4): the MQO has NO other filter/dimension referencing
 ///     the picked member's own hierarchy. A deliberate scoping on that
 ///     hierarchy means the pick is intentional → no rejection.
+///
+/// PATH-INCOMPATIBLE DECLINE GUARD (PRD-mqo-path-incompatible-decline-guard):
+/// before suggesting the canonical, check fact-compatibility of BOTH the picked
+/// twin and the proposed canonical against the MQO's measures. If the picked twin
+/// is INCOMPATIBLE while the canonical would be COMPATIBLE, WITHHOLD the reroute
+/// (do not suggest the canonical) — the query then reaches the binder, which
+/// surfaces the genuine cross-fact incompatibility (the correct decline). Any
+/// other combination (both compatible, both incompatible, or undeterminable)
+/// keeps the existing behavior.
 fn check_near_twin_dimension(
     mqo: &BoundMqoInput,
     catalog: &CatalogSnapshot,
@@ -1195,6 +1281,18 @@ fn check_near_twin_dimension(
                     .filter(|d| !std::ptr::eq(*d, dref))
                     .any(|d| normalize(&d.unique_name) == own_hier);
             if intent_on_own_hierarchy {
+                continue;
+            }
+
+            // PATH-INCOMPATIBLE DECLINE GUARD: withhold the reroute when the
+            // picked twin is path-incompatible with the MQO's measures but the
+            // canonical would be compatible — rerouting there would fabricate a
+            // compatible answer for a query that should decline (fm3-010). Any
+            // other combination falls through to the normal suggestion (and an
+            // Unknown on either side stays conservative — Brand Name unchanged).
+            let picked_compat = twin_hierarchy_compat(&picked.hierarchy, mqo, catalog);
+            let canon_compat = twin_hierarchy_compat(&canonical.hierarchy, mqo, catalog);
+            if picked_compat == Compat::Incompatible && canon_compat == Compat::Compatible {
                 continue;
             }
 

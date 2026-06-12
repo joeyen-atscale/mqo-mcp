@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.18.0 — 2026-06-12
+
+- **within-hierarchy `*Name` display preference** in `describe_model`
+  (PRD-mqo-within-hierarchy-name-preference). The cross-hierarchy `near_twins`
+  rule cannot help when a level and its display "Name" sibling live on the SAME
+  hierarchy. `describe_model` now annotates each such level: the display "Name"
+  level is marked `display_preferred: true` and the non-Name sibling is annotated
+  with `display_sibling: "<Name unique_name>"`. Two pair shapes are detected on
+  the same hierarchy: the suffix pair (`Store State` / `Store State Name`) and
+  the ordinal/name pair (`Sold Day of Week` / `Sold Day Name`, where the code is
+  a `<stem> of week`/`<stem> of year` ordinal sharing the Name's leading stem).
+  Advisory only (no validator rejection), deterministic, catalog-only. Levels
+  with no Name sibling are untouched. Targets the deterministic fm2-008 /
+  fm2-010 misses.
+
 ## v0.17.0 — 2026-06-12
 
 - **describe_model measure disambiguation — distinguishing qualifier tokens**

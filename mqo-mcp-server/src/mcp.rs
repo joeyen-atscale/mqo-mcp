@@ -224,6 +224,120 @@ fn is_date_role_hierarchy(hier: &str) -> bool {
     h.contains("date") || h.contains("calendar") || h.contains("time")
 }
 
+// ── Within-hierarchy *Name display preference ────────────────────────────────
+//
+// Implements PRD-mqo-within-hierarchy-name-preference. The cross-hierarchy
+// `near_twins` rule cannot help when a level and its display *Name* sibling live
+// on the SAME hierarchy (`Store State` code vs `Store State Name`; the ordinal
+// `Sold Day of Week` vs the named `Sold Day Name`). For each such same-hierarchy
+// pair `describe_model` marks the Name level `display_preferred: true` and
+// annotates the non-Name sibling with `display_sibling: "<Name unique_name>"`.
+// Advisory only (no validator rejection); deterministic; catalog-only.
+
+/// Detect whether `name_label` is the display-"Name" form of `code_label` on the
+/// same hierarchy. Two shapes are recognized (both case-insensitive):
+///
+///   1. Suffix pair — the Name label is the code label plus a trailing "Name"
+///      token (`Store State` / `Store State Name`).
+///   2. Ordinal/Name pair — a `<stem> Name` paired with a `<stem> of Week` /
+///      `<stem> of Year` ordinal that shares the same leading stem
+///      (`Sold Day Name` / `Sold Day of Week`).
+///
+/// Returns true when `name_label` is the preferred display form of `code_label`.
+fn is_name_form_of(name_label: &str, code_label: &str) -> bool {
+    let name = normalize_label(name_label);
+    let code = normalize_label(code_label);
+    if name == code {
+        return false;
+    }
+    let name_toks: Vec<&str> = name.split(' ').filter(|t| !t.is_empty()).collect();
+    let code_toks: Vec<&str> = code.split(' ').filter(|t| !t.is_empty()).collect();
+    if name_toks.last() != Some(&"name") {
+        return false; // the preferred member must end in "Name"
+    }
+    // Shape 1: suffix pair — code is exactly name minus the trailing "Name".
+    if name_toks[..name_toks.len() - 1] == code_toks[..] {
+        return true;
+    }
+    // Shape 2: ordinal/name pair — shared leading stem, code is "<stem> of week"
+    // / "<stem> of year". The stem is the name label minus its trailing "Name".
+    let stem = &name_toks[..name_toks.len() - 1];
+    if code_toks.len() >= stem.len() + 2
+        && &code_toks[..stem.len()] == stem
+        && code_toks[stem.len()] == "of"
+        && matches!(code_toks.get(stem.len() + 1), Some(&"week") | Some(&"year"))
+    {
+        return true;
+    }
+    false
+}
+
+/// Annotate dimension level columns in place with the within-hierarchy display
+/// preference (PRD-mqo-within-hierarchy-name-preference). For each pair of levels
+/// on the SAME hierarchy where one is the display "Name" form of the other (see
+/// [`is_name_form_of`]), the Name level gets `display_preferred: true` and the
+/// non-Name sibling gets `display_sibling: "<Name unique_name>"`. Levels with no
+/// Name sibling are left untouched. Deterministic and catalog-only.
+fn annotate_display_siblings(columns: &mut [Value]) {
+    // Collect (index, unique_name, hierarchy, label) for every level column.
+    let levels: Vec<(usize, String, String, String)> = columns
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| {
+            if c.get("kind").and_then(Value::as_str) != Some("level") {
+                return None;
+            }
+            let un = c.get("unique_name").and_then(Value::as_str)?;
+            let label = c.get("label").and_then(Value::as_str)?;
+            let hier = c
+                .get("hierarchy")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| un.split_once('.').map(|(h, _)| h.to_string()))
+                .unwrap_or_default();
+            Some((i, un.to_string(), hier, label.to_string()))
+        })
+        .collect();
+
+    // For each non-Name level, find a same-hierarchy Name sibling. Deterministic:
+    // candidates are scanned in `columns` order; pick the lexicographically
+    // smallest matching Name unique_name as a stable tiebreak.
+    for (code_idx, _code_un, code_hier, code_label) in &levels {
+        let mut best: Option<(&str, &str)> = None; // (name_un, name_label)
+        for (_, name_un, name_hier, name_label) in &levels {
+            if name_hier != code_hier {
+                continue;
+            }
+            if is_name_form_of(name_label, code_label) {
+                match best {
+                    Some((cur, _)) if cur <= name_un.as_str() => {}
+                    _ => best = Some((name_un.as_str(), name_label.as_str())),
+                }
+            }
+        }
+        if let Some((name_un, _)) = best {
+            let name_un = name_un.to_string();
+            columns[*code_idx]["display_sibling"] = json!(name_un);
+        }
+    }
+
+    // Mark every level that is the Name form of some same-hierarchy sibling.
+    let preferred_idxs: Vec<usize> = levels
+        .iter()
+        .filter(|(_, name_un, name_hier, name_label)| {
+            levels.iter().any(|(_, code_un, code_hier, code_label)| {
+                code_un != name_un
+                    && code_hier == name_hier
+                    && is_name_form_of(name_label, code_label)
+            })
+        })
+        .map(|(i, _, _, _)| *i)
+        .collect();
+    for i in preferred_idxs {
+        columns[i]["display_preferred"] = json!(true);
+    }
+}
+
 /// Build the `near_twins` block for a set of `describe_model` columns.
 ///
 /// Buckets dimension *levels* by their core label and emits one group per
@@ -1026,6 +1140,13 @@ impl Server {
                 }
             }
         }
+
+        // Within-hierarchy *Name display preference
+        // (PRD-mqo-within-hierarchy-name-preference): for each level that has a
+        // same-hierarchy display "Name" sibling, mark the Name level
+        // `display_preferred:true` and annotate the non-Name sibling with
+        // `display_sibling:"<Name unique_name>"`. Advisory, catalog-only.
+        annotate_display_siblings(&mut columns);
 
         // FR-4: each measure carries `date_roles` — compatible date hierarchies.
         // Derived from the catalog's temporally-typed hierarchies. Always an
@@ -1983,6 +2104,66 @@ mod disambiguation_tests {
         ];
         let groups = build_near_twins(&cols);
         assert!(groups.is_empty(), "no collisions → no groups: {groups:?}");
+    }
+
+    /// PRD-mqo-within-hierarchy-name-preference: a level with a same-hierarchy
+    /// display "Name" sibling gets the Name marked `display_preferred:true` and
+    /// the non-Name sibling annotated with `display_sibling`; a level with no
+    /// Name sibling is untouched. Covers the suffix pair (Store State / Store
+    /// State Name) and the ordinal/name pair (Sold Day of Week / Sold Day Name).
+    #[test]
+    fn within_hierarchy_name_preference_annotation() {
+        let mut cols = vec![
+            lvl("store_dimension.[Store State]", "Store State", "store_dimension"),
+            lvl(
+                "store_dimension.[Store State Name]",
+                "Store State Name",
+                "store_dimension",
+            ),
+            lvl(
+                "sold_date_dimensions.[Sold Day of Week]",
+                "Sold Day of Week",
+                "sold_date_dimensions",
+            ),
+            lvl(
+                "sold_date_dimensions.[Sold Day Name]",
+                "Sold Day Name",
+                "sold_date_dimensions",
+            ),
+            // No Name sibling on this hierarchy → no annotation.
+            lvl("store_dimension.[Store Manager]", "Store Manager", "store_dimension"),
+        ];
+        annotate_display_siblings(&mut cols);
+
+        let by_un = |un: &str| cols.iter().find(|c| c["unique_name"] == un).unwrap();
+
+        // Suffix pair: Store State Name preferred over Store State.
+        assert_eq!(
+            by_un("store_dimension.[Store State Name]")["display_preferred"],
+            json!(true)
+        );
+        assert_eq!(
+            by_un("store_dimension.[Store State]")["display_sibling"],
+            json!("store_dimension.[Store State Name]")
+        );
+        assert!(by_un("store_dimension.[Store State]")
+            .get("display_preferred")
+            .is_none());
+
+        // Ordinal/name pair: Sold Day Name preferred over Sold Day of Week.
+        assert_eq!(
+            by_un("sold_date_dimensions.[Sold Day Name]")["display_preferred"],
+            json!(true)
+        );
+        assert_eq!(
+            by_un("sold_date_dimensions.[Sold Day of Week]")["display_sibling"],
+            json!("sold_date_dimensions.[Sold Day Name]")
+        );
+
+        // No Name sibling → untouched.
+        let mgr = by_un("store_dimension.[Store Manager]");
+        assert!(mgr.get("display_preferred").is_none());
+        assert!(mgr.get("display_sibling").is_none());
     }
 
     /// Same core label but on the SAME hierarchy is not a near-twin group.

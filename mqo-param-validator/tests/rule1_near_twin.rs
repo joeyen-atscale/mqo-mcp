@@ -10,8 +10,8 @@
 //! - AC-5: a measure is never rejected by this rule.
 
 use mqo_param_validator::{
-    validate, BoundMqoInput, CatalogHierarchy, CatalogMeasure, CatalogSnapshot, MqoDimensionRef,
-    MqoFilterRef, MqoMeasureRef, RejectReason,
+    validate, BoundMqoInput, CatalogDimension, CatalogHierarchy, CatalogMeasure, CatalogSnapshot,
+    MqoDimensionRef, MqoFilterRef, MqoMeasureRef, RejectReason,
 };
 
 /// A catalog with a Brand Name near-twin group across two hierarchies:
@@ -223,4 +223,158 @@ fn no_clear_canonical_group_still_picks_one() {
     };
     let result = validate(&mqo, &brand_catalog());
     assert!(twin_rejections(&result).is_empty(), "{result:?}");
+}
+
+// ===========================================================================
+// PATH-INCOMPATIBLE DECLINE GUARD
+// (PRD-mqo-path-incompatible-decline-guard)
+//
+// The near-twin reroute must NOT fabricate a compatible answer for a query that
+// should decline: when the picked twin is path-incompatible with the MQO's
+// measures but the canonical sibling IS compatible, withhold the reroute.
+// ===========================================================================
+
+/// A Customer State near-twin group across two hierarchies with subject-area
+/// conformance metadata:
+///   * customer_address          — canonical (Name-preferring + shortest), in
+///                                  both `sales` and `returns` subject areas.
+///   * ship_customer_address     — non-canonical, only in `sales` (NOT returns).
+/// `Store Returns Count` is a `returns` measure → compatible with the canonical
+/// customer_address but INCOMPATIBLE with ship_customer_address.
+fn customer_state_compat_catalog() -> CatalogSnapshot {
+    CatalogSnapshot {
+        hierarchies: vec![
+            CatalogHierarchy {
+                dimension_unique_name: "customer_address".to_string(),
+                hierarchy_unique_name: "customer_address".to_string(),
+                levels: vec!["Customer State Name".to_string()],
+                ..Default::default()
+            },
+            CatalogHierarchy {
+                dimension_unique_name: "ship_customer_address".to_string(),
+                hierarchy_unique_name: "ship_customer_address".to_string(),
+                levels: vec!["Ship Customer State".to_string()],
+                ..Default::default()
+            },
+        ],
+        dimensions: vec![
+            CatalogDimension {
+                unique_name: "customer_address".to_string(),
+                subject_areas: vec!["sales".to_string(), "returns".to_string()],
+            },
+            CatalogDimension {
+                unique_name: "ship_customer_address".to_string(),
+                subject_areas: vec!["sales".to_string()],
+            },
+        ],
+        measures: vec![CatalogMeasure {
+            unique_name: "Store Returns Count".to_string(),
+            label: Some("Store Returns Count".to_string()),
+            subject_area: Some("returns".to_string()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
+// --- AC-1: incompatible picked + compatible canonical → reroute withheld ----
+
+#[test]
+fn guard_withholds_reroute_when_picked_incompatible_canonical_compatible() {
+    let mqo = BoundMqoInput {
+        measures: vec![MqoMeasureRef {
+            unique_name: "Store Returns Count".to_string(),
+            ..Default::default()
+        }],
+        dimensions: vec![MqoDimensionRef {
+            unique_name: "ship_customer_address".to_string(),
+            level: Some("Ship Customer State".to_string()),
+            hierarchy: Some("ship_customer_address".to_string()),
+            role_qualifier: None,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let result = validate(&mqo, &customer_state_compat_catalog());
+    assert!(
+        twin_rejections(&result).is_empty(),
+        "reroute must be withheld: picked twin path-incompatible, canonical \
+         compatible → no NonCanonicalNearTwin suggestion: {result:?}"
+    );
+}
+
+// --- AC-2: both twins compatible → suggest canonical as before --------------
+
+/// Brand Name group where both twins are compatible with the measure
+/// (`Total Store Sales` in `sales`; both product hierarchies available there).
+/// The reroute must still fire (regression guard).
+fn brand_compat_catalog() -> CatalogSnapshot {
+    CatalogSnapshot {
+        hierarchies: vec![
+            CatalogHierarchy {
+                dimension_unique_name: "product_dimension".to_string(),
+                hierarchy_unique_name: "product_dimension".to_string(),
+                levels: vec!["Product Brand Name".to_string()],
+                ..Default::default()
+            },
+            CatalogHierarchy {
+                dimension_unique_name: "store_item_product_dimension".to_string(),
+                hierarchy_unique_name: "store_item_product_dimension".to_string(),
+                levels: vec!["Store Item Product Brand Name".to_string()],
+                ..Default::default()
+            },
+        ],
+        dimensions: vec![
+            CatalogDimension {
+                unique_name: "product_dimension".to_string(),
+                subject_areas: vec!["sales".to_string()],
+            },
+            CatalogDimension {
+                unique_name: "store_item_product_dimension".to_string(),
+                subject_areas: vec!["sales".to_string()],
+            },
+        ],
+        measures: vec![CatalogMeasure {
+            unique_name: "Total Store Sales".to_string(),
+            label: Some("Total Store Sales".to_string()),
+            subject_area: Some("sales".to_string()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn guard_keeps_reroute_when_both_twins_compatible() {
+    let mqo = BoundMqoInput {
+        measures: vec![MqoMeasureRef {
+            unique_name: "Total Store Sales".to_string(),
+            ..Default::default()
+        }],
+        dimensions: vec![MqoDimensionRef {
+            unique_name: "store_item_product_dimension".to_string(),
+            level: Some("Store Item Product Brand Name".to_string()),
+            hierarchy: Some("store_item_product_dimension".to_string()),
+            role_qualifier: None,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let result = validate(&mqo, &brand_compat_catalog());
+    let twins = twin_rejections(&result);
+    assert_eq!(
+        twins.len(),
+        1,
+        "both twins compatible → canonical still suggested: {result:?}"
+    );
+    match &twins[0].reason {
+        RejectReason::NonCanonicalNearTwin {
+            suggested_canonical, ..
+        } => assert!(
+            suggested_canonical.contains("product_dimension")
+                && suggested_canonical.contains("Product Brand Name"),
+            "suggested canonical: {suggested_canonical}"
+        ),
+        other => panic!("wrong reason: {other:?}"),
+    }
 }
