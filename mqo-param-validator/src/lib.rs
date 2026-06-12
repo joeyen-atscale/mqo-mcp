@@ -1036,6 +1036,16 @@ fn nt_is_date_role_hierarchy(hier: &str) -> bool {
     h.contains("date") || h.contains("calendar") || h.contains("time")
 }
 
+/// True when `other`'s `_`-tokens END WITH `canon`'s `_`-tokens — i.e. `other`
+/// is a "decorated path" to the same base hierarchy as `canon`
+/// (`store_item_product_dimension` ends with `product_dimension`). Used to
+/// gate near-twin canonicalization to clean one-base-many-paths groups only.
+fn nt_hier_is_suffix(canon: &str, other: &str) -> bool {
+    let c: Vec<&str> = canon.split('_').filter(|t| !t.is_empty()).collect();
+    let o: Vec<&str> = other.split('_').filter(|t| !t.is_empty()).collect();
+    o.len() >= c.len() && o[o.len() - c.len()..] == c[..]
+}
+
 /// A near-twin dimension group: a core label shared across ≥2 hierarchies, with
 /// a clear canonical member (Name-preferring, shortest-hierarchy tiebreak).
 struct TwinGroup {
@@ -1094,6 +1104,21 @@ fn build_twin_groups(catalog: &CatalogSnapshot) -> Vec<TwinGroup> {
                     .then_with(|| a.1.cmp(&b.1))
             })
             .map(|(i, _)| i);
+
+        // FALSE-POSITIVE TIGHTENING: only enforce a canonical when the group is a
+        // clean "one base + decorated paths" structure — the canonical hierarchy
+        // is a token-suffix of every other member's hierarchy (e.g.
+        // `store_item_product_dimension` ⊃ `product_dimension`). When members are
+        // distinct subjects/scopes (`store_dimension` vs `sold_customer_address`
+        // for GMT offset; catalog-vs-generic) the non-canonical may be intended —
+        // do NOT reject (the validator can't see the NL question).
+        let canonical = canonical.filter(|&ci| {
+            let canon_h = members[ci].0.as_str();
+            members
+                .iter()
+                .enumerate()
+                .all(|(j, (h, _))| j == ci || nt_hier_is_suffix(canon_h, h))
+        });
 
         groups.push(TwinGroup {
             core,
