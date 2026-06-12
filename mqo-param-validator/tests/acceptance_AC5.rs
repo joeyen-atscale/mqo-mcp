@@ -14,13 +14,13 @@ fn catalog_disjoint() -> CatalogSnapshot {
                 subject_area: Some("Sales".to_string()),
                 label: None,
                 is_calc: None,
-            },
+            ..Default::default()            },
             CatalogMeasure {
                 unique_name: "Inventory Count".to_string(),
                 subject_area: Some("Inventory".to_string()),
                 label: None,
                 is_calc: None,
-            },
+            ..Default::default()            },
         ],
         dimensions: vec![
             // This dimension is ONLY in the Inventory subject area
@@ -47,7 +47,7 @@ fn catalog_disjoint() -> CatalogSnapshot {
 fn ac5_cross_fact_pair_rejected() {
     // Sales Amount (Sales SA) + Warehouse (Inventory SA) → CrossFactPath
     let mqo = BoundMqoInput {
-        measures: vec![MqoMeasureRef { unique_name: "Sales Amount".to_string() }],
+        measures: vec![MqoMeasureRef { unique_name: "Sales Amount".to_string(), ..Default::default() }],
         dimensions: vec![MqoDimensionRef {
             unique_name: "Warehouse".to_string(),
             level: None,
@@ -78,7 +78,7 @@ fn ac5_cross_fact_pair_rejected() {
 fn ac5_conformed_dimension_no_false_positive() {
     // Sales Amount + Date (conformed, subject_areas=[]) → no CrossFactPath
     let mqo = BoundMqoInput {
-        measures: vec![MqoMeasureRef { unique_name: "Sales Amount".to_string() }],
+        measures: vec![MqoMeasureRef { unique_name: "Sales Amount".to_string(), ..Default::default() }],
         dimensions: vec![MqoDimensionRef {
             unique_name: "Date".to_string(),
             level: None,
@@ -102,7 +102,7 @@ fn ac5_conformed_dimension_no_false_positive() {
 fn ac5_same_subject_area_no_rejection() {
     // Sales Amount (Sales) + Customer (Sales) → no CrossFactPath
     let mqo = BoundMqoInput {
-        measures: vec![MqoMeasureRef { unique_name: "Sales Amount".to_string() }],
+        measures: vec![MqoMeasureRef { unique_name: "Sales Amount".to_string(), ..Default::default() }],
         dimensions: vec![MqoDimensionRef {
             unique_name: "Customer".to_string(),
             level: None,
@@ -131,7 +131,7 @@ fn ac5_measure_without_subject_area_no_rejection() {
             subject_area: None, // unknown
             label: None,
             is_calc: None,
-        }],
+            ..Default::default()        }],
         dimensions: vec![CatalogDimension {
             unique_name: "Warehouse".to_string(),
             subject_areas: vec!["Inventory".to_string()],
@@ -139,7 +139,7 @@ fn ac5_measure_without_subject_area_no_rejection() {
         ..Default::default()
     };
     let mqo = BoundMqoInput {
-        measures: vec![MqoMeasureRef { unique_name: "Sales Amount".to_string() }],
+        measures: vec![MqoMeasureRef { unique_name: "Sales Amount".to_string(), ..Default::default() }],
         dimensions: vec![MqoDimensionRef {
             unique_name: "Warehouse".to_string(),
             level: None,

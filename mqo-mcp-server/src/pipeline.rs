@@ -542,6 +542,7 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
                     subject_area: None,
                     label: label.clone(),
                     is_calc,
+                    ..Default::default()
                 });
                 // Alias entry under label when it differs (callers reference the
                 // display label, e.g. "Revenue" for "sales.revenue").
@@ -552,6 +553,7 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
                             subject_area: None,
                             label: Some(l.clone()),
                             is_calc,
+                            ..Default::default()
                         });
                     }
                 }
@@ -595,6 +597,7 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
             dimension_unique_name: h.clone(),
             hierarchy_unique_name: h.clone(),
             levels: levels.clone(),
+            ..Default::default()
         })
         .collect();
 
@@ -612,6 +615,7 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
             .iter()
             .map(|m| MqoMeasureRef {
                 unique_name: m.unique_name.clone(),
+                ..Default::default()
             })
             .collect(),
         dimensions: mqo
@@ -631,6 +635,7 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
                 mqo_spec::Filter::Member { hierarchy, .. } => Some(MqoFilterRef {
                     unique_name: hierarchy.clone(),
                     level: None,
+                    ..Default::default()
                 }),
                 // Range/CalcGroupMember don't carry a resolvable hierarchy key
                 // the validator can ground; skip (conservative).

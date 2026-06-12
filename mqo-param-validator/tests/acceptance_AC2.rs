@@ -10,8 +10,8 @@ use mqo_param_validator::{
 fn catalog_with_sales() -> CatalogSnapshot {
     CatalogSnapshot {
         measures: vec![
-            CatalogMeasure { unique_name: "Sales Amount".to_string(), subject_area: None, label: None, is_calc: None },
-            CatalogMeasure { unique_name: "Total Revenue".to_string(), subject_area: None, label: None, is_calc: None },
+            CatalogMeasure { unique_name: "Sales Amount".to_string(), ..Default::default() },
+            CatalogMeasure { unique_name: "Total Revenue".to_string(), ..Default::default() },
         ],
         ..Default::default()
     }
@@ -21,7 +21,7 @@ fn catalog_with_sales() -> CatalogSnapshot {
 fn ac2_lookalike_measure_rejected_with_suggestions() {
     // "Sales Amnt" is a near-miss for "Sales Amount"
     let mqo = BoundMqoInput {
-        measures: vec![MqoMeasureRef { unique_name: "Sales Amnt".to_string() }],
+        measures: vec![MqoMeasureRef { unique_name: "Sales Amnt".to_string(), ..Default::default() }],
         ..Default::default()
     };
     let result = validate(&mqo, &catalog_with_sales());
@@ -49,7 +49,7 @@ fn ac2_lookalike_measure_rejected_with_suggestions() {
 #[test]
 fn ac2_completely_unknown_measure_rejected() {
     let mqo = BoundMqoInput {
-        measures: vec![MqoMeasureRef { unique_name: "XYZ_NONEXISTENT".to_string() }],
+        measures: vec![MqoMeasureRef { unique_name: "XYZ_NONEXISTENT".to_string(), ..Default::default() }],
         ..Default::default()
     };
     let result = validate(&mqo, &catalog_with_sales());
@@ -62,8 +62,8 @@ fn ac2_completely_unknown_measure_rejected() {
 fn ac2_two_bad_measures_two_rejections() {
     let mqo = BoundMqoInput {
         measures: vec![
-            MqoMeasureRef { unique_name: "Bad Measure A".to_string() },
-            MqoMeasureRef { unique_name: "Bad Measure B".to_string() },
+            MqoMeasureRef { unique_name: "Bad Measure A".to_string(), ..Default::default() },
+            MqoMeasureRef { unique_name: "Bad Measure B".to_string(), ..Default::default() },
         ],
         ..Default::default()
     };

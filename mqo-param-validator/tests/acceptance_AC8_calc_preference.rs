@@ -20,7 +20,7 @@ fn tpcds_calc_catalog() -> CatalogSnapshot {
         subject_area: None,
         label: Some(name.to_string()),
         is_calc: None,
-    };
+            ..Default::default()    };
     CatalogSnapshot {
         measures: vec![
             measure("Total Store Sales"),
@@ -105,6 +105,7 @@ fn ac1_explicit_is_calc_flag_honored() {
         subject_area: None,
         label: None,
         is_calc: Some(true),
+        ..Default::default()
     };
     assert!(is_packaged_calc(&m), "explicit is_calc:true must win");
 }
@@ -118,8 +119,8 @@ fn ac2_fm5_002_store_sales_increase_rederivation_rejected() {
     // Quarter — re-deriving the packaged Store Sales Increase.
     let mqo = BoundMqoInput {
         measures: vec![
-            MqoMeasureRef { unique_name: "Store Ext Sales Price".to_string() },
-            MqoMeasureRef { unique_name: "Prior Store Ext Sales Price".to_string() },
+            MqoMeasureRef { unique_name: "Store Ext Sales Price".to_string(), ..Default::default() },
+            MqoMeasureRef { unique_name: "Prior Store Ext Sales Price".to_string(), ..Default::default() },
         ],
         dimensions: vec![MqoDimensionRef {
             unique_name: "Sold Calendar Quarter".to_string(),
@@ -144,8 +145,8 @@ fn ac2_total_store_sales_plus_lagged_by_date_rejected() {
     // PRD AC-2 literal shape: Total Store Sales (+ lagged twin) + a date level.
     let mqo = BoundMqoInput {
         measures: vec![
-            MqoMeasureRef { unique_name: "Total Store Sales".to_string() },
-            MqoMeasureRef { unique_name: "Total Store Sales".to_string() },
+            MqoMeasureRef { unique_name: "Total Store Sales".to_string(), ..Default::default() },
+            MqoMeasureRef { unique_name: "Total Store Sales".to_string(), ..Default::default() },
         ],
         dimensions: vec![MqoDimensionRef {
             unique_name: "Sold Calendar Quarter".to_string(),
@@ -166,8 +167,8 @@ fn ac2_fm5_003_web_sales_increase_rederivation_rejected() {
     // fm5-003: "Web sales prior-period change for each month of 2001."
     let mqo = BoundMqoInput {
         measures: vec![
-            MqoMeasureRef { unique_name: "Web Sales".to_string() },
-            MqoMeasureRef { unique_name: "Prior Period Web Sales".to_string() },
+            MqoMeasureRef { unique_name: "Web Sales".to_string(), ..Default::default() },
+            MqoMeasureRef { unique_name: "Prior Period Web Sales".to_string(), ..Default::default() },
         ],
         dimensions: vec![MqoDimensionRef {
             unique_name: "Sold Calendar Month".to_string(),
@@ -191,8 +192,8 @@ fn ac3_no_packaged_calc_equivalent_not_rejected() {
     // even with a lagged twin + date axis.
     let mqo = BoundMqoInput {
         measures: vec![
-            MqoMeasureRef { unique_name: "Total Net Profit".to_string() },
-            MqoMeasureRef { unique_name: "Prior Total Net Profit".to_string() },
+            MqoMeasureRef { unique_name: "Total Net Profit".to_string(), ..Default::default() },
+            MqoMeasureRef { unique_name: "Prior Total Net Profit".to_string(), ..Default::default() },
         ],
         dimensions: vec![MqoDimensionRef {
             unique_name: "Sold Calendar Month".to_string(),
@@ -216,7 +217,7 @@ fn ac5_plain_base_measure_by_date_not_rejected() {
     // base measure with NO lag signal must NOT be rejected even though
     // Store Sales Increase exists in the catalog.
     let mqo = BoundMqoInput {
-        measures: vec![MqoMeasureRef { unique_name: "Total Store Sales".to_string() }],
+        measures: vec![MqoMeasureRef { unique_name: "Total Store Sales".to_string(), ..Default::default() }],
         dimensions: vec![MqoDimensionRef {
             unique_name: "Sold Calendar Quarter".to_string(),
             level: None,
@@ -236,7 +237,7 @@ fn ac5_plain_base_measure_by_date_not_rejected() {
 fn ac5_already_using_calc_not_rejected() {
     // Caller already uses Store Sales Increase → never rejected.
     let mqo = BoundMqoInput {
-        measures: vec![MqoMeasureRef { unique_name: "Store Sales Increase".to_string() }],
+        measures: vec![MqoMeasureRef { unique_name: "Store Sales Increase".to_string(), ..Default::default() }],
         dimensions: vec![MqoDimensionRef {
             unique_name: "Sold Calendar Quarter".to_string(),
             level: None,
@@ -255,8 +256,8 @@ fn ac5_no_date_axis_not_rejected() {
     // re-derivation, do not reject.
     let mqo = BoundMqoInput {
         measures: vec![
-            MqoMeasureRef { unique_name: "Total Store Sales".to_string() },
-            MqoMeasureRef { unique_name: "Total Store Sales".to_string() },
+            MqoMeasureRef { unique_name: "Total Store Sales".to_string(), ..Default::default() },
+            MqoMeasureRef { unique_name: "Total Store Sales".to_string(), ..Default::default() },
         ],
         dimensions: vec![MqoDimensionRef {
             unique_name: "Product Class Name".to_string(),
@@ -289,7 +290,7 @@ fn ac5_other_failure_mode_canonicals_not_rejected() {
         let mqo = BoundMqoInput {
             measures: measures
                 .iter()
-                .map(|m| MqoMeasureRef { unique_name: m.to_string() })
+                .map(|m| MqoMeasureRef { unique_name: m.to_string(), ..Default::default() })
                 .collect(),
             dimensions: dims
                 .iter()
@@ -302,7 +303,7 @@ fn ac5_other_failure_mode_canonicals_not_rejected() {
                 .collect(),
             filters: filters
                 .iter()
-                .map(|f| MqoFilterRef { unique_name: f.to_string(), level: None })
+                .map(|f| MqoFilterRef { unique_name: f.to_string(), level: None, ..Default::default() })
                 .collect(),
         };
         let result = validate(&mqo, &catalog);

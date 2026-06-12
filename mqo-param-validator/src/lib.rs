@@ -42,6 +42,36 @@ pub struct CatalogMeasure {
     /// heuristics over the label/unique_name.
     #[serde(default)]
     pub is_calc: Option<bool>,
+    /// Optional semi-additive flag from the enriched catalog: `true` when this
+    /// measure is a balance/snapshot that does NOT add across the time axis
+    /// (inventory-on-hand, account balance). When `None`/`false` the
+    /// semi-additive guard does not fire (the recorded fixture nulls this, so
+    /// the guard is dormant on the live fixture — see PRD OQ-1).
+    #[serde(default)]
+    pub semi_additive: Option<bool>,
+    /// Optional declared semi-additive aggregation policy (e.g. `"last"`,
+    /// `"first"`, `"average"`). When present the `SemiAdditiveSum` suggestion
+    /// names it; else it suggests "average over period" with a note.
+    #[serde(default)]
+    pub semi_additive_agg: Option<String>,
+    /// Optional explicit ratio/percentage/average classification for a calc
+    /// measure. When present it overrides the name heuristic in the
+    /// calc-aggregation guard. `None` falls back to the name signal.
+    #[serde(default)]
+    pub calc_kind: Option<CalcKind>,
+}
+
+/// Classification of an `is_calc` measure for the calc-aggregation guard.
+/// `Ratio` (percentage / average / rate) cannot be summed or averaged across
+/// groups; `Additive` (a `* Increase`/`* Growth`/`* Delta` calc) is safe to
+/// aggregate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CalcKind {
+    /// Percentage, average, rate — non-additive across groups.
+    Ratio,
+    /// Delta/increase/growth — additive, safe to aggregate.
+    Additive,
 }
 
 impl CatalogMeasure {
@@ -60,11 +90,50 @@ pub struct CatalogDimension {
     pub subject_areas: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct CatalogHierarchy {
     pub dimension_unique_name: String,
     pub hierarchy_unique_name: String,
     pub levels: Vec<String>,
+    /// Optional per-level type/domain metadata used by the filter-level guard
+    /// (Rule 4). Keyed by level label. When a level has no entry here the guard
+    /// cannot decide value-fit and does NOT reject it (conservative; dormant
+    /// without enrichment — see PRD OQ-1). Indexed by level label.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub level_meta: Vec<LevelDomainMeta>,
+}
+
+/// The data type a filter value must satisfy to bind to a level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LevelValueType {
+    /// A textual member key (e.g. a state abbreviation "CA", a brand name).
+    String,
+    /// A plain integer key (e.g. a sequential week number, a 4-digit year).
+    Integer,
+    /// A calendar date (e.g. "2001-01-15").
+    Date,
+}
+
+/// Per-level domain/type metadata for the filter-level guard (Rule 4).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct LevelDomainMeta {
+    /// The level label this metadata applies to (matches a string in `levels`).
+    pub level: String,
+    /// The value type the level's member keys use. A range bound or member
+    /// value whose type cannot match this is rejected.
+    pub value_type: LevelValueType,
+    /// Optional enumerated domain of member keys for a low-cardinality level
+    /// (e.g. the 50 state codes). When present, a *member* filter value not in
+    /// this set is rejected as out-of-domain. When absent the guard does NOT
+    /// reject on membership (catalog-only; high-cardinality / unknown domain).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<Vec<String>>,
+    /// Optional human-readable description of the expected member-key shape
+    /// (e.g. "sequential week number 1..N, not YYYYWW"), surfaced in the
+    /// rejection suggestion. Mirrors filter-bind-report's `expected_key_shape`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_key_shape: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -90,12 +159,19 @@ pub struct BoundMqoInput {
     pub filters: Vec<MqoFilterRef>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct MqoMeasureRef {
     pub unique_name: String,
+    /// Optional aggregation the MQO applies to this measure. `None` is treated
+    /// as the measure's default aggregation (additive for a base measure), which
+    /// the semi-additive / calc guards treat as additive. Recognized additive
+    /// tokens: `sum`, `count`. Recognized non-additive: `last`, `first`,
+    /// `min`, `max`, `avg`/`average`, `distinct_count`.
+    #[serde(default)]
+    pub aggregation: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct MqoDimensionRef {
     pub unique_name: String,
     /// Optional specific level within a hierarchy
@@ -109,11 +185,24 @@ pub struct MqoDimensionRef {
     pub role_qualifier: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct MqoFilterRef {
     pub unique_name: String,
     #[serde(default)]
     pub level: Option<String>,
+    /// For a member filter: the member key values being filtered on (e.g.
+    /// `["CA"]`). Empty/absent for a pure range filter. Used by the
+    /// filter-level guard (Rule 4) to check value type/domain against the level.
+    #[serde(default)]
+    pub members: Vec<String>,
+    /// For a range filter: the lower bound, as a raw string (e.g. `"200147"`,
+    /// `"2001-01-01"`). `None` when no lower bound.
+    #[serde(default)]
+    pub range_lo: Option<String>,
+    /// For a range filter: the upper bound, as a raw string. `None` when no
+    /// upper bound.
+    #[serde(default)]
+    pub range_hi: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +232,50 @@ pub enum RejectReason {
     /// (e.g. lag/period-over-period arithmetic over a base measure that a
     /// packaged `* Increase`/`* Growth` calc already provides).
     ManualCalcRederivation,
+    /// RULE 1: the MQO picks a non-canonical near-twin *dimension* (a same-core-
+    /// label attribute on the wrong hierarchy, e.g. `Store Item Product Brand
+    /// Name` instead of canonical `Product Brand Name`).
+    NonCanonicalNearTwin {
+        /// The non-canonical member the MQO picked (hierarchy unique_name).
+        picked: String,
+        /// The canonical member's unique_name the caller should use instead.
+        suggested_canonical: String,
+        /// The shared core label of the near-twin group (e.g. "brand name").
+        group_core_label: String,
+    },
+    /// RULE 2: an additive aggregation (sum/default) of a `semi_additive`
+    /// measure over a time dimension — a silent double-count of a balance.
+    SemiAdditiveSum {
+        /// The semi-additive measure being summed.
+        measure: String,
+        /// The time-typed dimension in the grouping that breaks additivity.
+        time_dimension: String,
+        /// The aggregation the caller should use instead (last/first/avg).
+        suggested_agg: String,
+    },
+    /// RULE 3: sum/avg of a ratio/percentage/average `is_calc` measure — a
+    /// silent statistical error (summing a percentage / averaging an average).
+    CalcMisaggregation {
+        /// The calc measure being mis-aggregated.
+        measure: String,
+        /// The offending aggregation (sum/avg).
+        aggregation: String,
+        /// Why this is wrong + the corrective guidance.
+        reason: String,
+    },
+    /// RULE 4: a filter whose value type/domain cannot match the target level
+    /// (a DATE/YYYYWW bound on a sequential-week numeric level; a member not in
+    /// the level's domain; or a named level that does not exist).
+    FilterLevelMismatch {
+        /// The filter field (hierarchy / level reference).
+        filter: String,
+        /// The level the filter targets (or the missing level name).
+        target_level: String,
+        /// Why the value/level cannot match.
+        reason: String,
+        /// The correct level or value format to use.
+        suggested: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -376,7 +509,48 @@ pub fn validate(mqo: &BoundMqoInput, catalog: &CatalogSnapshot) -> Vec<ParamReje
     // FR-2/FR-3: reject hand-rederivation of a packaged calc (pre-execution).
     check_manual_calc_rederivation(mqo, catalog, &mut rejections);
 
+    // RULE 1 (PRD near-twin): reject non-canonical near-twin dimension picks.
+    check_near_twin_dimension(mqo, catalog, &mut rejections);
+
+    // RULE 2 (PRD semi-additive guard): reject additive sum of a semi-additive
+    // measure over a time dimension. Dormant unless the catalog carries
+    // `semi_additive == true` (the recorded fixture nulls it).
+    check_semi_additive_sum(mqo, catalog, &mut rejections);
+
+    // RULE 3 (PRD calc-aggregation guard): reject sum/avg of a ratio calc.
+    check_calc_misaggregation(mqo, catalog, &mut rejections);
+
+    // RULE 4 (PRD filter-level check): reject a filter whose value type/domain
+    // cannot match the target level. Dormant unless `level_meta` is enriched.
+    check_filter_level(mqo, catalog, &mut rejections);
+
     rejections
+}
+
+// ---------------------------------------------------------------------------
+// Aggregation classification (shared by RULE 2 + RULE 3)
+// ---------------------------------------------------------------------------
+
+/// Is the MQO aggregation additive? `None` (default) is treated as additive
+/// (a base measure defaults to SUM/COUNT). Recognized additive tokens: `sum`,
+/// `count`. Everything else (`last`, `first`, `min`, `max`, `avg`, `average`,
+/// `distinct_count`, …) is non-additive.
+fn agg_is_additive(agg: Option<&str>) -> bool {
+    match agg {
+        None => true,
+        Some(a) => {
+            let a = a.trim().to_lowercase();
+            matches!(a.as_str(), "sum" | "count" | "default" | "")
+        }
+    }
+}
+
+/// Is this aggregation an averaging aggregation (`avg`/`average`/`mean`)?
+fn agg_is_average(agg: Option<&str>) -> bool {
+    matches!(
+        agg.map(|a| a.trim().to_lowercase()).as_deref(),
+        Some("avg") | Some("average") | Some("mean")
+    )
 }
 
 /// AC4 helper: detect ambiguous date role references.
@@ -796,5 +970,630 @@ fn check_manual_calc_rederivation(
             }],
             suggested_calc: Some(calc.display_name().to_string()),
         });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RULE 1: near-twin dimension rejection (PRD near-twin-rejection)
+// ---------------------------------------------------------------------------
+
+/// Maximum number of trailing tokens used as the near-twin "core label" key.
+/// Mirrors `mqo-mcp-server`'s `NEAR_TWIN_CORE_TOKENS` so the validator's
+/// canonical agrees with `describe_model`'s `near_twins` hint.
+const NEAR_TWIN_CORE_TOKENS: usize = 2;
+
+/// Lowercase + collapse-whitespace label normalization, matching the server's
+/// `normalize_label` (no bracket/punctuation stripping — labels are plain).
+fn nt_normalize_label(label: &str) -> String {
+    label.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// The "core label" of an attribute (trailing concept words). Replicates
+/// `mqo-mcp-server::core_label`: drops a trailing "name" token so a display
+/// attribute shares a bucket with its code-like sibling, then takes the last
+/// `NEAR_TWIN_CORE_TOKENS` tokens. `None` for an empty label.
+fn nt_core_label(label: &str) -> Option<String> {
+    let norm = nt_normalize_label(label);
+    let mut toks: Vec<&str> = norm.split(' ').filter(|t| !t.is_empty()).collect();
+    if toks.len() > 1 && toks.last() == Some(&"name") {
+        toks.pop();
+    }
+    if toks.len() < NEAR_TWIN_CORE_TOKENS {
+        if toks.is_empty() {
+            return None;
+        }
+        return Some(toks.join(" "));
+    }
+    Some(toks[toks.len() - NEAR_TWIN_CORE_TOKENS..].join(" "))
+}
+
+/// Does this label name a human-readable display attribute (trailing word
+/// "name")? Replicates `mqo-mcp-server::label_is_name`.
+fn nt_label_is_name(label: &str) -> bool {
+    nt_normalize_label(label)
+        .split(' ')
+        .next_back()
+        .is_some_and(|w| w == "name")
+}
+
+/// One near-twin dimension member: a (hierarchy, level-label) pair. In the
+/// validator's catalog a "dimension member" the MQO can pick is a level within
+/// a hierarchy; the MQO refers to it by `unique_name == hierarchy` + `level`.
+struct TwinMember {
+    /// The hierarchy unique_name (the MQO dimension key).
+    hierarchy: String,
+    /// The level label.
+    label: String,
+}
+
+/// A near-twin dimension group: a core label shared across ≥2 hierarchies, with
+/// a clear canonical member (Name-preferring, shortest-hierarchy tiebreak).
+struct TwinGroup {
+    core: String,
+    members: Vec<TwinMember>,
+    /// Index into `members` of the canonical member, when one is clear.
+    canonical: Option<usize>,
+}
+
+/// Build near-twin dimension groups from the catalog hierarchies/levels.
+///
+/// Replicates `mqo-mcp-server::build_near_twins`: bucket dimension *levels* by
+/// their core label, keep buckets spanning ≥2 distinct hierarchies, and pick a
+/// canonical member preferring a "*Name*" display attribute, then the
+/// lexicographically shortest hierarchy name. Deterministic.
+fn build_twin_groups(catalog: &CatalogSnapshot) -> Vec<TwinGroup> {
+    use std::collections::BTreeMap;
+    // core -> Vec<(hierarchy, label)>
+    let mut buckets: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    for hier in &catalog.hierarchies {
+        for level in &hier.levels {
+            if let Some(core) = nt_core_label(level) {
+                buckets
+                    .entry(core)
+                    .or_default()
+                    .push((hier.hierarchy_unique_name.clone(), level.clone()));
+            }
+        }
+    }
+
+    let mut groups = Vec::new();
+    for (core, mut members) in buckets {
+        let distinct_hiers: std::collections::BTreeSet<&str> =
+            members.iter().map(|(h, _)| h.as_str()).collect();
+        if distinct_hiers.len() < 2 {
+            continue; // not a near-twin group
+        }
+        // Stable order for determinism.
+        members.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+
+        // Canonical selection: Name-preferring, then shortest hierarchy name,
+        // then lexicographic. Identical heuristic to the server.
+        let canonical = members
+            .iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| {
+                (!nt_label_is_name(&a.1))
+                    .cmp(&(!nt_label_is_name(&b.1)))
+                    .then_with(|| a.0.len().cmp(&b.0.len()))
+                    .then_with(|| a.0.cmp(&b.0))
+                    .then_with(|| a.1.cmp(&b.1))
+            })
+            .map(|(i, _)| i);
+
+        groups.push(TwinGroup {
+            core,
+            members: members
+                .into_iter()
+                .map(|(hierarchy, label)| TwinMember { hierarchy, label })
+                .collect(),
+            canonical,
+        });
+    }
+    groups
+}
+
+/// RULE 1: reject a non-canonical near-twin *dimension* pick.
+///
+/// Conservative — fires only when ALL hold (PRD FR-3/FR-4/FR-5):
+///   * the picked dimension is a non-canonical member of a group with a clear
+///     canonical and ≥2 hierarchies (`build_twin_groups`),
+///   * dimensions only — never measures (FR-5),
+///   * INTENT GUARD (FR-4): the MQO has NO other filter/dimension referencing
+///     the picked member's own hierarchy. A deliberate scoping on that
+///     hierarchy means the pick is intentional → no rejection.
+fn check_near_twin_dimension(
+    mqo: &BoundMqoInput,
+    catalog: &CatalogSnapshot,
+    rejections: &mut Vec<ParamRejection>,
+) {
+    let groups = build_twin_groups(catalog);
+    if groups.is_empty() {
+        return;
+    }
+
+    for dref in &mqo.dimensions {
+        // The MQO dimension key is the hierarchy; the level is the member label.
+        let picked_hier = normalize(&dref.unique_name);
+        let picked_level = match &dref.level {
+            Some(l) => normalize(l),
+            None => continue, // no level → can't identify a twin member
+        };
+
+        for group in &groups {
+            let canonical_idx = match group.canonical {
+                Some(i) => i,
+                None => continue, // no clear canonical → don't guess (edge case)
+            };
+            // Find the picked member within this group.
+            let picked_member_idx = group.members.iter().position(|m| {
+                normalize(&m.hierarchy) == picked_hier && normalize(&m.label) == picked_level
+            });
+            let picked_idx = match picked_member_idx {
+                Some(i) => i,
+                None => continue, // this dim isn't a member of this group
+            };
+            if picked_idx == canonical_idx {
+                continue; // already canonical → pass (AC-2)
+            }
+
+            let picked = &group.members[picked_idx];
+            let canonical = &group.members[canonical_idx];
+
+            // INTENT GUARD (FR-4 / AC-3): a deliberate filter or dimension on
+            // the picked member's OWN hierarchy means the scoping is
+            // intentional → never reject. The triggering `dref` itself is on
+            // that hierarchy, so we look for ANOTHER reference (a filter, or a
+            // second dimension) to the same hierarchy.
+            let own_hier = normalize(&picked.hierarchy);
+            let intent_on_own_hierarchy = mqo
+                .filters
+                .iter()
+                .any(|f| normalize(&f.unique_name) == own_hier)
+                || mqo
+                    .dimensions
+                    .iter()
+                    .filter(|d| !std::ptr::eq(*d, dref))
+                    .any(|d| normalize(&d.unique_name) == own_hier);
+            if intent_on_own_hierarchy {
+                continue;
+            }
+
+            let field_key = format!("{}.[{}]", picked.hierarchy, picked.label);
+            let suggested = format!("{}.[{}]", canonical.hierarchy, canonical.label);
+            rejections.push(ParamRejection {
+                field: field_key,
+                class: FieldClass::Dimension,
+                reason: RejectReason::NonCanonicalNearTwin {
+                    picked: format!("{}.[{}]", picked.hierarchy, picked.label),
+                    suggested_canonical: suggested.clone(),
+                    group_core_label: group.core.clone(),
+                },
+                suggestions: vec![Suggestion {
+                    name: suggested,
+                    similarity: 1.0,
+                    note: Some(format!(
+                        "non-canonical near-twin of core label [{}]; use the canonical \
+                         [{}.{}] on hierarchy [{}]",
+                        group.core, canonical.hierarchy, canonical.label, canonical.hierarchy
+                    )),
+                }],
+                suggested_calc: None,
+            });
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RULE 2: semi-additive guard (PRD semi-additive-guard)
+// ---------------------------------------------------------------------------
+
+/// Is this dimension/level a time/date-typed axis? Reuses the crate's
+/// `references_date` date-concept token detection over the dimension name,
+/// level, and role qualifier.
+fn dimension_is_time(dref: &MqoDimensionRef) -> bool {
+    references_date(&dref.unique_name)
+        || dref.level.as_deref().map(references_date).unwrap_or(false)
+        || dref
+            .role_qualifier
+            .as_deref()
+            .map(references_date)
+            .unwrap_or(false)
+}
+
+/// RULE 2: reject an additive aggregation of a `semi_additive` measure over a
+/// time dimension. Fires only when ALL hold (PRD FR-2/FR-4):
+///   * the catalog measure has `semi_additive == Some(true)`,
+///   * a time-typed dimension is in the grouping,
+///   * the aggregation is additive (sum/default — `agg_is_additive`).
+///
+/// Dormant when `semi_additive` is null/false (the recorded fixture).
+fn check_semi_additive_sum(
+    mqo: &BoundMqoInput,
+    catalog: &CatalogSnapshot,
+    rejections: &mut Vec<ParamRejection>,
+) {
+    // The first time-typed dimension in the grouping (if any).
+    let time_dim = mqo.dimensions.iter().find(|d| dimension_is_time(d));
+    let time_dim = match time_dim {
+        Some(d) => d,
+        None => return, // AC-2: no time dim → no rejection
+    };
+    let time_label = time_dim
+        .level
+        .clone()
+        .unwrap_or_else(|| time_dim.unique_name.clone());
+
+    for mref in &mqo.measures {
+        let mnorm = normalize(&mref.unique_name);
+        let measure = match catalog
+            .measures
+            .iter()
+            .find(|m| normalize(&m.unique_name) == mnorm)
+        {
+            Some(m) => m,
+            None => continue,
+        };
+        // AC-3 / AC-4: only when explicitly semi_additive==true.
+        if measure.semi_additive != Some(true) {
+            continue;
+        }
+        // FR-4: only when the aggregation is additive (sum/default).
+        if !agg_is_additive(mref.aggregation.as_deref()) {
+            continue;
+        }
+        let suggested = measure
+            .semi_additive_agg
+            .clone()
+            .unwrap_or_else(|| "average over period".to_string());
+        let note = if measure.semi_additive_agg.is_some() {
+            format!(
+                "[{}] is semi-additive; summing it over [{}] double-counts a balance — use [{}]",
+                mref.unique_name, time_label, suggested
+            )
+        } else {
+            format!(
+                "[{}] is semi-additive; summing it over [{}] double-counts a balance — \
+                 use a period-end (last) or average-over-period aggregation",
+                mref.unique_name, time_label
+            )
+        };
+        rejections.push(ParamRejection {
+            field: mref.unique_name.clone(),
+            class: FieldClass::Measure,
+            reason: RejectReason::SemiAdditiveSum {
+                measure: mref.unique_name.clone(),
+                time_dimension: time_label.clone(),
+                suggested_agg: suggested.clone(),
+            },
+            suggestions: vec![Suggestion {
+                name: suggested,
+                similarity: 1.0,
+                note: Some(note),
+            }],
+            suggested_calc: None,
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RULE 3: calc-aggregation guard (PRD calc-aggregation-guard)
+// ---------------------------------------------------------------------------
+
+/// Ratio/percentage/average name signals: a calc whose name carries one of
+/// these is non-additive across groups.
+const RATIO_SIGNALS: &[&str] = &["%", "pct", "rate", "average", "avg"];
+
+/// Additive-calc name signals (`* Increase`/`* Growth`/`* Delta`): these calcs
+/// ARE safe to aggregate and must never be rejected by RULE 3.
+const ADDITIVE_CALC_SIGNALS: &[&str] = &["increase", "growth", "delta"];
+
+/// Classify an `is_calc` measure as ratio (non-additive) or additive.
+/// Prefers an explicit `calc_kind` catalog flag; else a name heuristic. Returns
+/// `None` when there is no signal either way (conservative — do not reject).
+fn classify_calc(measure: &CatalogMeasure) -> Option<CalcKind> {
+    if let Some(k) = measure.calc_kind {
+        return Some(k);
+    }
+    let display = measure.display_name();
+    let norm = normalize(display);
+    // Additive markers win first: a "* Increase"/"* Growth"/"* Delta" calc is
+    // additive even if its name also contains an "avg"-like token.
+    if ADDITIVE_CALC_SIGNALS
+        .iter()
+        .any(|s| norm.split_whitespace().any(|w| w == *s))
+    {
+        return Some(CalcKind::Additive);
+    }
+    // Ratio markers: `%` (raw), or whole-word pct/rate/average/avg.
+    let raw_lower = display.to_lowercase();
+    if raw_lower.contains('%')
+        || RATIO_SIGNALS
+            .iter()
+            .any(|s| *s != "%" && norm.split_whitespace().any(|w| w == *s))
+    {
+        return Some(CalcKind::Ratio);
+    }
+    None
+}
+
+/// RULE 3: reject sum/avg of a ratio/percentage/average `is_calc` measure.
+///
+/// Fires only when ALL hold (PRD FR-2/FR-3/FR-5):
+///   * the measure is a calc (`is_packaged_calc`),
+///   * it classifies as `Ratio` (`classify_calc`),
+///   * the aggregation is sum (additive) OR avg.
+///
+/// Never fires on additive calcs (`* Increase`/`* Growth`/`* Delta`),
+/// non-calc measures, or calcs with no ratio signal (conservative).
+fn check_calc_misaggregation(
+    mqo: &BoundMqoInput,
+    catalog: &CatalogSnapshot,
+    rejections: &mut Vec<ParamRejection>,
+) {
+    for mref in &mqo.measures {
+        let mnorm = normalize(&mref.unique_name);
+        let measure = match catalog
+            .measures
+            .iter()
+            .find(|m| normalize(&m.unique_name) == mnorm)
+        {
+            Some(m) => m,
+            None => continue,
+        };
+        if !is_packaged_calc(measure) {
+            continue; // FR-5: non-calc → never rejected
+        }
+        match classify_calc(measure) {
+            Some(CalcKind::Ratio) => {}
+            // FR-3: additive calc → never rejected. No signal → conservative.
+            Some(CalcKind::Additive) | None => continue,
+        }
+        // Reject only sum (additive/default) or avg — the mis-aggregations.
+        let agg = mref.aggregation.as_deref();
+        let is_sum = agg_is_additive(agg);
+        let is_avg = agg_is_average(agg);
+        if !is_sum && !is_avg {
+            continue; // e.g. last/min/max at own grain → not a mis-aggregation
+        }
+        let agg_label = agg.unwrap_or("sum (default)").to_string();
+        let reason = if is_avg {
+            format!(
+                "averaging the ratio/average calc [{}] across groups double-aggregates \
+                 (average-of-averages is not the weighted average)",
+                mref.unique_name
+            )
+        } else {
+            format!(
+                "summing the ratio/percentage calc [{}] across groups is meaningless \
+                 (a percentage does not add)",
+                mref.unique_name
+            )
+        };
+        rejections.push(ParamRejection {
+            field: mref.unique_name.clone(),
+            class: FieldClass::Measure,
+            reason: RejectReason::CalcMisaggregation {
+                measure: mref.unique_name.clone(),
+                aggregation: agg_label,
+                reason: reason.clone(),
+            },
+            suggestions: vec![Suggestion {
+                name: mref.unique_name.clone(),
+                similarity: 1.0,
+                note: Some(format!(
+                    "{reason}; query the ratio at the requested grain directly (the semantic \
+                     layer computes it correctly per group) or aggregate the additive base \
+                     numerator/denominator measures"
+                )),
+            }],
+            suggested_calc: None,
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RULE 4: filter-level check (PRD filter-level-check)
+// ---------------------------------------------------------------------------
+
+/// Infer the value type of a raw filter value string. A pure-integer string is
+/// `Integer`; a `YYYY-MM-DD`-shaped string is `Date`; everything else is
+/// `String`. Conservative — only the two well-formed numeric/date shapes are
+/// recognized, all else stays `String`.
+fn infer_value_type(v: &str) -> LevelValueType {
+    let t = v.trim();
+    if !t.is_empty() && t.chars().all(|c| c.is_ascii_digit()) {
+        return LevelValueType::Integer;
+    }
+    // YYYY-MM-DD (allow YYYY/MM/DD too).
+    let parts: Vec<&str> = t.split(['-', '/']).collect();
+    if parts.len() == 3
+        && parts[0].len() == 4
+        && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+    {
+        return LevelValueType::Date;
+    }
+    LevelValueType::String
+}
+
+/// Look up the level-domain metadata for a (hierarchy, level) pair, if enriched.
+fn find_level_meta<'a>(
+    catalog: &'a CatalogSnapshot,
+    hier_norm: &str,
+    level_norm: &str,
+) -> Option<&'a LevelDomainMeta> {
+    catalog
+        .hierarchies
+        .iter()
+        .filter(|h| normalize(&h.hierarchy_unique_name) == hier_norm)
+        .flat_map(|h| h.level_meta.iter())
+        .find(|m| normalize(&m.level) == level_norm)
+}
+
+/// Does the named level exist in the named hierarchy?
+fn level_exists(catalog: &CatalogSnapshot, hier_norm: &str, level_norm: &str) -> bool {
+    catalog
+        .hierarchies
+        .iter()
+        .filter(|h| normalize(&h.hierarchy_unique_name) == hier_norm)
+        .any(|h| h.levels.iter().any(|l| normalize(l) == level_norm))
+}
+
+/// RULE 4: reject a filter whose value type/domain cannot match the target
+/// level, or whose named level does not exist.
+///
+/// Conservative guardrails (PRD FR-4):
+///   * Only acts on a filter that names a `level` — a bare hierarchy filter is
+///     left to the binder/`Unmapped` path.
+///   * When the level exists but has NO `level_meta`, the guard cannot decide
+///     value-fit and does NOT reject (catalog-only emptiness ≠ filter error).
+///   * A member value not in an explicit `domain` is rejected (AC-1); a value
+///     with no live rows is NEVER rejected (we only check the catalog domain).
+///   * A range/member bound whose type ≠ the level's `value_type` is rejected
+///     (AC-2 YYYYWW/DATE on a sequential-week Integer level).
+fn check_filter_level(
+    mqo: &BoundMqoInput,
+    catalog: &CatalogSnapshot,
+    rejections: &mut Vec<ParamRejection>,
+) {
+    for fref in &mqo.filters {
+        let level = match &fref.level {
+            Some(l) => l,
+            None => continue, // no named level → not this rule's concern
+        };
+        let hier_norm = normalize(&fref.unique_name);
+        let level_norm = normalize(level);
+
+        // Whether the hierarchy is even known. If the hierarchy isn't in the
+        // catalog the Unmapped pass already handled it; skip (don't duplicate).
+        let hier_known = catalog
+            .hierarchies
+            .iter()
+            .any(|h| normalize(&h.hierarchy_unique_name) == hier_norm);
+        if !hier_known {
+            continue;
+        }
+
+        // FR-3 / edge case: the named level must exist. If the hierarchy has
+        // declared levels but not this one, reject (don't silently ground).
+        if !level_exists(catalog, &hier_norm, &level_norm) {
+            // Suggest the hierarchy's known levels.
+            let known: Vec<String> = catalog
+                .hierarchies
+                .iter()
+                .filter(|h| normalize(&h.hierarchy_unique_name) == hier_norm)
+                .flat_map(|h| h.levels.clone())
+                .collect();
+            if known.is_empty() {
+                continue; // no level info at all → can't decide, skip
+            }
+            rejections.push(ParamRejection {
+                field: format!("{}.[{}]", fref.unique_name, level),
+                class: FieldClass::Filter,
+                reason: RejectReason::FilterLevelMismatch {
+                    filter: fref.unique_name.clone(),
+                    target_level: level.clone(),
+                    reason: format!(
+                        "level [{}] does not exist in hierarchy [{}]",
+                        level, fref.unique_name
+                    ),
+                    suggested: known.join(", "),
+                },
+                suggestions: known
+                    .iter()
+                    .map(|l| Suggestion {
+                        name: l.clone(),
+                        similarity: jaro_winkler(&level_norm, &normalize(l)),
+                        note: Some(format!("valid level in [{}]", fref.unique_name)),
+                    })
+                    .collect(),
+                suggested_calc: None,
+            });
+            continue;
+        }
+
+        // The level exists. Decide value-fit ONLY if enriched metadata exists.
+        let meta = match find_level_meta(catalog, &hier_norm, &level_norm) {
+            Some(m) => m,
+            None => continue, // FR-4: no domain/type info → never reject
+        };
+
+        // Collect the values to check (member values + range bounds).
+        let mut bad_value: Option<(String, String)> = None; // (value, why)
+
+        // Range bound type check (AC-2 / AC-4).
+        for bound in [fref.range_lo.as_deref(), fref.range_hi.as_deref()]
+            .into_iter()
+            .flatten()
+        {
+            let vt = infer_value_type(bound);
+            if vt != meta.value_type {
+                bad_value = Some((
+                    bound.to_string(),
+                    format!(
+                        "range bound [{}] is {:?} but level [{}] expects {:?}",
+                        bound, vt, level, meta.value_type
+                    ),
+                ));
+                break;
+            }
+        }
+
+        // Member value checks: type, then explicit-domain membership (AC-1/AC-3).
+        if bad_value.is_none() {
+            for member in &fref.members {
+                let vt = infer_value_type(member);
+                if vt != meta.value_type {
+                    bad_value = Some((
+                        member.clone(),
+                        format!(
+                            "member value [{}] is {:?} but level [{}] expects {:?}",
+                            member, vt, level, meta.value_type
+                        ),
+                    ));
+                    break;
+                }
+                if let Some(domain) = &meta.domain {
+                    // AC-3 GUARD: only reject when the domain is an explicit
+                    // closed enumeration AND the value is outside it. An
+                    // in-domain value with no live rows is never rejected
+                    // (we never consult live data).
+                    let in_domain = domain
+                        .iter()
+                        .any(|d| normalize(d) == normalize(member));
+                    if !in_domain {
+                        bad_value = Some((
+                            member.clone(),
+                            format!(
+                                "member value [{member}] is not in the domain of level [{level}]",
+                            ),
+                        ));
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some((value, why)) = bad_value {
+            let suggested = meta
+                .expected_key_shape
+                .clone()
+                .unwrap_or_else(|| format!("a {:?} value valid for level [{}]", meta.value_type, level));
+            rejections.push(ParamRejection {
+                field: format!("{}.[{}] = {}", fref.unique_name, level, value),
+                class: FieldClass::Filter,
+                reason: RejectReason::FilterLevelMismatch {
+                    filter: fref.unique_name.clone(),
+                    target_level: level.clone(),
+                    reason: why.clone(),
+                    suggested: suggested.clone(),
+                },
+                suggestions: vec![Suggestion {
+                    name: suggested,
+                    similarity: 0.0,
+                    note: Some(why),
+                }],
+                suggested_calc: None,
+            });
+        }
     }
 }
