@@ -67,6 +67,21 @@ impl HandleStore {
         let guard = self.store.lock().map_err(|_| "store lock poisoned".to_string())?;
         Ok(guard.put(ds, STORE_TTL_SECS))
     }
+
+    /// Ingest result rows into the store with **bound-authoritative** column
+    /// roles (see [`json_rows_to_dataset_with_bound`]) and return the minted
+    /// handle.  This is the variant used by `query_multidimensional` so that
+    /// the stored dataset — the one `dataset_*` ops later read — labels numeric
+    /// dimensions as `Dimension`, not `Measure`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` if the store lock is poisoned.
+    pub fn put_rows_with_bound(&self, rows: &[Value], bound: &Value) -> Result<DatasetHandle, String> {
+        let ds = json_rows_to_dataset_with_bound(rows, bound);
+        let guard = self.store.lock().map_err(|_| "store lock poisoned".to_string())?;
+        Ok(guard.put(ds, STORE_TTL_SECS))
+    }
 }
 
 impl Default for HandleStore {
@@ -116,6 +131,84 @@ pub fn json_rows_to_dataset(rows: &[Value]) -> Dataset {
     Dataset::new(columns, data).unwrap_or_else(|_| {
         Dataset::new(Vec::new(), Vec::new()).expect("empty dataset is always valid")
     })
+}
+
+/// Like [`json_rows_to_dataset`], but sets each column's [`ColumnRole`] from the
+/// MQO `bound` rather than the dtype heuristic.
+///
+/// This is the **bound-authoritative** variant used whenever a *query-result*
+/// dataset is stored: the bound is the source of truth for whether a projected
+/// column is a Measure or a Dimension, so a numeric dimension (e.g. a calendar
+/// year that comes back as `Float`) is correctly labelled `Dimension` rather
+/// than being mislabelled `Measure` by the "numeric → Measure" heuristic.
+///
+/// dtype/data inference is identical to [`json_rows_to_dataset`]; only the role
+/// differs.  Columns not present in the bound fall back to the dtype heuristic.
+#[must_use]
+pub fn json_rows_to_dataset_with_bound(rows: &[Value], bound: &Value) -> Dataset {
+    let role_map = bound_role_map(bound);
+
+    let mut col_names: Vec<String> = Vec::new();
+    for row in rows {
+        if let Some(obj) = row.as_object() {
+            for k in obj.keys() {
+                if !col_names.iter().any(|c| c == k) {
+                    col_names.push(k.clone());
+                }
+            }
+        }
+    }
+
+    let mut columns: Vec<ColumnSchema> = Vec::with_capacity(col_names.len());
+    let mut data: Vec<ColumnData> = Vec::with_capacity(col_names.len());
+
+    for name in &col_names {
+        let (dtype, heuristic_role, col) = build_column(name, rows);
+        // Bound is authoritative; fall back to the dtype heuristic only for
+        // columns the bound does not mention.
+        let role = role_map.get(name).copied().unwrap_or(heuristic_role);
+        columns.push(ColumnSchema {
+            name: name.clone(),
+            unique_name: name.clone(),
+            dtype,
+            nullable: true,
+            role,
+        });
+        data.push(col);
+    }
+
+    Dataset::new(columns, data).unwrap_or_else(|_| {
+        Dataset::new(Vec::new(), Vec::new()).expect("empty dataset is always valid")
+    })
+}
+
+/// Build a `column-name → ColumnRole` map from the MQO `bound`.
+///
+/// Mirrors `mqo_result_profiler::projection_order` (`measures[] → Measure`,
+/// `dimensions[] → Dimension`) but matches the way **row keys** are produced:
+/// the fixture/XMLA executors emit one row key per bound entry's
+/// `unique_name`, so we key the map on `unique_name`.  For the simplified
+/// string-array bound shape used in some tests
+/// (`{measures:["m"],dimensions:["d"]}`) we fall back to the bare string,
+/// keeping the map robust across both shapes.
+fn bound_role_map(bound: &Value) -> BTreeMap<String, ColumnRole> {
+    let mut map: BTreeMap<String, ColumnRole> = BTreeMap::new();
+    let mut ingest = |key: &str, role: ColumnRole| {
+        if let Some(arr) = bound.get(key).and_then(Value::as_array) {
+            for entry in arr {
+                let name = entry
+                    .get("unique_name")
+                    .and_then(Value::as_str)
+                    .or_else(|| entry.as_str());
+                if let Some(name) = name {
+                    map.insert(name.to_owned(), role);
+                }
+            }
+        }
+    };
+    ingest("measures", ColumnRole::Measure);
+    ingest("dimensions", ColumnRole::Dimension);
+    map
 }
 
 /// Decide a column's dtype/role and build its typed `ColumnData` from the rows.
@@ -843,4 +936,93 @@ pub fn handle_op_descriptors() -> Vec<Value> {
             "annotations": { "readOnlyHint": true }
         }),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// AC: column roles come from the `bound`, not the value dtype.  A numeric
+    /// (Float/Int) column the bound marks as a **dimension** must be labelled
+    /// `Dimension`, while a numeric measure stays `Measure`.  This is the
+    /// regression for "Total Store Sales by year", where the year (a Float
+    /// dimension) was mislabelled `Measure` by the dtype heuristic.
+    #[test]
+    fn numeric_dimension_role_from_bound() {
+        // Real binder bound shape: arrays of objects keyed by `unique_name`,
+        // and the row keys equal those `unique_name`s.
+        let year_key = "atscale.Sold_Calendar_Year";
+        let sales_key = "store_sales.total_store_sales";
+        let bound = json!({
+            "measures": [{ "unique_name": sales_key }],
+            "dimensions": [{ "unique_name": year_key }],
+        });
+        let rows = vec![
+            json!({ year_key: 2021.0, sales_key: 100.5 }),
+            json!({ year_key: 2022.0, sales_key: 200.5 }),
+        ];
+
+        let ds = json_rows_to_dataset_with_bound(&rows, &bound);
+
+        let year = ds
+            .columns
+            .iter()
+            .find(|c| c.name == year_key)
+            .expect("year column present");
+        let sales = ds
+            .columns
+            .iter()
+            .find(|c| c.name == sales_key)
+            .expect("sales column present");
+
+        // Numeric dimension → Dimension (NOT Measure), despite Float dtype.
+        assert_eq!(year.dtype, DType::Float);
+        assert_eq!(year.role, ColumnRole::Dimension);
+        // Numeric measure stays Measure.
+        assert_eq!(sales.dtype, DType::Float);
+        assert_eq!(sales.role, ColumnRole::Measure);
+
+        // Sanity: the plain heuristic mislabels the dimension as Measure.
+        let heuristic = json_rows_to_dataset(&rows);
+        let h_year = heuristic
+            .columns
+            .iter()
+            .find(|c| c.name == year_key)
+            .expect("year column present");
+        assert_eq!(h_year.role, ColumnRole::Measure);
+    }
+
+    /// An Int dimension is also bound-authoritative, and a column absent from
+    /// the bound falls back to the dtype heuristic.
+    #[test]
+    fn int_dimension_from_bound_and_unknown_falls_back() {
+        let bound = json!({
+            "measures": [{ "unique_name": "m" }],
+            "dimensions": [{ "unique_name": "yr" }],
+        });
+        let rows = vec![
+            json!({ "yr": 2021, "m": 10, "extra_num": 7 }),
+            json!({ "yr": 2022, "m": 20, "extra_num": 8 }),
+        ];
+        let ds = json_rows_to_dataset_with_bound(&rows, &bound);
+        let cols = ds.columns;
+        let role = |n: &str| cols.iter().find(|c| c.name == n).unwrap().role;
+        assert_eq!(role("yr"), ColumnRole::Dimension); // Int dimension
+        assert_eq!(role("m"), ColumnRole::Measure);
+        // Not in bound → dtype heuristic → numeric → Measure.
+        assert_eq!(role("extra_num"), ColumnRole::Measure);
+    }
+
+    /// The simplified string-array bound shape (used by some tests) still maps.
+    #[test]
+    fn string_array_bound_shape_maps_roles() {
+        let bound = json!({ "measures": ["revenue"], "dimensions": ["year"] });
+        let rows = vec![json!({ "year": 2021.0, "revenue": 100.0 })];
+        let ds = json_rows_to_dataset_with_bound(&rows, &bound);
+        let cols = ds.columns;
+        let role = |n: &str| cols.iter().find(|c| c.name == n).unwrap().role;
+        assert_eq!(role("year"), ColumnRole::Dimension);
+        assert_eq!(role("revenue"), ColumnRole::Measure);
+    }
 }

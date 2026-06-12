@@ -828,7 +828,7 @@ impl Server {
                 let handle = self
                     .handle_store
                     .as_ref()
-                    .and_then(|hs| hs.put_rows(&out.rows).ok());
+                    .and_then(|hs| hs.put_rows_with_bound(&out.rows, &out.bound).ok());
 
                 // Cursor mode: persist and return first page when rows > page_size.
                 if out.rows.len() > self.page_size {
@@ -1025,7 +1025,9 @@ fn structured_ok(
 fn attach_handle_summary(payload: &mut Value, handle: Option<&DatasetHandle>, out: &PipelineOutput) {
     let Some(h) = handle else { return };
     payload["handle"] = serde_json::to_value(h).unwrap_or(Value::Null);
-    let ds = crate::handle_ops::json_rows_to_dataset(&out.rows);
+    // Bound-authoritative roles so the summary's measure/dimension split matches
+    // the stored dataset (numeric dimensions are not mislabelled as measures).
+    let ds = crate::handle_ops::json_rows_to_dataset_with_bound(&out.rows, &out.bound);
     let summary = dh_summary::summarize(&ds, &dh_summary::SummaryCfg::default());
     payload["summary"] = serde_json::to_value(&summary).unwrap_or(Value::Null);
     payload["capabilities"] = serde_json::to_value(dh_summary::capabilities(&ds)).unwrap_or(Value::Null);

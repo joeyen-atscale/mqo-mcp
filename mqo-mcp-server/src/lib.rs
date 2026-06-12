@@ -41,7 +41,8 @@ pub use mqo_auth_bridge::{
 };
 
 pub use handle_ops::{
-    dataset_to_json_rows, json_rows_to_dataset, HandleStore, INLINE_THRESHOLD,
+    dataset_to_json_rows, json_rows_to_dataset, json_rows_to_dataset_with_bound, HandleStore,
+    INLINE_THRESHOLD,
 };
 pub use mcp::{discover_xmla_coords, tool_descriptors, Server, ServerEnrichedData, ServerEngine, PROTOCOL_VERSION};
 pub use pipeline::{error_class, error_class_values, PipelineError, PipelineOutput, ToolPaths};

@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.13.1 — 2026-06-11
+
+- **fix: bound-authoritative column roles — numeric dimensions no longer
+  mislabeled as measures.** Query-result datasets stored in the typed handle
+  store now derive each column's `ColumnRole` from the MQO `bound`
+  (`measures[] → Measure`, `dimensions[] → Dimension`, keyed on `unique_name`)
+  instead of the value-dtype heuristic ("numeric → Measure"). A numeric
+  dimension such as "Sold Calendar Year" (returned as `Float`) is now correctly
+  labelled `Dimension`, fixing `dataset_chart` and other dim-vs-measure ops on
+  numeric-dimension results. Columns absent from the bound (e.g. op-derived
+  columns) still fall back to the dtype heuristic. Added
+  `json_rows_to_dataset_with_bound` / `HandleStore::put_rows_with_bound`; wired
+  into the query-result store-put site and `attach_handle_summary`.
+
 ## v0.13.0 — 2026-06-11
 
 Merge the dataset-handle capability into the one canonical server
