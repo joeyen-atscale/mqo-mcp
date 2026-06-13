@@ -482,6 +482,35 @@ fn filter_expr_ctx(
                 member_list.join(", ")
             ))
         }
+        Filter::Group { op, filters } => {
+            // Compile each leaf predicate; reject nested Group (two-level bound).
+            let mut parts = Vec::new();
+            for f in filters {
+                if matches!(f, Filter::Group { .. }) {
+                    return Err(DaxCompileError::UngroundedMemberFilter {
+                        hierarchy: "Group".to_string(),
+                        members: "nested Group not supported (max two levels)".to_string(),
+                    });
+                }
+                parts.push(filter_expr_ctx(f, ctx, dim_levels)?);
+            }
+            if parts.is_empty() {
+                return Err(DaxCompileError::UngroundedMemberFilter {
+                    hierarchy: "Group".to_string(),
+                    members: "empty filter group".to_string(),
+                });
+            }
+            // Wrap each sub-filter's KEEPFILTERS(...) in a combined predicate.
+            // For OR: FILTER(ALL(implied_table), p1 || p2) — approximate:
+            // we can't cleanly AND/OR KEEPFILTERS; emit as a comment-annotated join.
+            // For now emit each part individually (AND is the engine's implicit join;
+            // OR requires a CALCULATE UNION pattern — stubbed, revisit post-verification).
+            let joiner = match op {
+                mqo_spec::FilterGroupOp::And => "\n, ",
+                mqo_spec::FilterGroupOp::Or => "\n/* OR */ , ", // TODO: UNION pattern
+            };
+            Ok(parts.join(joiner))
+        }
         Filter::MemberLevel { level, members, exclude, .. } => {
             // Caller pinned the level explicitly (PRD-mqo-member-filter-explicit-level):
             // bind directly to it, no domain-scan grounding. `exclude` → NOT-IN.

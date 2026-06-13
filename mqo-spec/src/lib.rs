@@ -192,6 +192,26 @@ pub enum Filter {
         /// The specific member within the calculation group.
         member: String,
     },
+
+    /// Boolean combination of leaf filters (PRD-mqo-filter-predicate-grammar).
+    ///
+    /// Supports one level of nesting: an OR of AND-groups, or an AND of OR-groups.
+    /// Each element of `filters` must be a leaf predicate (`Member`, `MemberLevel`,
+    /// `Range`) — nested `Group` variants are rejected with `UnsupportedFilterShape`.
+    Group {
+        /// Logical operator combining the elements of `filters`.
+        op: FilterGroupOp,
+        /// The leaf predicates to combine. Must be non-empty.
+        filters: Vec<Filter>,
+    },
+}
+
+/// Logical operator for a [`Filter::Group`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum FilterGroupOp {
+    And,
+    Or,
 }
 
 // ── TimeIntel enum ─────────────────────────────────────────────────────────

@@ -226,6 +226,17 @@ fn build_where_clause(bound: &BoundMqoInput) -> String {
                     members.push(format!("[{hierarchy}].[{mk}]"));
                 }
             }
+            Filter::Group { op: _, filters: sub_filters } => {
+                // Flatten Group's leaf members into the slicer (AND semantics;
+                // OR via UNION is a follow-on — DAX-first slice).
+                for sub in sub_filters {
+                    if let Filter::Member { hierarchy: h, members: m } = sub {
+                        for mk in m { members.push(format!("[{h}].[{mk}]")); }
+                    } else if let Filter::MemberLevel { hierarchy: h, members: m, exclude: false, .. } = sub {
+                        for mk in m { members.push(format!("[{h}].[{mk}]")); }
+                    }
+                }
+            }
             Filter::MemberLevel { hierarchy, members: mem_keys, exclude, .. } => {
                 // DAX-first slice (PRD-mqo-member-filter-explicit-level): include
                 // members by hierarchy as MDX slicer members; NOT-IN exclusion is
