@@ -43,12 +43,12 @@ fn validate_rejects_range_lo_gt_hi() {
     let mut mqo = minimal();
     mqo.filters.push(Filter::Range {
         level: "year".to_string(),
-        lo: 2025.0,
-        hi: 2020.0,
+        lo: mqo_spec::RangeBound::Number(2025.0),
+        hi: mqo_spec::RangeBound::Number(2020.0),
     });
     let errs = validate(&mqo).expect_err("should fail with lo > hi");
     assert!(
-        errs.iter().any(|e| matches!(e, MqoError::RangeLoGtHi { lo, hi } if *lo > *hi)),
+        errs.iter().any(|e| matches!(e, MqoError::RangeLoGtHi { .. })),
         "expected RangeLoGtHi error, got: {errs:?}"
     );
 }
@@ -85,8 +85,8 @@ fn validate_accepts_range_lo_eq_hi() {
     let mut mqo = minimal();
     mqo.filters.push(Filter::Range {
         level: "year".to_string(),
-        lo: 2024.0,
-        hi: 2024.0,
+        lo: mqo_spec::RangeBound::Number(2024.0),
+        hi: mqo_spec::RangeBound::Number(2024.0),
     });
     assert!(validate(&mqo).is_ok());
 }

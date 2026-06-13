@@ -478,8 +478,8 @@ fn ac8_range_filter_handled_gracefully_no_where_clause() {
     let mut mqo = minimal_mqo("sales");
     mqo.filters.push(Filter::Range {
         level: "time.calendar.Year".to_string(),
-        lo: 2020.0,
-        hi: 2023.0,
+        lo: mqo_spec::RangeBound::Number(2020.0),
+        hi: mqo_spec::RangeBound::Number(2023.0),
     });
     let bound = BoundMqoInput {
         mqo,

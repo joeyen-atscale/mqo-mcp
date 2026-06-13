@@ -734,18 +734,18 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
                         .get(&hier)
                         .map(|v| v.iter().any(|m| m.level == label))
                         .unwrap_or(false);
-                    let fmt = |x: f64| {
-                        if x.fract() == 0.0 {
-                            (x as i64).to_string()
+                    let bound_str = |b: &mqo_spec::RangeBound| {
+                        if let Some(n) = b.as_f64() {
+                            if n.fract() == 0.0 { (n as i64).to_string() } else { n.to_string() }
                         } else {
-                            x.to_string()
+                            b.as_str().unwrap_or("").to_string()
                         }
                     };
                     Some(MqoFilterRef {
                         unique_name: hier,
                         level: if has_meta { Some(label) } else { None },
-                        range_lo: Some(fmt(*lo)),
-                        range_hi: Some(fmt(*hi)),
+                        range_lo: Some(bound_str(lo)),
+                        range_hi: Some(bound_str(hi)),
                         ..Default::default()
                     })
                 }

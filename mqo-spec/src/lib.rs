@@ -106,6 +106,41 @@ pub enum SortDirection {
     Desc,
 }
 
+// ── RangeBound ────────────────────────────────────────────────────────────
+
+/// A typed bound for a `Range` filter (PRD-mqo-range-filter-native-typing).
+///
+/// `#[serde(untagged)]` means a bare JSON number still deserializes as
+/// `Number(f64)` (backward-compatible); an ISO-8601 date string deserializes as
+/// `IsoDate`; any other string as `Text`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum RangeBound {
+    /// A numeric bound (the pre-existing form; bare JSON numbers land here).
+    Number(f64),
+    /// An ISO-8601 date bound or string bound for non-numeric levels.
+    Text(String),
+}
+
+impl RangeBound {
+    /// True when this bound is strictly greater than `other` within the same type.
+    pub fn gt_bound(&self, other: &Self) -> bool {
+        match (self, other) {
+            (RangeBound::Number(a), RangeBound::Number(b)) => a > b,
+            (RangeBound::Text(a), RangeBound::Text(b)) => a > b,
+            _ => false,
+        }
+    }
+    /// Extract the numeric value when this is a `Number` bound.
+    pub fn as_f64(&self) -> Option<f64> {
+        if let RangeBound::Number(n) = self { Some(*n) } else { None }
+    }
+    /// Extract the string value when this is a `Text` bound.
+    pub fn as_str(&self) -> Option<&str> {
+        if let RangeBound::Text(s) = self { Some(s.as_str()) } else { None }
+    }
+}
+
 // ── Filter enum ────────────────────────────────────────────────────────────
 
 /// A filter constraint applied to the query.
@@ -142,10 +177,12 @@ pub enum Filter {
     Range {
         /// The level to filter on.
         level: String,
-        /// Inclusive lower bound.
-        lo: f64,
-        /// Inclusive upper bound. Must be ≥ `lo`.
-        hi: f64,
+        /// Inclusive lower bound. A bare JSON number deserializes as `Number(f64)`
+        /// (backward-compatible). ISO-8601 date strings (e.g. `"2002-05-27"`) are
+        /// accepted for date-typed levels (PRD-mqo-range-filter-native-typing).
+        lo: RangeBound,
+        /// Inclusive upper bound. Must be ≥ `lo` within its type.
+        hi: RangeBound,
     },
 
     /// Include only the named calculation-group member.
@@ -264,9 +301,9 @@ pub enum MqoError {
     #[error("mqo.limit must be ≥ 1 when present, got 0")]
     LimitZero,
 
-    /// A `Range` filter has `lo > hi`.
-    #[error("Range filter lo ({lo}) > hi ({hi})")]
-    RangeLoGtHi { lo: f64, hi: f64 },
+    /// A `Range` filter has `lo > hi` (within the same bound type).
+    #[error("Range filter lo > hi on level '{level}'")]
+    RangeLoGtHi { level: String },
 }
 
 /// Perform structural validation of an [`Mqo`].
@@ -293,9 +330,9 @@ pub fn validate(mqo: &Mqo) -> Result<(), Vec<MqoError>> {
     }
 
     for filter in &mqo.filters {
-        if let Filter::Range { level: _, lo, hi } = filter {
-            if lo > hi {
-                errors.push(MqoError::RangeLoGtHi { lo: *lo, hi: *hi });
+        if let Filter::Range { level, lo, hi } = filter {
+            if lo.gt_bound(hi) {
+                errors.push(MqoError::RangeLoGtHi { level: level.clone() });
             }
         }
     }
@@ -368,8 +405,8 @@ mod unit_tests {
         let mut mqo = minimal_mqo();
         mqo.filters.push(Filter::Range {
             level: "year".to_string(),
-            lo: 2024.0,
-            hi: 2020.0,
+            lo: RangeBound::Number(2024.0),
+            hi: RangeBound::Number(2020.0),
         });
         let errs = validate(&mqo).unwrap_err();
         assert!(errs
@@ -382,8 +419,8 @@ mod unit_tests {
         let mut mqo = minimal_mqo();
         mqo.filters.push(Filter::Range {
             level: "year".to_string(),
-            lo: 2024.0,
-            hi: 2024.0,
+            lo: RangeBound::Number(2024.0),
+            hi: RangeBound::Number(2024.0),
         });
         assert!(validate(&mqo).is_ok());
     }
@@ -396,8 +433,8 @@ mod unit_tests {
             dimensions: vec![],
             filters: vec![Filter::Range {
                 level: "year".to_string(),
-                lo: 2025.0,
-                hi: 2020.0,
+                lo: RangeBound::Number(2025.0),
+                hi: RangeBound::Number(2020.0),
             }],
             time_intelligence: vec![],
             order: None,

@@ -140,13 +140,13 @@ fn build_filters(
                     )))
                 })?;
 
+                use mqo_spec::RangeBound;
                 let (lo, hi) = match clause.op.as_str() {
-                    "<" => (f64::NEG_INFINITY, num - 1.0),
-                    ">" => (num + 1.0, f64::INFINITY),
-                    "<=" => (f64::NEG_INFINITY, num),
-                    ">=" => (num, f64::INFINITY),
-                    // For != we can't cleanly represent as a Range; use a loose range
-                    _ => (num, num), // fallback
+                    "<" => (RangeBound::Number(f64::NEG_INFINITY), RangeBound::Number(num - 1.0)),
+                    ">" => (RangeBound::Number(num + 1.0), RangeBound::Number(f64::INFINITY)),
+                    "<=" => (RangeBound::Number(f64::NEG_INFINITY), RangeBound::Number(num)),
+                    ">=" => (RangeBound::Number(num), RangeBound::Number(f64::INFINITY)),
+                    _ => (RangeBound::Number(num), RangeBound::Number(num)),
                 };
 
                 Filter::Range {

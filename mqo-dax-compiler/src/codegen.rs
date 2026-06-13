@@ -518,8 +518,14 @@ fn filter_expr_ctx(
             } else {
                 level_col_ref_ctx(level, ctx)
             };
+            let lo_s = lo.as_f64().map(|n| format!("{n}"))
+                .or_else(|| lo.as_str().map(|s| format!("DATE({})", s.replace('-', ","))))
+                .unwrap_or_else(|| format!("{lo:?}"));
+            let hi_s = hi.as_f64().map(|n| format!("{n}"))
+                .or_else(|| hi.as_str().map(|s| format!("DATE({})", s.replace('-', ","))))
+                .unwrap_or_else(|| format!("{hi:?}"));
             Ok(format!(
-                "KEEPFILTERS(FILTER(ALL({col}), {col} >= {lo} && {col} <= {hi}))"
+                "KEEPFILTERS(FILTER(ALL({col}), {col} >= {lo_s} && {col} <= {hi_s}))"
             ))
         }
         Filter::CalcGroupMember { calc_group, member } => {
@@ -840,8 +846,8 @@ mod tests {
         let ctx = fixture_ctx();
         let filter = Filter::Range {
             level: "Inventory Calendar Month".to_string(), // bare label from fixture
-            lo: 1.0_f64,
-            hi: 12.0_f64,
+            lo: mqo_spec::RangeBound::Number(1.0_f64),
+            hi: mqo_spec::RangeBound::Number(12.0_f64),
         };
         let result = filter_expr_ctx(&filter, Some(&ctx), &[]).unwrap();
         assert!(
@@ -860,8 +866,8 @@ mod tests {
         let ctx = fixture_ctx();
         let filter = Filter::Range {
             level: "inventory_date_dimension.calendar.[Inventory Calendar Month]".to_string(),
-            lo: 1.0_f64,
-            hi: 12.0_f64,
+            lo: mqo_spec::RangeBound::Number(1.0_f64),
+            hi: mqo_spec::RangeBound::Number(12.0_f64),
         };
         let result = filter_expr_ctx(&filter, Some(&ctx), &[]).unwrap();
         assert!(
@@ -880,8 +886,8 @@ mod tests {
         let ctx = fixture_ctx();
         let filter = Filter::Range {
             level: "Nonexistent Level XYZ".to_string(),
-            lo: 1.0_f64,
-            hi: 5.0_f64,
+            lo: mqo_spec::RangeBound::Number(1.0_f64),
+            hi: mqo_spec::RangeBound::Number(5.0_f64),
         };
         let err = filter_expr_ctx(&filter, Some(&ctx), &[]).unwrap_err();
         assert!(
@@ -895,8 +901,8 @@ mod tests {
     fn range_filter_no_ctx_heuristic() {
         let filter = Filter::Range {
             level: "some.hierarchy.Level".to_string(),
-            lo: 1.0_f64,
-            hi: 10.0_f64,
+            lo: mqo_spec::RangeBound::Number(1.0_f64),
+            hi: mqo_spec::RangeBound::Number(10.0_f64),
         };
         let result = filter_expr_ctx(&filter, None, &[]).unwrap();
         assert!(
