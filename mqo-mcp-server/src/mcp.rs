@@ -1541,13 +1541,37 @@ impl Server {
                         }
                     }
                 }
-                structured_ok(
+                // PRD-mqo-calc-context-ratio-measures: if ALL result rows have a
+                // null value for a packaged calc (is_calc=true) measure, warn the
+                // model that the measure needs a comparison-context
+                // (time_intelligence or calc-group member) to compute.
+                let calc_null_warning = detect_calc_context_null(&out);
+
+                let mut resp = structured_ok(
                     &out,
                     cluster_used.as_deref(),
                     latency_ms,
                     handle.as_ref(),
                     self.inline_threshold,
-                )
+                );
+                if let Some(warn) = calc_null_warning {
+                    if let Some(obj) = resp.get_mut("content")
+                        .and_then(|c| c.get_mut(0))
+                    {
+                        // Append the warning to the text content for model visibility.
+                        if let Some(text) = obj.get_mut("text").and_then(|t| t.as_str()) {
+                            let mut updated: serde_json::Value =
+                                serde_json::from_str(text).unwrap_or(serde_json::Value::Null);
+                            if let Some(map) = updated.as_object_mut() {
+                                map.insert("calc_context_warning".to_string(),
+                                    serde_json::Value::String(warn));
+                            }
+                            obj["text"] = serde_json::Value::String(
+                                serde_json::to_string(&updated).unwrap_or_default());
+                        }
+                    }
+                }
+                resp
             }
             Err(PipelineError::CrossFactIncompatible { report }) => {
                 let text = self.format_cross_fact_text(&report);
@@ -1657,6 +1681,47 @@ impl Server {
                 })
             }
         }
+    }
+}
+
+/// Detect the calc-context-null pattern: a packaged calc (is_calc=true) measure
+/// returns all-null values for every row, indicating the comparison context
+/// (time_intelligence frame or calc-group member) is missing.
+/// Returns Some(warning_message) when detected, None otherwise.
+fn detect_calc_context_null(out: &crate::pipeline::PipelineOutput) -> Option<String> {
+    // Only fire for packaged calc measures.
+    let calc_measures: Vec<String> = out.bound.get("measures")
+        .and_then(|m| m.as_array())
+        .map(|arr| arr.iter().filter_map(|m| {
+            if m.get("is_calc").and_then(|v| v.as_bool()).unwrap_or(false) {
+                m.get("unique_name").and_then(|v| v.as_str()).map(String::from)
+            } else { None }
+        }).collect())
+        .unwrap_or_default();
+    if calc_measures.is_empty() { return None; }
+    if out.rows.is_empty() { return None; }
+    // Check if all rows have null for every calc measure column.
+    let all_null = out.rows.iter().all(|row| {
+        row.as_object().is_some_and(|obj| {
+            calc_measures.iter().all(|m| {
+                let short = m.rsplit('.').next().unwrap_or(m);
+                obj.iter().any(|(k, v)| {
+                    (k.contains(short) || k == m) && v.is_null()
+                })
+            })
+        })
+    });
+    if all_null {
+        Some(format!(
+            "All rows have null values for packaged calc measure(s) [{}]. \
+             These ratio/growth measures require a comparison context: add a \
+             time_intelligence operation (e.g. YoY, PriorPeriod) or a \
+             CalcGroupMember filter to provide the prior-period reference. \
+             Without it the measure evaluates to null.",
+            calc_measures.join(", ")
+        ))
+    } else {
+        None
     }
 }
 
