@@ -791,7 +791,7 @@ fn core_tool_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "query_multidimensional",
-            "description": "Run a Multidimensional Query Object (NEVER raw SQL) through bind→route→compile→execute and return bounded result rows plus the compiled query. Read-only by construction: the input is a selection-only object, so no write path exists.",
+            "description": "Run a Multidimensional Query Object (NEVER raw SQL) through bind→route→compile→execute and return bounded result rows plus the compiled query. Read-only by construction: the input is a selection-only object, so no write path exists.\n\nSupported filter types:\n- MemberLevel: {type:\"MemberLevel\", level_unique_name, members:[...], exclude:true|false} — filter a level to explicit members; exclude:true inverts to NOT-IN.\n- Member: {type:\"Member\", level_unique_name, members:[...]} — domain-scan grounded member filter (equivalent to MemberLevel without the exclude flag).\n- Group: {type:\"Group\", op:\"and\"|\"or\", filters:[...]} — combine two or more filters; up to two levels of nesting supported.\n- Range: {type:\"Range\", level_unique_name, lo, hi} — inclusive bounds filter; ISO-date strings accepted for date levels (full timezone support coming).",
             "inputSchema": mqo_schema,
             "annotations": { "readOnlyHint": true }
         }),
@@ -1224,10 +1224,69 @@ impl Server {
         let mut near_twins = level_twins;
         near_twins.extend(measure_twins);
 
+        // ── Per-hierarchy ordered levels (PRD-mqo-describe-filter-capabilities) ──
+        // For each hierarchy present in the catalog, emit an ordered list of
+        // {unique_name, label, has_domain} so callers can construct MemberLevel
+        // filters without guessing level names.  We build from `all_columns`
+        // (the full unfiltered catalog) so every hierarchy is visible regardless
+        // of the `model` filter.  The `hierarchy` field is guaranteed to be
+        // present at this point for all level columns (catalog_ingest sets it from
+        // the snapshot; catalog_context normalises it from unique_name as a
+        // fallback).  Levels appear in catalog-snapshot insertion order within
+        // each hierarchy.
+        let hierarchy_levels: BTreeMap<String, Vec<Value>> = {
+            let mut map: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+            for col in all_columns {
+                if col.get("kind").and_then(Value::as_str) != Some("level") {
+                    continue;
+                }
+                let un = match col.get("unique_name").and_then(Value::as_str) {
+                    Some(s) => s,
+                    None => continue,
+                };
+                let label = col
+                    .get("label")
+                    .and_then(Value::as_str)
+                    .unwrap_or(un);
+                // Prefer explicit `hierarchy` field; fall back to everything
+                // before the last dot segment (mirrors catalog_context.rs).
+                let hier: String = col
+                    .get("hierarchy")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .or_else(|| un.split_once('.').map(|(h, _)| h.to_string()))
+                    .unwrap_or_default();
+                if hier.is_empty() {
+                    continue;
+                }
+                let has_domain = col
+                    .get("domain")
+                    .and_then(Value::as_array)
+                    .is_some_and(|a| !a.is_empty());
+                map.entry(hier)
+                    .or_default()
+                    .push(json!({
+                        "unique_name": un,
+                        "label": label,
+                        "has_domain": has_domain
+                    }));
+            }
+            map
+        };
+        // Convert BTreeMap to a JSON object (hierarchy name → levels array).
+        let hierarchy_levels_val: Value = {
+            let mut obj = serde_json::Map::new();
+            for (h, lvls) in hierarchy_levels {
+                obj.insert(h, json!(lvls));
+            }
+            Value::Object(obj)
+        };
+
         json!({
             "model": model,
             "columns": columns,
             "near_twins": near_twins,
+            "hierarchy_levels": hierarchy_levels_val,
             "describe_model": self.catalog.get("describe_model").cloned().unwrap_or(Value::Null)
         })
     }
