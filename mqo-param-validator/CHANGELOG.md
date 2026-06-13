@@ -1,3 +1,6 @@
+## v0.7.0 — Binding near-twin dimension rejection (PRD-mqo-validator-near-twin-rejection)
+check_near_twin_dimension fires pre-execution and returns NonCanonicalNearTwin with the canonical suggestion. Already wired in mqo-mcp-server pipeline. Tests green.
+
 ## v0.6.0
 
 Filter-level guard (RULE 4) — member-domain check for level-less `Member`

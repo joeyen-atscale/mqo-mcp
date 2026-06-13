@@ -1855,3 +1855,132 @@ fn check_filter_level(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a minimal catalog with two hierarchies sharing a core label so
+    /// the near-twin group fires.  `product_dimension` is canonical (shorter,
+    /// Name-suffix) and `store_item_product_dimension` is the non-canonical twin.
+    fn near_twin_catalog() -> CatalogSnapshot {
+        CatalogSnapshot {
+            measures: vec![],
+            dimensions: vec![
+                CatalogDimension {
+                    unique_name: "product_dimension".into(),
+                    subject_areas: vec![],
+                },
+                CatalogDimension {
+                    unique_name: "store_item_product_dimension".into(),
+                    subject_areas: vec![],
+                },
+            ],
+            hierarchies: vec![
+                CatalogHierarchy {
+                    dimension_unique_name: "product_dimension".into(),
+                    hierarchy_unique_name: "product_dimension".into(),
+                    levels: vec!["Product Brand Name".into()],
+                    level_meta: vec![],
+                },
+                CatalogHierarchy {
+                    dimension_unique_name: "store_item_product_dimension".into(),
+                    hierarchy_unique_name: "store_item_product_dimension".into(),
+                    levels: vec!["Store Item Product Brand Name".into()],
+                    level_meta: vec![],
+                },
+            ],
+            date_roles: vec![],
+        }
+    }
+
+    /// AC-1: non-canonical near-twin dimension → rejected, canonical suggested.
+    #[test]
+    fn near_twin_ac1_non_canonical_rejected() {
+        let catalog = near_twin_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_item_product_dimension".into(),
+                level: Some("Store Item Product Brand Name".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        assert!(
+            !rejections.is_empty(),
+            "expected NonCanonicalNearTwin rejection for non-canonical twin"
+        );
+        let r = &rejections[0];
+        assert!(
+            matches!(&r.reason, RejectReason::NonCanonicalNearTwin { .. }),
+            "expected NonCanonicalNearTwin, got {:?}",
+            r.reason
+        );
+        if let RejectReason::NonCanonicalNearTwin {
+            suggested_canonical,
+            ..
+        } = &r.reason
+        {
+            assert!(
+                suggested_canonical.contains("product_dimension"),
+                "suggestion should point to product_dimension, got {suggested_canonical}"
+            );
+        }
+    }
+
+    /// AC-2: canonical dimension → no rejection.
+    #[test]
+    fn near_twin_ac2_canonical_passes() {
+        let catalog = near_twin_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "product_dimension".into(),
+                level: Some("Product Brand Name".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        assert!(
+            rejections.is_empty(),
+            "canonical pick should not be rejected, got {rejections:?}"
+        );
+    }
+
+    /// AC-3: non-canonical twin BUT MQO has a filter on that same hierarchy →
+    /// intent guard fires, no rejection.
+    #[test]
+    fn near_twin_ac3_intent_guard_suppresses_rejection() {
+        let catalog = near_twin_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_item_product_dimension".into(),
+                level: Some("Store Item Product Brand Name".into()),
+                ..Default::default()
+            }],
+            filters: vec![MqoFilterRef {
+                unique_name: "store_item_product_dimension".into(),
+                level: Some("Store Item Product Brand Name".into()),
+                members: vec!["Brand X".into()],
+                ..Default::default()
+            }],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let twin_rejections: Vec<_> = rejections
+            .iter()
+            .filter(|r| matches!(r.reason, RejectReason::NonCanonicalNearTwin { .. }))
+            .collect();
+        assert!(
+            twin_rejections.is_empty(),
+            "intent guard should suppress rejection when hierarchy has a filter, got {twin_rejections:?}"
+        );
+    }
+}
