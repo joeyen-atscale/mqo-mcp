@@ -432,6 +432,114 @@ fn calc_group_filter(calc_group: &str, member: &str) -> String {
 ///   cannot be resolved to a real column reference — a `DaxCatalogContext` is
 ///   present but `level` is neither a known unique-name nor a recognized display
 ///   label.
+/// Resolve a level-less `Member` filter's hierarchy to a grounded column ref,
+/// applying domain-aware grounding + the decline-not-fallback safety valve.
+fn resolve_member_column(
+    hierarchy: &str,
+    members: &[String],
+    ctx: Option<&DaxCatalogContext>,
+    dim_levels: &[String],
+) -> Result<String, DaxCompileError> {
+    let level_unique_name = ctx
+        .and_then(|c| {
+            c.resolve_member_level(hierarchy, members, dim_levels).or_else(|| {
+                if c.hierarchy_has_any_domain(hierarchy) {
+                    None
+                } else {
+                    c.resolve_hierarchy_first_level(hierarchy)
+                }
+            })
+        })
+        .ok_or_else(|| DaxCompileError::UngroundedMemberFilter {
+            hierarchy: hierarchy.to_string(),
+            members: members.join(", "),
+        })?;
+    Ok(level_col_ref_ctx(level_unique_name, ctx))
+}
+
+/// Format a range bound for DAX: numeric verbatim, ISO-date string → `DATE(y,m,d)`.
+fn range_bound_dax(b: &mqo_spec::RangeBound) -> String {
+    b.as_f64()
+        .map(|n| format!("{n}"))
+        .or_else(|| b.as_str().map(|s| format!("DATE({})", s.replace('-', ","))))
+        .unwrap_or_else(|| format!("{b:?}"))
+}
+
+/// Produce a boolean DAX **predicate** (not a wrapped FILTER) plus the set of
+/// columns it references, for a leaf filter. Used both by the standalone filter
+/// arms (which wrap it in `KEEPFILTERS(FILTER(ALL(cols), pred))`) and by
+/// `Filter::Group` (which combines predicates with `||` / `&&` — real OR).
+/// `depth` bounds nesting: a Group may contain leaves or one level of sub-Groups.
+fn filter_predicate(
+    filter: &Filter,
+    ctx: Option<&DaxCatalogContext>,
+    dim_levels: &[String],
+    depth: usize,
+) -> Result<(String, Vec<String>), DaxCompileError> {
+    match filter {
+        Filter::Member { hierarchy, members } => {
+            if members.is_empty() {
+                return Err(DaxCompileError::EmptyMemberFilter { hierarchy: hierarchy.clone() });
+            }
+            let col = resolve_member_column(hierarchy, members, ctx, dim_levels)?;
+            let list: Vec<String> = members.iter().map(|m| format!("\"{m}\"")).collect();
+            Ok((format!("{col} IN {{{}}}", list.join(", ")), vec![col]))
+        }
+        Filter::MemberLevel { level, members, exclude, .. } => {
+            let col = level_col_ref_ctx(level, ctx);
+            let list: Vec<String> = members.iter().map(|m| format!("\"{m}\"")).collect();
+            let set = format!("{col} IN {{{}}}", list.join(", "));
+            let pred = if *exclude { format!("NOT({set})") } else { set };
+            Ok((pred, vec![col]))
+        }
+        Filter::Range { level, lo, hi } => {
+            let col = if let Some(c) = ctx {
+                if c.labels.contains_key(level.as_str()) {
+                    level_col_ref_ctx(level, ctx)
+                } else if let Some(un) = c.resolve_level_label(level) {
+                    level_col_ref_ctx(un, ctx)
+                } else {
+                    return Err(DaxCompileError::UngroundedRangeFilter { level: level.clone() });
+                }
+            } else {
+                level_col_ref_ctx(level, ctx)
+            };
+            let pred = format!("{col} >= {} && {col} <= {}", range_bound_dax(lo), range_bound_dax(hi));
+            Ok((pred, vec![col]))
+        }
+        Filter::Group { op, filters } => {
+            if depth >= 2 {
+                return Err(DaxCompileError::UngroundedMemberFilter {
+                    hierarchy: "Group".to_string(),
+                    members: "filter nesting exceeds two levels".to_string(),
+                });
+            }
+            if filters.is_empty() {
+                return Err(DaxCompileError::UngroundedMemberFilter {
+                    hierarchy: "Group".to_string(),
+                    members: "empty filter group".to_string(),
+                });
+            }
+            let mut preds = Vec::new();
+            let mut cols = Vec::new();
+            for f in filters {
+                let (p, c) = filter_predicate(f, ctx, dim_levels, depth + 1)?;
+                preds.push(format!("({p})"));
+                cols.extend(c);
+            }
+            let joiner = match op {
+                mqo_spec::FilterGroupOp::Or => " || ",
+                mqo_spec::FilterGroupOp::And => " && ",
+            };
+            Ok((preds.join(joiner), cols))
+        }
+        Filter::CalcGroupMember { .. } => Err(DaxCompileError::UngroundedMemberFilter {
+            hierarchy: "Group".to_string(),
+            members: "CalcGroupMember cannot appear inside a filter Group".to_string(),
+        }),
+    }
+}
+
 fn filter_expr_ctx(
     filter: &Filter,
     ctx: Option<&DaxCatalogContext>,
@@ -482,34 +590,17 @@ fn filter_expr_ctx(
                 member_list.join(", ")
             ))
         }
-        Filter::Group { op, filters } => {
-            // Compile each leaf predicate; reject nested Group (two-level bound).
-            let mut parts = Vec::new();
-            for f in filters {
-                if matches!(f, Filter::Group { .. }) {
-                    return Err(DaxCompileError::UngroundedMemberFilter {
-                        hierarchy: "Group".to_string(),
-                        members: "nested Group not supported (max two levels)".to_string(),
-                    });
-                }
-                parts.push(filter_expr_ctx(f, ctx, dim_levels)?);
-            }
-            if parts.is_empty() {
-                return Err(DaxCompileError::UngroundedMemberFilter {
-                    hierarchy: "Group".to_string(),
-                    members: "empty filter group".to_string(),
-                });
-            }
-            // Wrap each sub-filter's KEEPFILTERS(...) in a combined predicate.
-            // For OR: FILTER(ALL(implied_table), p1 || p2) — approximate:
-            // we can't cleanly AND/OR KEEPFILTERS; emit as a comment-annotated join.
-            // For now emit each part individually (AND is the engine's implicit join;
-            // OR requires a CALCULATE UNION pattern — stubbed, revisit post-verification).
-            let joiner = match op {
-                mqo_spec::FilterGroupOp::And => "\n, ",
-                mqo_spec::FilterGroupOp::Or => "\n/* OR */ , ", // TODO: UNION pattern
-            };
-            Ok(parts.join(joiner))
+        Filter::Group { .. } => {
+            // Real boolean semantics (PRD-mqo-filter-predicate-grammar): build ONE
+            // combined predicate (`||` for OR-of-AND-groups, `&&` for AND-of-OR-groups)
+            // over ALL referenced columns, wrapped in a single FILTER. Because every
+            // dimension level is a column on the flattened 'atscale_catalogs' table,
+            // `ALL(col1, col2, …)` is a valid multi-column table the predicate filters.
+            let (pred, mut cols) = filter_predicate(filter, ctx, dim_levels, 0)?;
+            cols.sort();
+            cols.dedup();
+            let all_cols = cols.join(", ");
+            Ok(format!("KEEPFILTERS(FILTER(ALL({all_cols}), {pred})) /* filter-group */"))
         }
         Filter::MemberLevel { level, members, exclude, .. } => {
             // Caller pinned the level explicitly (PRD-mqo-member-filter-explicit-level):
@@ -807,6 +898,36 @@ mod tests {
         }];
         let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
         assert!(dax.contains("NOT("), "expected NOT-IN, got {dax}");
+    }
+
+    /// Filter::Group OR compiles to a single FILTER with `||` over both columns
+    /// (real OR semantics, PRD-mqo-filter-predicate-grammar — not the AND stub).
+    #[test]
+    fn group_or_emits_disjunctive_predicate() {
+        let ctx = demographics_ctx(true);
+        let mut bound = bound_with_member_filter("customer_demographics", "M");
+        bound.mqo.filters = vec![mqo_spec::Filter::Group {
+            op: mqo_spec::FilterGroupOp::Or,
+            filters: vec![
+                mqo_spec::Filter::MemberLevel {
+                    hierarchy: "customer_demographics".to_string(),
+                    level: "customer_demographics.[Gender]".to_string(),
+                    members: vec!["F".to_string()],
+                    exclude: false,
+                },
+                mqo_spec::Filter::MemberLevel {
+                    hierarchy: "customer_demographics".to_string(),
+                    level: "customer_demographics.[Marital Status]".to_string(),
+                    members: vec!["M".to_string()],
+                    exclude: false,
+                },
+            ],
+        }];
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        assert!(dax.contains("||"), "expected disjunctive predicate, got {dax}");
+        assert!(dax.contains("[Gender]") && dax.contains("[Marital Status]"), "got {dax}");
+        // single FILTER wrapping both, not two separate KEEPFILTERS
+        assert_eq!(dax.matches("FILTER(ALL(").count(), 1, "expected ONE combined FILTER: {dax}");
     }
 
     /// `compile(bound)` with no catalog must be byte-identical to `compile_grounded(bound, None)`.

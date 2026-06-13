@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.10.0 — Real OR semantics for Filter::Group
+
+PRD-mqo-filter-predicate-grammar: Group now compiles to ONE combined predicate
+(`||` for OR-of-AND-groups, `&&` for AND-of-OR-groups) over all referenced
+columns in a single FILTER(ALL(...)), replacing the v0.9.0 stub that emitted
+AND semantics. Extracted filter_predicate() shared by leaf arms + groups. Two-level
+nesting bound. 61 tests (1 new). Verified: marital S OR W -> single FILTER with ||.
+
 ## v0.8.0 — Member grounding declines, never first-level-fallbacks
 
 PRD-mqo-member-grounding-decline-not-fallback. When a level-less Member filter
