@@ -469,6 +469,21 @@ fn check_cross_fact_paths(
     bound: &BoundMqoOutput,
     enriched: &EnrichedColumnGroups,
 ) -> Vec<IncompatibilityReport> {
+    // Filter-only hierarchies (Member/MemberLevel/Range filters that do not also
+    // appear as projected dimensions) are inherently conformed-access: they restrict
+    // rows but do not define the measure's fact context. Never flag them as cross-fact
+    // incompatible (PRD-mqo-crossfact-rejection-calibration: conformed-dimension fix).
+    use mqo_spec::Filter;
+    let filter_hierarchies: std::collections::HashSet<&str> = bound.mqo.filters.iter()
+        .filter_map(|f| match f {
+            Filter::Member { hierarchy, .. } => Some(hierarchy.as_str()),
+            Filter::MemberLevel { hierarchy, .. } => Some(hierarchy.as_str()),
+            _ => None,
+        })
+        .collect();
+    let projected_uniques: std::collections::HashSet<&str> =
+        bound.dimensions.iter().map(|d| d.unique_name.as_str()).collect();
+
     let mut reports = Vec::new();
 
     for measure in &bound.measures {
@@ -479,6 +494,15 @@ fn check_cross_fact_paths(
         for dimension in &bound.dimensions {
             let d_groups = enriched.groups_for(&dimension.unique_name);
             if EnrichedColumnGroups::is_conformed(d_groups) {
+                continue;
+            }
+            // If this dimension is only referenced via a filter hierarchy and not
+            // in the projected dimensions, treat it as conformed (calibration fix).
+            let hier = dimension.unique_name
+                .split('.')
+                .next_back()
+                .unwrap_or(&dimension.unique_name);
+            if filter_hierarchies.contains(hier) && !projected_uniques.contains(dimension.unique_name.as_str()) {
                 continue;
             }
             let intersects = m_groups.iter().any(|g| d_groups.contains(g));
