@@ -318,6 +318,18 @@ pub fn run<S: std::hash::BuildHasher>(
         return Err(rejection);
     }
 
+    // ── Calc-context pre-execution decline (PRD-mqo-calc-context-ratio-measures) ──
+    // Packaged ratio/growth measures (is_calc=true in the catalog) require a
+    // prior-period comparison context: either a time_intelligence op (YoY,
+    // PriorPeriod) or a CalcGroupMember filter. Without it the measure returns
+    // null — a silent failure that looks like data. Decline before execution so
+    // the model can re-issue with the required context. Conservative: only fires
+    // when the measure is *known* is_calc=true in the catalog; unknown measures
+    // pass through (no false-positive for plain additive measures).
+    if let Some(rejection) = check_calc_context(&mqo, catalog) {
+        return Err(rejection);
+    }
+
     let scratch = Scratch::new()?;
     let mqo_path = scratch.write(
         "mqo.json",
@@ -781,6 +793,95 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
     })
 }
 
+/// Pre-execution calc-context check (PRD-mqo-calc-context-ratio-measures).
+///
+/// Returns `Some(PipelineError::ParamRejected)` when the MQO references one or
+/// more measures that are marked `is_calc=true` in the catalog AND no
+/// time-intelligence context is present (empty `time_intelligence` array AND
+/// no `CalcGroupMember` filter). Conservative: measures not found in the
+/// catalog, or whose `is_calc` field is absent/false, pass through unchanged.
+///
+/// Rejected measures are listed by name in the structured `param_rejections`
+/// report with `"reason": "missing_calc_context"` so the model can re-issue
+/// with a `time_intelligence` op (e.g. `YoY`, `PriorPeriod`) or a
+/// `CalcGroupMember` filter.
+fn check_calc_context(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError> {
+    // If the MQO already carries time-intelligence context, pass through.
+    if !mqo.time_intelligence.is_empty() {
+        return None;
+    }
+    // If a CalcGroupMember filter is present, that provides the comparison context.
+    let has_calc_group = mqo.filters.iter().any(|f| {
+        matches!(f, mqo_spec::Filter::CalcGroupMember { .. })
+    });
+    if has_calc_group {
+        return None;
+    }
+
+    let cols = catalog.get("columns").and_then(Value::as_array)?;
+
+    // Build a set of unique_names (and labels) that are is_calc=true in the catalog.
+    // We check both unique_name and label so that label-based MQO references are caught.
+    use std::collections::HashSet;
+    let mut calc_unique_names: HashSet<String> = HashSet::new();
+    for col in cols {
+        let kind = col.get("kind").and_then(Value::as_str).unwrap_or("");
+        if kind != "measure" {
+            continue;
+        }
+        let is_calc = col.get("is_calc").and_then(Value::as_bool).unwrap_or(false);
+        if !is_calc {
+            continue;
+        }
+        if let Some(un) = col.get("unique_name").and_then(Value::as_str) {
+            calc_unique_names.insert(un.to_string());
+        }
+        if let Some(lbl) = col.get("label").and_then(Value::as_str) {
+            calc_unique_names.insert(lbl.to_string());
+        }
+    }
+
+    if calc_unique_names.is_empty() {
+        return None;
+    }
+
+    // Find which MQO measures reference a known is_calc measure.
+    let offending: Vec<String> = mqo
+        .measures
+        .iter()
+        .filter(|m| calc_unique_names.contains(&m.unique_name))
+        .map(|m| m.unique_name.clone())
+        .collect();
+
+    if offending.is_empty() {
+        return None;
+    }
+
+    let rejections: Vec<serde_json::Value> = offending
+        .iter()
+        .map(|name| {
+            serde_json::json!({
+                "field": name,
+                "reason": "missing_calc_context",
+                "message": format!(
+                    "Packaged calc measure '{}' is a ratio/growth member that requires a \
+                     prior-period comparison context to produce a non-null result.",
+                    name
+                ),
+                "hint": "Add a time_intelligence op (e.g. YoY, PriorPeriod) or a \
+                         CalcGroupMember filter to provide the comparison period. Without \
+                         this context the measure evaluates to null."
+            })
+        })
+        .collect();
+
+    let report = serde_json::json!({ "param_rejections": rejections });
+    Some(PipelineError::ParamRejected {
+        count: offending.len(),
+        report,
+    })
+}
+
 /// Produce `filters_applied` and `filters_dropped` arrays from the MQO's Member filters.
 ///
 /// Uses the `mqoguard-filter-bind-report` heuristic: each filter's member keys are searched
@@ -1013,5 +1114,151 @@ mod result_guard_tests {
             "atscale_catalogs_x005b_Net_x0020_Profit_x0020_Tier_x005d_": "300-2000"
         });
         assert_eq!(dax_measure_column_count(row.as_object().unwrap()), 0);
+    }
+}
+
+#[cfg(test)]
+mod calc_context_tests {
+    use super::{check_calc_context, PipelineError};
+    use mqo_spec::{Filter, Mqo, MeasureRef, TimeIntel};
+    use serde_json::json;
+
+    fn make_catalog_with_calc(unique_name: &str, label: &str) -> serde_json::Value {
+        json!({
+            "columns": [
+                {
+                    "kind": "measure",
+                    "unique_name": unique_name,
+                    "label": label,
+                    "is_calc": true
+                }
+            ]
+        })
+    }
+
+    fn make_catalog_additive(unique_name: &str) -> serde_json::Value {
+        json!({
+            "columns": [
+                {
+                    "kind": "measure",
+                    "unique_name": unique_name,
+                    "label": "Revenue",
+                    "is_calc": false
+                }
+            ]
+        })
+    }
+
+    fn mqo_with_measure(unique_name: &str) -> Mqo {
+        Mqo {
+            model: "tpcds".to_string(),
+            measures: vec![MeasureRef { unique_name: unique_name.to_string() }],
+            dimensions: vec![],
+            filters: vec![],
+            time_intelligence: vec![],
+            order: None,
+            limit: None,
+            non_empty: false,
+        }
+    }
+
+    /// AC-2: querying a calc measure without context → ParamRejected with
+    /// missing_calc_context reason.
+    #[test]
+    fn calc_measure_no_context_is_rejected() {
+        let catalog = make_catalog_with_calc(
+            "tpcds.web_sales_increase",
+            "Web Sales Increase",
+        );
+        let mqo = mqo_with_measure("tpcds.web_sales_increase");
+        let result = check_calc_context(&mqo, &catalog);
+        assert!(result.is_some(), "expected ParamRejected for calc measure without context");
+        if let Some(PipelineError::ParamRejected { count, report }) = result {
+            assert_eq!(count, 1);
+            let rejections = report["param_rejections"].as_array().unwrap();
+            assert_eq!(rejections.len(), 1);
+            assert_eq!(rejections[0]["reason"], "missing_calc_context");
+            assert_eq!(rejections[0]["field"], "tpcds.web_sales_increase");
+        }
+    }
+
+    /// AC-2 via label alias: referencing by display label also triggers the decline.
+    #[test]
+    fn calc_measure_by_label_no_context_is_rejected() {
+        let catalog = make_catalog_with_calc(
+            "tpcds.web_sales_increase",
+            "Web Sales Increase",
+        );
+        // Reference by label, not unique_name
+        let mqo = mqo_with_measure("Web Sales Increase");
+        let result = check_calc_context(&mqo, &catalog);
+        assert!(result.is_some(), "label-based reference should also be caught");
+        if let Some(PipelineError::ParamRejected { count, .. }) = result {
+            assert_eq!(count, 1);
+        }
+    }
+
+    /// AC-3 (pass-through): with YoY time_intelligence present, the check passes.
+    #[test]
+    fn calc_measure_with_yoy_passes() {
+        let catalog = make_catalog_with_calc(
+            "tpcds.web_sales_increase",
+            "Web Sales Increase",
+        );
+        let mut mqo = mqo_with_measure("tpcds.web_sales_increase");
+        mqo.time_intelligence = vec![TimeIntel::YoY];
+        let result = check_calc_context(&mqo, &catalog);
+        assert!(result.is_none(), "YoY context should allow the calc measure through");
+    }
+
+    /// AC-3 (pass-through): with PriorPeriod time_intelligence, passes.
+    #[test]
+    fn calc_measure_with_prior_period_passes() {
+        let catalog = make_catalog_with_calc(
+            "tpcds.web_sales_increase",
+            "Web Sales Increase",
+        );
+        let mut mqo = mqo_with_measure("tpcds.web_sales_increase");
+        mqo.time_intelligence = vec![TimeIntel::PriorPeriod];
+        let result = check_calc_context(&mqo, &catalog);
+        assert!(result.is_none(), "PriorPeriod context should allow the calc measure through");
+    }
+
+    /// AC-3 (pass-through): with CalcGroupMember filter, passes.
+    #[test]
+    fn calc_measure_with_calc_group_member_passes() {
+        let catalog = make_catalog_with_calc(
+            "tpcds.web_sales_increase",
+            "Web Sales Increase",
+        );
+        let mut mqo = mqo_with_measure("tpcds.web_sales_increase");
+        mqo.filters = vec![Filter::CalcGroupMember {
+            calc_group: "Time Calculations".to_string(),
+            member: "Prior Period".to_string(),
+        }];
+        let result = check_calc_context(&mqo, &catalog);
+        assert!(result.is_none(), "CalcGroupMember filter should provide context");
+    }
+
+    /// AC-5: plain additive measures are unaffected (no false positive).
+    #[test]
+    fn plain_additive_measure_passes_through() {
+        let catalog = make_catalog_additive("tpcds.web_sales");
+        let mqo = mqo_with_measure("tpcds.web_sales");
+        let result = check_calc_context(&mqo, &catalog);
+        assert!(result.is_none(), "plain additive measure must not be rejected");
+    }
+
+    /// Conservative: measure not in catalog at all → passes through (no false-reject).
+    #[test]
+    fn unknown_measure_not_in_catalog_passes_through() {
+        let catalog = make_catalog_with_calc(
+            "tpcds.web_sales_increase",
+            "Web Sales Increase",
+        );
+        // Different measure not in catalog
+        let mqo = mqo_with_measure("tpcds.web_sales");
+        let result = check_calc_context(&mqo, &catalog);
+        assert!(result.is_none(), "measure not in catalog is not rejected");
     }
 }
