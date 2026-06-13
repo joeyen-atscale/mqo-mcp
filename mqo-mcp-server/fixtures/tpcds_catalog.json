@@ -214,7 +214,16 @@
       "kind": "level",
       "hierarchy": "customer_address",
       "level": "Customer GMT Offset",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "integer",
+      "domain": [
+        "-10",
+        "-5",
+        "-6",
+        "-7",
+        "-8",
+        "-9"
+      ]
     },
     {
       "unique_name": "customer_dimension.[Customer ID]",
@@ -687,7 +696,60 @@
       "kind": "level",
       "hierarchy": "product_dimension",
       "level": "Product Manager ID",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "integer",
+      "domain": [
+        "1",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "2",
+        "20",
+        "21",
+        "22",
+        "23",
+        "24",
+        "25",
+        "26",
+        "27",
+        "28",
+        "29",
+        "3",
+        "30",
+        "31",
+        "32",
+        "33",
+        "34",
+        "35",
+        "39",
+        "4",
+        "40",
+        "44",
+        "46",
+        "48",
+        "49",
+        "5",
+        "52",
+        "53",
+        "54",
+        "55",
+        "57",
+        "6",
+        "60",
+        "61",
+        "64",
+        "65",
+        "7",
+        "8",
+        "9"
+      ]
     },
     {
       "unique_name": "product_dimension.[Product Manufacturer ID]",
@@ -1575,7 +1637,17 @@
       "kind": "level",
       "hierarchy": "sold_date_dimensions",
       "level": "Sold Day of Week",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "integer",
+      "domain": [
+        "0",
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6"
+      ]
     },
     {
       "unique_name": "sold_date_dimensions.[Sold Following Holiday Indicator]",
@@ -1599,7 +1671,23 @@
       "kind": "level",
       "hierarchy": "sold_time_dimension",
       "level": "Sold Hour",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "integer",
+      "domain": [
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "8",
+        "9"
+      ]
     },
     {
       "unique_name": "sold_time_dimension.[Sold Meal Time]",
@@ -1607,7 +1695,13 @@
       "kind": "level",
       "hierarchy": "sold_time_dimension",
       "level": "Sold Meal Time",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "string",
+      "domain": [
+        "breakfast",
+        "dinner",
+        "lunch"
+      ]
     },
     {
       "unique_name": "sold_time_dimension.[Sold Minute]",
@@ -1748,7 +1842,28 @@
       "kind": "level",
       "hierarchy": "store_dimension",
       "level": "Store City",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "string",
+      "domain": [
+        "Bethel",
+        "Centerville",
+        "Fairview",
+        "Five Points",
+        "Greenwood",
+        "Liberty",
+        "Midway",
+        "Mount Pleasant",
+        "New Hope",
+        "Oak Grove",
+        "Oakland",
+        "Pleasant Grove",
+        "Pleasant Hill",
+        "Pleasant Valley",
+        "Riverside",
+        "Salem",
+        "Shady Grove",
+        "Union"
+      ]
     },
     {
       "unique_name": "store_dimension.[Store Company ID]",
@@ -1792,7 +1907,59 @@
       "kind": "level",
       "hierarchy": "store_dimension",
       "level": "Store Floor Space",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "integer",
+      "domain": [
+        "5060141",
+        "5501548",
+        "5742728",
+        "5813235",
+        "5891002",
+        "5930130",
+        "5956718",
+        "6035829",
+        "6070651",
+        "6100425",
+        "6353684",
+        "6360986",
+        "6368615",
+        "6383749",
+        "6465941",
+        "6504783",
+        "6593047",
+        "6713199",
+        "6734875",
+        "6758822",
+        "6804511",
+        "6918368",
+        "6953756",
+        "7012764",
+        "7072243",
+        "7142954",
+        "7339540",
+        "7383819",
+        "7478204",
+        "7610137",
+        "7626265",
+        "7638952",
+        "7825489",
+        "8140537",
+        "8253102",
+        "8445250",
+        "8555120",
+        "8631860",
+        "8820369",
+        "8926907",
+        "9013447",
+        "9059442",
+        "9223725",
+        "9236560",
+        "9569201",
+        "9584408",
+        "9599785",
+        "9715561",
+        "9845805"
+      ]
     },
     {
       "unique_name": "store_dimension.[Store GMT Offset]",
@@ -1800,7 +1967,12 @@
       "kind": "level",
       "hierarchy": "store_dimension",
       "level": "Store GMT Offset",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "integer",
+      "domain": [
+        "-5",
+        "-6"
+      ]
     },
     {
       "unique_name": "store_dimension.[Store Hours]",
@@ -1936,7 +2108,20 @@
       "kind": "level",
       "hierarchy": "store_dimension",
       "level": "Store Name",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "string",
+      "domain": [
+        "able",
+        "anti",
+        "ation",
+        "bar",
+        "cally",
+        "eing",
+        "ese",
+        "n st",
+        "ought",
+        "pri"
+      ]
     },
     {
       "unique_name": "store_dimension.[Store Number]",

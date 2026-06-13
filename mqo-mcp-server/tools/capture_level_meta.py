@@ -54,6 +54,24 @@ TARGETS = [
     ("ship_mode", "Ship Mode Type", "Web Sales"),
     ("ship_mode", "Carrier", "Web Sales"),
     ("sold_date_week_hierarchy", "Sold Calendar Week", "Total Store Sales"),
+    # qwf20 filter levels (domain coverage expansion — PRD-mqo-catalog-level-domain-metadata)
+    ("product_dimension", "Item Color", "Total Store Sales"),
+    ("product_dimension", "Product Manager ID", "Total Store Sales"),
+    ("store_dimension", "Store Name", "Total Store Sales"),
+    ("store_dimension", "Store City", "Total Store Sales"),
+    ("sold_time_dimension", "Sold Hour", "Total Store Sales"),
+    ("sold_time_dimension", "Sold Meal Time", "Total Store Sales"),
+    ("sold_date_dimensions", "Sold Day of Week", "Total Store Sales"),
+    ("customer_demographics", "Buy Potential", "Total Store Sales"),
+    ("customer_demographics", "Household Dependents", "Total Store Sales"),
+    ("customer_demographics", "Vehicle Count", "Total Store Sales"),
+    ("customer_address", "Customer GMT Offset", "Total Store Sales"),
+    ("customer_address", "Customer State", "Total Store Sales"),
+    ("store_dimension", "Store GMT Offset", "Total Store Sales"),
+    ("store_dimension", "Store Floor Space", "Total Store Sales"),
+    ("promotion_dimension", "Promotion Channel", "Total Store Sales"),
+    ("promotion_dimension", "In Promotion", "Total Store Sales"),
+    ("item_dimension", "Item Class Name", "Total Store Sales"),
 ]
 
 INT_RE = re.compile(r"-?\d+")
