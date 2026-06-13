@@ -21,6 +21,10 @@ struct ColumnEntryMirror {
     unique_name: String,
     label: String,
     kind: String,
+    /// For `kind == "level"`: optional enumerated member domain (from the
+    /// level-domain capture). Drives domain-aware `Member`-filter grounding.
+    #[serde(default)]
+    domain: Option<Vec<String>>,
 }
 
 /// Minimal mirror of `CatalogSnapshot` from `mqo-catalog-binder`.
@@ -72,6 +76,13 @@ pub struct DaxCatalogContext {
     /// Ordering is insertion-order (as the snapshot lists levels), which is
     /// deterministic (NFR3).
     pub hierarchy_levels: HashMap<String, Vec<String>>,
+
+    /// `level unique_name → enumerated member domain` for levels that carry one
+    /// (from the level-domain capture). Used by [`Self::resolve_member_level`] to
+    /// bind a `Member` filter value to the level whose domain contains it, instead
+    /// of the hierarchy's first level. Levels without a domain are absent here and
+    /// fall back to first-level grounding.
+    pub level_domains: HashMap<String, Vec<String>>,
 
     /// Whether the target engine supports "Mark as Date Table" and thus the
     /// `SAMEPERIODLASTYEAR` / `DATESYTD` / `DATESQTD` / `DATESMTD` /
@@ -132,6 +143,7 @@ impl DaxCatalogContext {
         let mut labels: HashMap<String, String> = HashMap::new();
         let mut measure_names = std::collections::HashSet::new();
         let mut hierarchy_levels: HashMap<String, Vec<String>> = HashMap::new();
+        let mut level_domains: HashMap<String, Vec<String>> = HashMap::new();
         // Infer date_level_unique_name from the first column with kind "date_level"
         // or "date_dim" when not explicitly provided in the snapshot.
         let mut inferred_date_level: Option<String> = None;
@@ -146,6 +158,14 @@ impl DaxCatalogContext {
                     && (col.kind == "date_level" || col.kind == "date_dim")
                 {
                     inferred_date_level = Some(col.unique_name.clone());
+                }
+
+                // Record the level's enumerated domain (if captured) for
+                // domain-aware Member-filter grounding.
+                if let Some(d) = &col.domain {
+                    if !d.is_empty() {
+                        level_domains.insert(col.unique_name.clone(), d.clone());
+                    }
                 }
 
                 // For level columns, build the hierarchy_levels reverse index.
@@ -199,9 +219,64 @@ impl DaxCatalogContext {
             labels,
             measure_names,
             hierarchy_levels,
+            level_domains,
             has_date_table: snapshot.has_date_table,
             date_level_unique_name,
         })
+    }
+
+    /// Resolve a `Member` filter to the level whose enumerated domain CONTAINS the
+    /// member value(s) — the fix for the silent first-level mis-binding
+    /// (PRD-mqo-member-filter-domain-grounding). Returns the `unique_name` of the
+    /// first level (in catalog order) of `hierarchy` whose captured domain contains
+    /// the first member (case-insensitive). Returns `None` when the hierarchy has no
+    /// domain metadata or no level's domain contains the member — callers then fall
+    /// back to [`Self::resolve_hierarchy_first_level`] (no regression).
+    /// `dim_levels` are the level `unique_name`s the query groups by; when a
+    /// member is ambiguous (its value appears in more than one level's domain,
+    /// e.g. "M" in both Gender and Marital Status), a level that the query also
+    /// groups by wins (you filter the attribute you're breaking out). Resolution:
+    /// (1) a candidate level (domain contains the member) that is also a query
+    /// dimension; else (2) the sole candidate if exactly one; else `None`
+    /// (ambiguous with no signal) → caller falls back to first-level.
+    #[must_use]
+    pub fn resolve_member_level(
+        &self,
+        hierarchy: &str,
+        members: &[String],
+        dim_levels: &[String],
+    ) -> Option<&str> {
+        let probe = members.first()?.to_lowercase();
+        let levels = self.hierarchy_levels.get(hierarchy).or_else(|| {
+            let lower = hierarchy.to_lowercase();
+            self.hierarchy_levels
+                .iter()
+                .find(|(k, _)| k.to_lowercase() == lower)
+                .map(|(_, v)| v)
+        })?;
+        // Candidates: levels of this hierarchy whose enumerated domain contains the
+        // member. Dedup by unique_name — the reverse index can list a level under
+        // several alias keys, so the same level may appear more than once.
+        let mut candidates: Vec<&String> = levels
+            .iter()
+            .filter(|lvl| {
+                self.level_domains
+                    .get(*lvl)
+                    .is_some_and(|d| d.iter().any(|v| v.to_lowercase() == probe))
+            })
+            .collect();
+        candidates.sort();
+        candidates.dedup();
+        // (1) prefer a candidate the query also groups by (disambiguates "M").
+        if let Some(c) = candidates.iter().find(|c| dim_levels.iter().any(|d| d == **c)) {
+            return Some(c.as_str());
+        }
+        // (2) sole unambiguous candidate.
+        if candidates.len() == 1 {
+            return Some(candidates[0].as_str());
+        }
+        // (≥2 candidates, none a dimension) ambiguous → no guess; caller falls back.
+        None
     }
 
     /// Resolve a bare display label back to its level unique-name.
@@ -365,5 +440,54 @@ mod tests {
             ctx.date_level_unique_name.as_deref(),
             Some("date_dim.cal.[Year]")
         );
+    }
+}
+
+#[cfg(test)]
+mod member_grounding_tests {
+    use super::DaxCatalogContext;
+
+    fn ctx() -> DaxCatalogContext {
+        // Gender {F,M} and Marital Status {D,M,S,U,W} both contain "M" (ambiguous);
+        // Product Category {Electronics,...} contains "Electronics" (unambiguous).
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level","unique_name":"customer_demographics.[Gender]","label":"Gender","hierarchy":"customer_demographics","level":"Gender","domain":["F","M"]},
+          {"kind":"level","unique_name":"customer_demographics.[Marital Status]","label":"Marital Status","hierarchy":"customer_demographics","level":"Marital Status","domain":["D","M","S","U","W"]},
+          {"kind":"level","unique_name":"product_dimension.[Product Category]","label":"Product Category","hierarchy":"product_dimension","level":"Product Category","domain":["Books","Electronics","Home"]}
+        ]}"#;
+        DaxCatalogContext::from_json(json).unwrap()
+    }
+
+    #[test]
+    fn unambiguous_member_binds_to_its_level() {
+        let c = ctx();
+        let got = c.resolve_member_level("product_dimension", &["Electronics".into()], &[]);
+        assert_eq!(got, Some("product_dimension.[Product Category]"));
+    }
+
+    #[test]
+    fn ambiguous_member_prefers_dimension_level() {
+        let c = ctx();
+        // "M" is in both Gender and Marital Status; the query groups by Marital Status.
+        let got = c.resolve_member_level(
+            "customer_demographics",
+            &["M".into()],
+            &["customer_demographics.[Marital Status]".into()],
+        );
+        assert_eq!(got, Some("customer_demographics.[Marital Status]"));
+    }
+
+    #[test]
+    fn ambiguous_member_no_dim_signal_declines() {
+        let c = ctx();
+        // No dimension on the hierarchy -> ambiguous "M" -> None (caller falls back).
+        assert_eq!(c.resolve_member_level("customer_demographics", &["M".into()], &[]), None);
+    }
+
+    #[test]
+    fn no_domain_metadata_declines() {
+        let c = ctx();
+        // hierarchy without domain'd levels -> None -> caller uses first-level.
+        assert_eq!(c.resolve_member_level("nonexistent_dim", &["x".into()], &[]), None);
     }
 }

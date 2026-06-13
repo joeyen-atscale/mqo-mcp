@@ -2488,7 +2488,7 @@ dependencies = [
 
 [[package]]
 name = "mqo-dax-compiler"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "clap",
  "mqo-spec",
@@ -2555,7 +2555,7 @@ dependencies = [
 
 [[package]]
 name = "mqo-mcp-server"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "clap",
  "dh-export",

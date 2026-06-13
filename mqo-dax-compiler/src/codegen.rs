@@ -93,10 +93,13 @@ pub fn compile_grounded(
         .map(|d| level_col_ref_ctx(&d.unique_name, ctx))
         .collect();
 
-    // Build filter expressions.
+    // Build filter expressions. The query's dimension level unique_names are
+    // passed so an ambiguous Member value (e.g. "M" in both Gender and Marital
+    // Status) binds to the level the query groups by.
+    let dim_levels: Vec<String> = bound.dimensions.iter().map(|d| d.unique_name.clone()).collect();
     let mut filter_exprs: Vec<String> = Vec::new();
     for f in &bound.mqo.filters {
-        filter_exprs.push(filter_expr_ctx(f, ctx)?);
+        filter_exprs.push(filter_expr_ctx(f, ctx, &dim_levels)?);
     }
     // Calc-group member filters (from bound.calc_group_members).
     for cgm in &bound.calc_group_members {
@@ -432,6 +435,7 @@ fn calc_group_filter(calc_group: &str, member: &str) -> String {
 fn filter_expr_ctx(
     filter: &Filter,
     ctx: Option<&DaxCatalogContext>,
+    dim_levels: &[String],
 ) -> Result<String, DaxCompileError> {
     match filter {
         Filter::Member { hierarchy, members } => {
@@ -446,8 +450,16 @@ fn filter_expr_ctx(
             // Without a grounded column reference the engine rejects the query
             // with "Unknown column [<hierarchy>]", so we must fail loud here
             // rather than emitting Hierarchy[Hierarchy].
+            // Domain-aware grounding: bind to the level whose enumerated domain
+            // contains the member value(s); fall back to the hierarchy's first
+            // level only when no domain match is found (PRD-mqo-member-filter-
+            // domain-grounding). This fixes the silent mis-binding where e.g.
+            // customer_demographics="M" bound to [Credit Rating] and returned 0 rows.
             let level_unique_name = ctx
-                .and_then(|c| c.resolve_hierarchy_first_level(hierarchy))
+                .and_then(|c| {
+                    c.resolve_member_level(hierarchy, members, dim_levels)
+                        .or_else(|| c.resolve_hierarchy_first_level(hierarchy))
+                })
                 .ok_or_else(|| DaxCompileError::UngroundedMemberFilter {
                     hierarchy: hierarchy.clone(),
                     members: members.join(", "),
@@ -706,7 +718,7 @@ mod tests {
             lo: 1.0_f64,
             hi: 12.0_f64,
         };
-        let result = filter_expr_ctx(&filter, Some(&ctx)).unwrap();
+        let result = filter_expr_ctx(&filter, Some(&ctx), &[]).unwrap();
         assert!(
             result.contains("'tpcds_benchmark_model'"),
             "expected grounded column with table name, got: {result}"
@@ -726,7 +738,7 @@ mod tests {
             lo: 1.0_f64,
             hi: 12.0_f64,
         };
-        let result = filter_expr_ctx(&filter, Some(&ctx)).unwrap();
+        let result = filter_expr_ctx(&filter, Some(&ctx), &[]).unwrap();
         assert!(
             result.contains("Inventory Calendar Month"),
             "should keep label: {result}"
@@ -746,7 +758,7 @@ mod tests {
             lo: 1.0_f64,
             hi: 5.0_f64,
         };
-        let err = filter_expr_ctx(&filter, Some(&ctx)).unwrap_err();
+        let err = filter_expr_ctx(&filter, Some(&ctx), &[]).unwrap_err();
         assert!(
             matches!(err, DaxCompileError::UngroundedRangeFilter { .. }),
             "expected UngroundedRangeFilter, got: {err}"
@@ -761,7 +773,7 @@ mod tests {
             lo: 1.0_f64,
             hi: 10.0_f64,
         };
-        let result = filter_expr_ctx(&filter, None).unwrap();
+        let result = filter_expr_ctx(&filter, None, &[]).unwrap();
         assert!(
             result.contains("KEEPFILTERS"),
             "should emit KEEPFILTERS: {result}"
