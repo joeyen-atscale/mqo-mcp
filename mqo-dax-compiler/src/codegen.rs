@@ -482,6 +482,18 @@ fn filter_expr_ctx(
                 member_list.join(", ")
             ))
         }
+        Filter::MemberLevel { level, members, exclude, .. } => {
+            // Caller pinned the level explicitly (PRD-mqo-member-filter-explicit-level):
+            // bind directly to it, no domain-scan grounding. `exclude` → NOT-IN.
+            let col = level_col_ref_ctx(level, ctx);
+            let member_list: Vec<String> =
+                members.iter().map(|m| format!("\"{m}\"")).collect();
+            let set = format!("{col} IN {{{}}}", member_list.join(", "));
+            let pred = if *exclude { format!("NOT({set})") } else { set };
+            Ok(format!(
+                "KEEPFILTERS(FILTER(ALL({col}), {pred})) /* member-at-level */"
+            ))
+        }
         Filter::Range { level, lo, hi } => {
             // Resolve the level to a grounded column reference.
             //
@@ -728,6 +740,38 @@ mod tests {
             dax.contains("grounded-from-member"),
             "expected first-level grounding, got {dax}"
         );
+    }
+
+    /// Explicit-level member filter (PRD-mqo-member-filter-explicit-level): pins
+    /// the level directly, disambiguating "M" to Gender (not Marital/Credit Rating).
+    #[test]
+    fn member_level_pins_the_named_level() {
+        let ctx = demographics_ctx(true);
+        let mut bound = bound_with_member_filter("customer_demographics", "M");
+        bound.mqo.filters = vec![mqo_spec::Filter::MemberLevel {
+            hierarchy: "customer_demographics".to_string(),
+            level: "customer_demographics.[Gender]".to_string(),
+            members: vec!["M".to_string()],
+            exclude: false,
+        }];
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        assert!(dax.contains("[Gender]"), "expected Gender column, got {dax}");
+        assert!(dax.contains("member-at-level"), "got {dax}");
+    }
+
+    /// `exclude: true` emits a NOT-IN predicate.
+    #[test]
+    fn member_level_exclude_emits_not_in() {
+        let ctx = demographics_ctx(true);
+        let mut bound = bound_with_member_filter("customer_demographics", "M");
+        bound.mqo.filters = vec![mqo_spec::Filter::MemberLevel {
+            hierarchy: "customer_demographics".to_string(),
+            level: "customer_demographics.[Marital Status]".to_string(),
+            members: vec!["U".to_string()],
+            exclude: true,
+        }];
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        assert!(dax.contains("NOT("), "expected NOT-IN, got {dax}");
     }
 
     /// `compile(bound)` with no catalog must be byte-identical to `compile_grounded(bound, None)`.

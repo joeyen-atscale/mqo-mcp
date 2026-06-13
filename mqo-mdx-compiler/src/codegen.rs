@@ -226,6 +226,16 @@ fn build_where_clause(bound: &BoundMqoInput) -> String {
                     members.push(format!("[{hierarchy}].[{mk}]"));
                 }
             }
+            Filter::MemberLevel { hierarchy, members: mem_keys, exclude, .. } => {
+                // DAX-first slice (PRD-mqo-member-filter-explicit-level): include
+                // members by hierarchy as MDX slicer members; NOT-IN exclusion is
+                // not directly expressible as an MDX slicer member — deferred.
+                if !*exclude {
+                    for mk in mem_keys {
+                        members.push(format!("[{hierarchy}].[{mk}]"));
+                    }
+                }
+            }
             Filter::CalcGroupMember { calc_group, member } => {
                 members.push(format!("[{calc_group}].[{member}]"));
             }

@@ -120,6 +120,24 @@ pub enum Filter {
         members: Vec<String>,
     },
 
+    /// Include only the listed member keys within an **explicitly named level**
+    /// of a hierarchy (PRD-mqo-member-filter-explicit-level). Unlike `Member`,
+    /// which lets the compiler ground the value to a level by domain scan, this
+    /// pins the level directly — required to disambiguate a member that appears
+    /// in more than one level of the hierarchy (e.g. "M" ∈ Gender ∧ Marital
+    /// Status). `exclude: true` means NOT-IN.
+    MemberLevel {
+        /// The hierarchy to filter on.
+        hierarchy: String,
+        /// The fully-qualified level unique_name (e.g. `customer_demographics.[Gender]`).
+        level: String,
+        /// The member keys.
+        members: Vec<String>,
+        /// When true, exclude these members (NOT-IN) instead of including them.
+        #[serde(default)]
+        exclude: bool,
+    },
+
     /// Include only tuples where a level's value falls in `[lo, hi]`.
     Range {
         /// The level to filter on.
