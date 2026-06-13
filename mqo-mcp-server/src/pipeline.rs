@@ -841,6 +841,31 @@ fn check_calc_context(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineEr
         }
     }
 
+    // Fallback: AtScale XMLA does not always set is_calc=true for packaged
+    // ratio/growth calc members (the live model returns is_calc=false for
+    // "Web Sales Increase", "Store Sales Increase", etc.). Supplement with
+    // a label-pattern heuristic: any measure whose label contains one of
+    // these context-implying keywords almost certainly needs a prior-period
+    // frame. OQ-2 resolution: curated-pattern approach until is_calc is
+    // faithfully captured in the catalog snapshot.
+    const CALC_KEYWORDS: &[&str] = &[
+        "increase", "growth", "ratio", "change", "prior period",
+        "yoy", "vs prior", "vs last", "week over week", "mom", "qoq",
+    ];
+    for col in cols {
+        let kind = col.get("kind").and_then(Value::as_str).unwrap_or("");
+        if kind != "measure" { continue; }
+        let lbl = col.get("label").and_then(Value::as_str).unwrap_or("").to_lowercase();
+        if CALC_KEYWORDS.iter().any(|k| lbl.contains(k)) {
+            if let Some(un) = col.get("unique_name").and_then(Value::as_str) {
+                calc_unique_names.insert(un.to_string());
+            }
+            if let Some(l) = col.get("label").and_then(Value::as_str) {
+                calc_unique_names.insert(l.to_string());
+            }
+        }
+    }
+
     if calc_unique_names.is_empty() {
         return None;
     }
