@@ -72,8 +72,10 @@ pub enum DaxCompileError {
     ///
     /// To fix: supply a `DaxCatalogContext` that covers this hierarchy.
     #[error(
-        "Member filter on hierarchy '{hierarchy}' has no catalog context to resolve \
-         the level column (members: [{members}]); supply a DaxCatalogContext that covers this hierarchy"
+        "Member filter on hierarchy '{hierarchy}' could not be grounded to a level \
+         (members: [{members}]): no level's domain contains the value, or the value is \
+         ambiguous across levels. Specify the level explicitly, or query with the \
+         intended level as a dimension to disambiguate."
     )]
     UngroundedMemberFilter {
         /// The hierarchy name from the filter spec.

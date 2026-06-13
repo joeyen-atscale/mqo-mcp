@@ -321,6 +321,27 @@ impl DaxCatalogContext {
         }
         None
     }
+
+    /// True when at least one level of `hierarchy` carries a captured domain.
+    ///
+    /// Drives the compiler's decline-vs-fallback decision
+    /// (PRD-mqo-member-grounding-decline-not-fallback): when a member filter
+    /// finds no domain match, the compiler should **decline** (honest typed
+    /// error) if the hierarchy has domains to decide on, but may **fall back**
+    /// to first-level grounding only when the hierarchy has *no* captured
+    /// domains at all (legacy behavior on un-ingested deployments — the OQ-1
+    /// safety valve that prevents a mass-decline regression).
+    #[must_use]
+    pub fn hierarchy_has_any_domain(&self, hierarchy: &str) -> bool {
+        let levels = self.hierarchy_levels.get(hierarchy).or_else(|| {
+            let lower = hierarchy.to_lowercase();
+            self.hierarchy_levels
+                .iter()
+                .find(|(k, _)| k.to_lowercase() == lower)
+                .map(|(_, v)| v)
+        });
+        levels.is_some_and(|lvls| lvls.iter().any(|l| self.level_domains.contains_key(l)))
+    }
 }
 
 #[cfg(test)]
@@ -489,5 +510,27 @@ mod member_grounding_tests {
         let c = ctx();
         // hierarchy without domain'd levels -> None -> caller uses first-level.
         assert_eq!(c.resolve_member_level("nonexistent_dim", &["x".into()], &[]), None);
+    }
+
+    // PRD-mqo-member-grounding-decline-not-fallback: the compiler falls back to
+    // first-level grounding ONLY when the hierarchy has no captured domains; when
+    // domains exist but none match, it declines. hierarchy_has_any_domain is the gate.
+    #[test]
+    fn hierarchy_with_captured_domains_reports_true() {
+        let c = ctx();
+        assert!(c.hierarchy_has_any_domain("customer_demographics"));
+        assert!(c.hierarchy_has_any_domain("product_dimension"));
+    }
+
+    #[test]
+    fn hierarchy_without_domains_reports_false() {
+        // store_dimension has a level but NO domain -> false (safety valve keeps
+        // first-level fallback for un-ingested hierarchies).
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level","unique_name":"store_dimension.[Store Name]","label":"Store Name","hierarchy":"store_dimension","level":"Store Name"}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        assert!(!c.hierarchy_has_any_domain("store_dimension"));
+        assert!(!c.hierarchy_has_any_domain("nonexistent_dim"));
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "mqo-dax-compiler"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 rust-version = "1.70.0"
 description = "Compile a BoundMqo to a DAX EVALUATE query string"

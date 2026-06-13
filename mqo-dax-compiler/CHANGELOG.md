@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.8.0 — Member grounding declines, never first-level-fallbacks
+
+PRD-mqo-member-grounding-decline-not-fallback. When a level-less Member filter
+finds no domain match, the compiler now returns a typed UngroundedMemberFilter
+decline instead of silently grounding to the hierarchy's first level (the source
+of the qwf20 silent 0-row misgrounds). Safety valve: first-level fallback is kept
+ONLY when the hierarchy carries no captured domains at all (hierarchy_has_any_domain),
+so un-ingested deployments don't regress. 58 tests (4 new).
+
+
 ## v0.7.0 — 2026-06-12
 
 - **Domain-aware Member-filter grounding** (PRD-mqo-member-filter-domain-grounding).

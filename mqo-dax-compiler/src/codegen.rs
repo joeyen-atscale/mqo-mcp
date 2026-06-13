@@ -451,14 +451,24 @@ fn filter_expr_ctx(
             // with "Unknown column [<hierarchy>]", so we must fail loud here
             // rather than emitting Hierarchy[Hierarchy].
             // Domain-aware grounding: bind to the level whose enumerated domain
-            // contains the member value(s); fall back to the hierarchy's first
-            // level only when no domain match is found (PRD-mqo-member-filter-
-            // domain-grounding). This fixes the silent mis-binding where e.g.
-            // customer_demographics="M" bound to [Credit Rating] and returned 0 rows.
+            // contains the member value(s) (PRD-mqo-member-filter-domain-grounding).
+            // When no domain match is found, DECLINE with a typed error rather than
+            // silently grounding to the first level (PRD-mqo-member-grounding-decline-
+            // not-fallback) — the first-level fallback was the source of the silent
+            // 0-row misgrounds (customer_demographics="M" → [Credit Rating]). Safety
+            // valve (OQ-1): fall back to first-level ONLY when the hierarchy carries
+            // no captured domains at all, so un-ingested deployments don't regress to
+            // a mass decline.
             let level_unique_name = ctx
                 .and_then(|c| {
                     c.resolve_member_level(hierarchy, members, dim_levels)
-                        .or_else(|| c.resolve_hierarchy_first_level(hierarchy))
+                        .or_else(|| {
+                            if c.hierarchy_has_any_domain(hierarchy) {
+                                None // domains exist but none matched → decline (below)
+                            } else {
+                                c.resolve_hierarchy_first_level(hierarchy)
+                            }
+                        })
                 })
                 .ok_or_else(|| DaxCompileError::UngroundedMemberFilter {
                     hierarchy: hierarchy.clone(),
@@ -647,6 +657,77 @@ mod tests {
                 .unwrap_or_default(),
             calc_group_members: vec![],
         }
+    }
+
+    // ── Decline-not-fallback (PRD-mqo-member-grounding-decline-not-fallback) ──
+
+    fn demographics_ctx(with_domain: bool) -> DaxCatalogContext {
+        let (d1, d2) = if with_domain {
+            (r#","domain":["F","M"]"#, r#","domain":["D","M","S","U","W"]"#)
+        } else {
+            ("", "")
+        };
+        let json = format!(
+            r#"{{"catalog":"atscale_catalogs","columns":[
+              {{"kind":"level","unique_name":"customer_demographics.[Gender]","label":"Gender","hierarchy":"customer_demographics","level":"Gender"{d1}}},
+              {{"kind":"level","unique_name":"customer_demographics.[Marital Status]","label":"Marital Status","hierarchy":"customer_demographics","level":"Marital Status"{d2}}},
+              {{"kind":"measure","unique_name":"tpcds.m","label":"M"}}
+            ]}}"#
+        );
+        DaxCatalogContext::from_json(&json).unwrap()
+    }
+
+    fn bound_with_member_filter(hierarchy: &str, member: &str) -> BoundMqoInput {
+        BoundMqoInput {
+            mqo: Mqo {
+                model: "test".to_string(),
+                measures: vec![],
+                dimensions: vec![],
+                filters: vec![mqo_spec::Filter::Member {
+                    hierarchy: hierarchy.to_string(),
+                    members: vec![member.to_string()],
+                }],
+                limit: None,
+                order: None,
+                time_intelligence: vec![],
+                non_empty: false,
+            },
+            measures: vec![BoundMeasureInput {
+                unique_name: "tpcds.m".to_string(),
+                is_calc: false,
+                semi_additive: false,
+                required_dimension: None,
+                trigger_hierarchies: vec![],
+            }],
+            dimensions: vec![],
+            calc_group_members: vec![],
+        }
+    }
+
+    /// Domains exist but the ambiguous member matches none unambiguously → DECLINE
+    /// with a typed error, never a silent first-level grounding.
+    #[test]
+    fn ambiguous_member_with_domains_declines_not_fallback() {
+        let ctx = demographics_ctx(true);
+        let bound = bound_with_member_filter("customer_demographics", "M");
+        let err = compile_grounded(&bound, Some(&ctx)).unwrap_err();
+        assert!(
+            matches!(err, crate::DaxCompileError::UngroundedMemberFilter { .. }),
+            "expected a typed decline, got {err:?}"
+        );
+    }
+
+    /// No captured domains anywhere on the hierarchy → safety valve keeps the
+    /// legacy first-level fallback (un-ingested deployments don't mass-decline).
+    #[test]
+    fn member_with_no_domains_falls_back_to_first_level() {
+        let ctx = demographics_ctx(false);
+        let bound = bound_with_member_filter("customer_demographics", "M");
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        assert!(
+            dax.contains("grounded-from-member"),
+            "expected first-level grounding, got {dax}"
+        );
     }
 
     /// `compile(bound)` with no catalog must be byte-identical to `compile_grounded(bound, None)`.
