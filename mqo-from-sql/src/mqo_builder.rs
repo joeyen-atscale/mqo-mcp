@@ -72,6 +72,7 @@ pub fn build_bound_mqo(
         order: None,
         limit: parsed.limit,
         non_empty: true,
+        projection: false,
     };
 
     // Validate

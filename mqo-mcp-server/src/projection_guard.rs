@@ -335,6 +335,7 @@ mod tests {
             order: None,
             limit: None,
             non_empty: false,
+            projection: false,
         }
     }
 
@@ -420,6 +421,7 @@ mod tests {
             order: None,
             limit: None,
             non_empty: false,
+            projection: false,
         };
         assert!(check_projection_cardinality(&mqo, &catalog, 10_000).is_ok());
     }

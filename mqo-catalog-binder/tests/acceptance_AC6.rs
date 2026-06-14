@@ -81,7 +81,8 @@ fn ac6_two_measures_one_cross_fact_dimension_two_reports() {
         order: None,
         limit: None,
         non_empty: false,
-    };
+        projection: false,
+        };
 
     match bind_with_compat(&mqo, &snapshot, &enriched) {
         BindResult::Incompatible(reports) => {
@@ -128,7 +129,8 @@ fn ac6_one_measure_two_cross_fact_dimensions_two_reports() {
         order: None,
         limit: None,
         non_empty: false,
-    };
+        projection: false,
+        };
 
     match bind_with_compat(&mqo, &snapshot, &enriched) {
         BindResult::Incompatible(reports) => {

@@ -146,6 +146,7 @@ mod integration_tests {
             order: None,
             limit: None,
             non_empty: false,
+            projection: false,
         }
     }
 

@@ -78,7 +78,8 @@ fn ac4_intersecting_groups_returns_bound() {
         order: None,
         limit: None,
         non_empty: false,
-    };
+        projection: false,
+        };
 
     match bind_with_compat(&mqo, &snapshot, &enriched) {
         BindResult::Bound(_) => {}
@@ -117,7 +118,8 @@ fn ac4_partial_intersection_still_bound() {
         order: None,
         limit: None,
         non_empty: false,
-    };
+        projection: false,
+        };
 
     match bind_with_compat(&mqo, &snapshot, &enriched) {
         BindResult::Bound(_) => {}

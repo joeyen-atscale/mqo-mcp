@@ -79,12 +79,19 @@ pub fn compile_grounded(
     bound: &BoundMqoInput,
     ctx: Option<&DaxCatalogContext>,
 ) -> Result<String, DaxCompileError> {
-    if bound.measures.is_empty() {
+    // For projection MQOs (is_projection() == true), measures are intentionally
+    // empty. For all other cases, empty measures is an error.
+    if bound.measures.is_empty() && !bound.mqo.is_projection() {
         return Err(DaxCompileError::EmptyMeasures);
     }
 
     // Build the measure expression list, applying time-intel wrappers.
-    let measure_pairs = build_measure_pairs(bound, ctx)?;
+    // For projection MQOs this returns an empty vec.
+    let measure_pairs = if bound.measures.is_empty() {
+        Vec::new()
+    } else {
+        build_measure_pairs(bound, ctx)?
+    };
 
     // Build groupBy columns list (from bound.dimensions).
     let group_by_cols: Vec<String> = bound
@@ -139,9 +146,19 @@ pub fn compile_grounded(
     } else if let Some(limit) = bound.mqo.limit {
         // Apply limit TOPN.
         // TOPN wraps the inner table; we need a sort col for TOPN.
-        // Use the first measure as the default sort col.
-        let first_measure_ref = measure_dax_ref_ctx(&bound.measures[0].unique_name, ctx);
-        format!("TOPN({limit}, {inner}, {first_measure_ref}, DESC)")
+        // For projection MQOs sort by the first dimension; for regular queries
+        // sort by the first measure (existing behaviour).
+        if bound.mqo.is_projection() {
+            // Projection: sort by first dimension level column.
+            let first_dim_ref = bound
+                .dimensions
+                .first()
+                .map_or_else(|| "1".to_string(), |d| level_col_ref_ctx(&d.unique_name, ctx));
+            format!("TOPN({limit}, {inner}, {first_dim_ref}, ASC)")
+        } else {
+            let first_measure_ref = measure_dax_ref_ctx(&bound.measures[0].unique_name, ctx);
+            format!("TOPN({limit}, {inner}, {first_measure_ref}, DESC)")
+        }
     } else {
         inner
     };
@@ -432,6 +449,7 @@ fn calc_group_filter(calc_group: &str, member: &str) -> String {
 ///   cannot be resolved to a real column reference — a `DaxCatalogContext` is
 ///   present but `level` is neither a known unique-name nor a recognized display
 ///   label.
+///
 /// Resolve a level-less `Member` filter's hierarchy to a grounded column ref,
 /// applying domain-aware grounding + the decline-not-fallback safety valve.
 fn resolve_member_column(
@@ -777,6 +795,7 @@ mod tests {
                 order: None,
                 time_intelligence: vec![],
                 non_empty: false,
+                projection: false,
             }),
             measures: vec![BoundMeasureInput {
                 unique_name: measure_unique.to_string(),
@@ -829,6 +848,7 @@ mod tests {
                 order: None,
                 time_intelligence: vec![],
                 non_empty: false,
+                projection: false,
             },
             measures: vec![BoundMeasureInput {
                 unique_name: "tpcds.m".to_string(),
@@ -1087,6 +1107,7 @@ mod tests {
                 order: None,
                 time_intelligence: vec![ti],
                 non_empty: false,
+                projection: false,
             },
             measures: vec![BoundMeasureInput {
                 unique_name: measure_unique.to_string(),
@@ -1317,6 +1338,114 @@ mod tests {
         assert!(
             !dax.contains("DateTable[Date]"),
             "must not contain placeholder, got: {dax}"
+        );
+    }
+
+    // ── Projection MQO tests (PRD-mqo-attribute-projection) ──────────────────
+
+    fn projection_bound(dim_unique: &str) -> BoundMqoInput {
+        BoundMqoInput {
+            mqo: Mqo {
+                model: "tpcds".to_string(),
+                measures: vec![],
+                dimensions: vec![mqo_spec::LevelSelection {
+                    hierarchy: "ship_mode".to_string(),
+                    level: dim_unique.to_string(),
+                }],
+                filters: vec![],
+                limit: None,
+                order: None,
+                time_intelligence: vec![],
+                non_empty: false,
+                projection: true,
+            },
+            measures: vec![],
+            dimensions: vec![BoundDimensionInput {
+                unique_name: dim_unique.to_string(),
+                hierarchy: "ship_mode".to_string(),
+            }],
+            calc_group_members: vec![],
+        }
+    }
+
+    /// AC-1: projection MQO with a level and no measures → SUMMARIZECOLUMNS with no measure args.
+    #[test]
+    fn projection_mqo_emits_summarizecolumns_without_measure() {
+        let bound = projection_bound("ship_mode.[Carrier]");
+        let dax = compile(&bound).unwrap();
+        assert!(
+            dax.contains("SUMMARIZECOLUMNS"),
+            "projection must emit SUMMARIZECOLUMNS, got: {dax}"
+        );
+        // A measure-arg pair looks like `"Label", [MeasureRef]` — a quoted string followed
+        // by a [measure_ref] argument. For a projection, no such quoted-name+measure pair
+        // should appear. We verify by checking no quoted column name arg exists.
+        // The dimension reference `Ship_mode[Carrier]` is valid — that IS the column.
+        assert!(
+            !dax.contains(r#""Carrier","#),
+            "no quoted measure-name arg should appear in SUMMARIZECOLUMNS, got: {dax}"
+        );
+        assert!(
+            dax.starts_with("EVALUATE"),
+            "must start with EVALUATE, got: {dax}"
+        );
+        // The dimension column reference MUST appear.
+        assert!(
+            dax.contains("Carrier"),
+            "dimension column reference must appear in output, got: {dax}"
+        );
+    }
+
+    /// Projection + filter → SUMMARIZECOLUMNS with filter but no measure arg.
+    #[test]
+    fn projection_with_filter_emits_summarizecolumns_with_filter_no_measure() {
+        let mut bound = projection_bound("ship_mode.[Carrier]");
+        bound.mqo.filters = vec![mqo_spec::Filter::MemberLevel {
+            hierarchy: "ship_mode".to_string(),
+            level: "ship_mode.[Ship Mode Type]".to_string(),
+            members: vec!["EXPRESS".to_string()],
+            exclude: false,
+        }];
+        let dax = compile(&bound).unwrap();
+        assert!(
+            dax.contains("SUMMARIZECOLUMNS"),
+            "got: {dax}"
+        );
+        assert!(
+            dax.contains("EXPRESS"),
+            "filter must appear, got: {dax}"
+        );
+    }
+
+    /// Non-projection measureless MQO still returns EmptyMeasures.
+    #[test]
+    fn non_projection_measureless_returns_empty_measures_error() {
+        let bound = BoundMqoInput {
+            mqo: Mqo {
+                model: "tpcds".to_string(),
+                measures: vec![],
+                dimensions: vec![mqo_spec::LevelSelection {
+                    hierarchy: "ship_mode".to_string(),
+                    level: "Carrier".to_string(),
+                }],
+                filters: vec![],
+                limit: None,
+                order: None,
+                time_intelligence: vec![],
+                non_empty: false,
+                projection: false,
+            },
+            measures: vec![],
+            dimensions: vec![BoundDimensionInput {
+                unique_name: "ship_mode.[Carrier]".to_string(),
+                hierarchy: "ship_mode".to_string(),
+            }],
+            calc_group_members: vec![],
+        };
+        let err = compile(&bound).unwrap_err();
+        assert!(
+            matches!(err, crate::DaxCompileError::EmptyMeasures),
+            "expected EmptyMeasures, got: {err:?}"
         );
     }
 }

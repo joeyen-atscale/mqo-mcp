@@ -69,7 +69,8 @@ fn cross_fact_mqo() -> (CatalogSnapshot, Mqo) {
         order: None,
         limit: None,
         non_empty: false,
-    };
+        projection: false,
+        };
     (snapshot, mqo)
 }
 

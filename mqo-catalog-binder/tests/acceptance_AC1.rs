@@ -77,7 +77,8 @@ fn ac1_cross_fact_returns_incompatible_with_one_report() {
         order: None,
         limit: None,
         non_empty: false,
-    };
+        projection: false,
+        };
 
     match bind_with_compat(&mqo, &snapshot, &enriched) {
         BindResult::Incompatible(reports) => {

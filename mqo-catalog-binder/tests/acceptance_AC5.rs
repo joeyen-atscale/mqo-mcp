@@ -79,7 +79,8 @@ fn ac5_not_found_measure_with_cross_fact_dim_returns_not_found() {
         order: None,
         limit: None,
         non_empty: false,
-    };
+        projection: false,
+        };
 
     match bind_with_compat(&mqo, &snapshot, &enriched) {
         BindResult::NotFound(refs) => {
@@ -147,7 +148,8 @@ fn ac5_ambiguous_measure_returns_ambiguous_not_incompatible() {
         order: None,
         limit: None,
         non_empty: false,
-    };
+        projection: false,
+        };
 
     match bind_with_compat(&mqo, &snapshot, &enriched) {
         BindResult::Ambiguous(_) => {}

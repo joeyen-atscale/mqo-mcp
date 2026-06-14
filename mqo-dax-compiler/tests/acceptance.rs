@@ -30,6 +30,7 @@ fn minimal_mqo(model: &str, measure: &str) -> Mqo {
         order: None,
         limit: None,
         non_empty: false,
+        projection: false,
     }
 }
 
@@ -563,6 +564,7 @@ fn error_empty_measures() {
             order: None,
             limit: None,
             non_empty: false,
+            projection: false,
         },
         measures: vec![],
         dimensions: vec![],
@@ -648,6 +650,7 @@ fn empty_measures_is_a_compile_error_not_syntax_error() {
             order: None,
             limit: None,
             non_empty: false,
+            projection: false,
         },
         measures: vec![],
         dimensions: vec![],

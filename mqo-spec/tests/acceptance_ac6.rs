@@ -17,6 +17,7 @@ fn make_bound_mqo() -> BoundMqo {
         order: None,
         limit: None,
         non_empty: true,
+        projection: false,
     };
 
     BoundMqo {
@@ -69,6 +70,7 @@ fn bound_mqo_with_semi_additive_measure() {
         order: None,
         limit: None,
         non_empty: false,
+        projection: false,
     };
 
     let bound = BoundMqo {

@@ -1168,12 +1168,44 @@ impl Server {
         // array (empty when none), never absent.
         let date_roles = date_role_hierarchies(&columns);
         let date_roles_val = json!(date_roles);
+        // FR-5 (PRD-mqo-attribute-projection): Build the attribute_of lookup once,
+        // outside the mutation loop, so we don't borrow `columns` while mutating it.
+        // Map: level unique_name → related attribute unique_names.
+        let attr_lookup: std::collections::HashMap<String, Vec<String>> = {
+            let full_catalog_columns: &[Value] = self
+                .catalog
+                .get("columns")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            let mut map: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
+            for c in full_catalog_columns {
+                if let Some(ao) = c.get("attribute_of").and_then(Value::as_str) {
+                    if let Some(un) = c.get("unique_name").and_then(Value::as_str) {
+                        map.entry(ao.to_string()).or_default().push(un.to_string());
+                    }
+                }
+            }
+            map
+        };
         for col in &mut columns {
             if col.get("kind").and_then(Value::as_str) == Some("measure") {
                 col["date_roles"] = date_roles_val.clone();
                 // FIX 1: surface packaged-calc metadata (is_calc + NL triggers)
                 // so the model prefers a packaged calc over a plain base measure.
                 annotate_calc(col);
+            }
+            // FR-5 (PRD-mqo-attribute-projection): mark each level as projectable and
+            // list its related 1:1 attributes so the model can build projections.
+            if col.get("kind").and_then(Value::as_str) == Some("level") {
+                col["projectable"] = json!(true);
+                let un = col
+                    .get("unique_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let related = attr_lookup.get(un).cloned().unwrap_or_default();
+                col["related_attributes"] = json!(related);
             }
         }
 
@@ -1278,12 +1310,30 @@ impl Server {
                     .get("domain")
                     .and_then(Value::as_array)
                     .is_some_and(|a| !a.is_empty());
+                // FR-5 (PRD-mqo-attribute-projection): each level is projectable.
+                // All levels support projection in v0.1; cardinality-guard will add
+                // per-level refinement when PRD-mqo-projection-cardinality-guard lands.
+                // related_attributes: catalog columns that list this level as their
+                // `attribute_of` (1:1 attributes on the level), or empty when none.
+                let related_attributes: Vec<String> = all_columns
+                    .iter()
+                    .filter(|c| {
+                        c.get("attribute_of")
+                            .and_then(Value::as_str)
+                            .is_some_and(|ao| ao == un)
+                    })
+                    .filter_map(|c| {
+                        c.get("unique_name").and_then(Value::as_str).map(str::to_string)
+                    })
+                    .collect();
                 map.entry(hier)
                     .or_default()
                     .push(json!({
                         "unique_name": un,
                         "label": label,
-                        "has_domain": has_domain
+                        "has_domain": has_domain,
+                        "projectable": true,
+                        "related_attributes": related_attributes
                     }));
             }
             map
