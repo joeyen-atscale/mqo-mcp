@@ -658,6 +658,7 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
                         let value_type = match vt {
                             "integer" => LevelValueType::Integer,
                             "date" => LevelValueType::Date,
+                            "decimal" => LevelValueType::Decimal,
                             _ => LevelValueType::String,
                         };
                         let domain = c.get("domain").and_then(Value::as_array).map(|a| {

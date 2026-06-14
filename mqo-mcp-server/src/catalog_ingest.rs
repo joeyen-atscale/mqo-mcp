@@ -85,22 +85,46 @@ fn snake(caption: &str) -> String {
 }
 
 /// Map an OLE DB `LEVEL_DBTYPE` to the validator's `value_type`.
+///
+/// OLE DB numeric/decimal types map to `"decimal"` so the capture site
+/// normalizes those members to the engine-comparable form (FR-1/FR-4):
+///   4  = R4 (float32), 5 = R8 (float64), 6 = CY (currency)
+///   131 = NUMERIC/DECIMAL (the type used for GMT-offset levels in AtScale)
+/// Integer types (I1..I8, UI1..UI4) map to `"integer"`.
 fn dbtype_to_value_type(dbtype: &str) -> &'static str {
     match dbtype {
         "2" | "3" | "16" | "17" | "18" | "19" | "20" | "21" => "integer",
+        "4" | "5" | "6" | "131" => "decimal",
         "7" | "133" | "134" | "135" => "date",
-        _ => "string", // 8/129/130 wstr/str/bstr + safe default for numeric/decimal
+        _ => "string", // 8/129/130 wstr/str/bstr + safe default
     }
 }
 
-/// Infer `value_type` from the actual member captions (what a filter value is
+/// Infer `value_type` from the actual member values (what a filter value is
 /// compared against), preferred over `LEVEL_DBTYPE` which reflects the level's
 /// KEY type — e.g. a "Product Brand Name" level keyed by an integer ID but whose
 /// members are brand-name strings. Used whenever a domain was captured.
+///
+/// NOTE: when `LEVEL_DBTYPE` indicates decimal (types 4/5/6/131), this function
+/// is called AFTER key normalization — so the sample values are already in the
+/// engine-comparable form (e.g. `-5.00`). It recognizes that form as `"decimal"`.
 fn infer_value_type_from_members(members: &[String]) -> &'static str {
     let is_int = |s: &str| {
         let t = s.strip_prefix('-').unwrap_or(s);
         !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit())
+    };
+    let is_decimal = |s: &str| {
+        // Matches: optional minus, digits, dot, digits (e.g. "-5.00", "3.14")
+        let body = s.strip_prefix('-').unwrap_or(s);
+        if let Some(dot) = body.find('.') {
+            let (int_part, frac_part) = (&body[..dot], &body[dot + 1..]);
+            !int_part.is_empty()
+                && int_part.bytes().all(|b| b.is_ascii_digit())
+                && !frac_part.is_empty()
+                && frac_part.bytes().all(|b| b.is_ascii_digit())
+        } else {
+            false
+        }
     };
     let is_date = |s: &str| {
         let b = s.as_bytes();
@@ -109,10 +133,42 @@ fn infer_value_type_from_members(members: &[String]) -> &'static str {
     let sample: Vec<&String> = members.iter().take(50).collect();
     if sample.iter().all(|s| is_date(s)) {
         "date"
+    } else if sample.iter().all(|s| is_decimal(s)) {
+        "decimal"
     } else if sample.iter().all(|s| is_int(s)) {
         "integer"
     } else {
         "string"
+    }
+}
+
+/// Select the engine-comparable member value for a given `value_type`.
+///
+/// For **decimal** levels (DBTYPE 4/5/6/131), the engine compares on the member
+/// KEY, not the display caption (e.g. caption = `-5`, key = `-5.00`). We prefer
+/// `MEMBER_KEY` when the rowset provides it; if it is absent or empty we fall
+/// back to the caption unchanged (the caller may apply further normalization).
+///
+/// For **all other** value_types we return the caption unchanged — FR-3/FR-4:
+/// string/integer/date domains must not be coerced, and the selection is driven
+/// by `value_type` (from `LEVEL_DBTYPE`), never by a regex on the value itself.
+fn select_member_value(
+    caption: &str,
+    key: Option<&str>,
+    value_type: &str,
+) -> String {
+    match value_type {
+        "decimal" => {
+            // Prefer the MEMBER_KEY (engine-comparable form).
+            let k = key.unwrap_or("").trim();
+            if !k.is_empty() && k != "__NULL__" {
+                k.to_string()
+            } else {
+                // Key absent: caption is already the best available value.
+                caption.to_string()
+            }
+        }
+        _ => caption.to_string(),
     }
 }
 
@@ -237,11 +293,24 @@ pub fn ingest_live_metadata(
             break;
         }
         fetches += 1;
+        // value_type from level_meta drives normalization (FR-4: must not use
+        // regex on the value itself — look up by the level's LEVEL_DBTYPE).
+        let level_vt = level_meta.get(key).map(|(vt, _, _)| *vt).unwrap_or("string");
         match ex.discover_mdschema("MDSCHEMA_MEMBERS", xmla_catalog, cube, Some(lun)) {
             Ok(rows) => {
+                // FR-1/FR-4: for decimal levels, prefer MEMBER_KEY (the engine-
+                // comparable form) over MEMBER_CAPTION (the display form).
+                // For all other value_types the caption is used unchanged (FR-3).
                 let dom: Vec<String> = rows
                     .iter()
-                    .filter_map(|r| r.get("MEMBER_CAPTION").cloned())
+                    .filter_map(|r| {
+                        let caption = r.get("MEMBER_CAPTION")?.as_str();
+                        if caption == "__NULL__" || caption == "(All)" {
+                            return None;
+                        }
+                        let key_val = r.get("MEMBER_KEY").map(String::as_str);
+                        Some(select_member_value(caption, key_val, level_vt))
+                    })
                     .filter(|m| m != "__NULL__" && m != "(All)")
                     .collect();
                 if !dom.is_empty() {
@@ -326,7 +395,16 @@ mod tests {
         assert_eq!(dbtype_to_value_type("130"), "string");
         assert_eq!(dbtype_to_value_type("3"), "integer");
         assert_eq!(dbtype_to_value_type("7"), "date");
-        assert_eq!(dbtype_to_value_type("131"), "string"); // numeric → safe default
+        // FR-1/FR-4: DBTYPE 131 (NUMERIC/DECIMAL) and float types map to "decimal"
+        // so the capture site can normalize to the engine-comparable form.
+        assert_eq!(dbtype_to_value_type("131"), "decimal");
+        assert_eq!(dbtype_to_value_type("4"), "decimal");  // R4 / float32
+        assert_eq!(dbtype_to_value_type("5"), "decimal");  // R8 / float64
+        assert_eq!(dbtype_to_value_type("6"), "decimal");  // CY / currency
+        // Integers stay integer; text/unknown stay string.
+        assert_eq!(dbtype_to_value_type("2"), "integer");
+        assert_eq!(dbtype_to_value_type("20"), "integer");
+        assert_eq!(dbtype_to_value_type("8"), "string");
     }
 
     #[test]
@@ -335,6 +413,77 @@ mod tests {
         assert_eq!(infer_value_type_from_members(&["Nike".into(), "Acme".into()]), "string");
         assert_eq!(infer_value_type_from_members(&["1".into(), "2".into()]), "integer");
         assert_eq!(infer_value_type_from_members(&["2001-01-15".into()]), "date");
+        // Decimal form (engine-comparable after key normalization) → "decimal".
+        assert_eq!(infer_value_type_from_members(&["-5.00".into(), "-6.00".into(), "-10.00".into()]), "decimal");
+    }
+
+    // ── FR-1/FR-4 unit tests: select_member_value normalization ──────────────
+
+    /// AC for FR-1: a decimal-typed level with caption "-5" and key "-5.00"
+    /// → domain stores the engine-comparable key "-5.00".
+    #[test]
+    fn decimal_level_uses_member_key() {
+        assert_eq!(
+            select_member_value("-5", Some("-5.00"), "decimal"),
+            "-5.00",
+            "decimal level: key should be preferred over caption"
+        );
+        assert_eq!(
+            select_member_value("-6", Some("-6.00"), "decimal"),
+            "-6.00"
+        );
+        // No key available: falls back to caption (best effort).
+        assert_eq!(
+            select_member_value("-5", None, "decimal"),
+            "-5"
+        );
+        // Empty key: falls back to caption.
+        assert_eq!(
+            select_member_value("-5", Some(""), "decimal"),
+            "-5"
+        );
+    }
+
+    /// FR-3: string-typed level → caption unchanged regardless of value shape.
+    #[test]
+    fn string_level_caption_unchanged() {
+        assert_eq!(
+            select_member_value("CA", Some("42"), "string"),
+            "CA",
+            "string level: caption must be preserved, key ignored"
+        );
+        assert_eq!(
+            select_member_value("WA", None, "string"),
+            "WA"
+        );
+    }
+
+    /// FR-4: text-typed level with numeric-looking values (zip/id) → NOT coerced.
+    /// The value_type is "string" (from LEVEL_DBTYPE), so no decimal normalization occurs.
+    #[test]
+    fn text_level_numeric_looking_values_not_coerced() {
+        // ZIP code: looks numeric but LEVEL_DBTYPE → "string", so stays as-is.
+        assert_eq!(
+            select_member_value("90210", Some("90210"), "string"),
+            "90210",
+            "zip-code level: must not be decimal-coerced"
+        );
+        // An ID that looks like a decimal: value_type from DBTYPE says "string".
+        assert_eq!(
+            select_member_value("1234.00", Some("1234.00"), "string"),
+            "1234.00",
+            "string-typed level with decimal-looking value: must not be decimal-coerced"
+        );
+    }
+
+    /// FR-4: integer-typed level → caption unchanged (no decimal normalization).
+    #[test]
+    fn integer_level_caption_unchanged() {
+        assert_eq!(
+            select_member_value("5", Some("5.00"), "integer"),
+            "5",
+            "integer level: caption must not be coerced via decimal key"
+        );
     }
 
     #[test]
