@@ -33,6 +33,7 @@ pub mod handle_ops;
 pub mod mcp;
 pub mod pipeline;
 pub mod probe;
+pub mod projection_guard;
 pub mod routing;
 
 // Re-export bridge types used by tests and callers.
@@ -45,7 +46,11 @@ pub use handle_ops::{
     dataset_to_json_rows, json_rows_to_dataset, json_rows_to_dataset_with_bound, HandleStore,
     INLINE_THRESHOLD,
 };
-pub use mcp::{discover_xmla_coords, tool_descriptors, Server, ServerEnrichedData, ServerEngine, PROTOCOL_VERSION};
+pub use mcp::{
+    discover_xmla_coords, tool_descriptors, Server, ServerEnrichedData, ServerEngine,
+    DEFAULT_MAX_PROJECTION_CARDINALITY, PROTOCOL_VERSION,
+};
+pub use projection_guard::{check_projection_cardinality, ProjectionTooLarge};
 pub use pipeline::{error_class, error_class_values, PipelineError, PipelineOutput, ToolPaths};
 pub use probe::{BackendCapabilities, PortStatus};
 pub use routing::{run_health_check_sync, select_cluster, RoutingError};

@@ -36,7 +36,7 @@ use mcp_cluster_health_monitor::report::OverallStatus;
 use mcp_cluster_registry::ClusterRegistry;
 use mqo_mcp_server::{
     cursor::{CursorStore, DEFAULT_CURSOR_TTL_SECS, DEFAULT_PAGE_SIZE},
-    mcp::discover_xmla_coords,
+    mcp::{discover_xmla_coords, DEFAULT_MAX_PROJECTION_CARDINALITY},
     run_health_check_sync, BackendCapabilities, EndpointConfig, LiveExecutor, OidcConfig, Server,
     ServerEnrichedData, ServerEngine, ToolPaths,
 };
@@ -197,6 +197,19 @@ struct Args {
     /// window are evicted from the store. Default: 600 (10 minutes).
     #[arg(long, default_value_t = DEFAULT_CURSOR_TTL_SECS)]
     cursor_ttl_secs: u64,
+
+    /// Maximum allowed distinct-row cardinality estimate for a projection MQO.
+    ///
+    /// Before executing a measureless (projection) MQO, the server estimates the
+    /// distinct-row count from catalog level member counts and filter selectivity.
+    /// When the estimate exceeds this value, the server returns a typed
+    /// `projection_too_large` decline — no execution, no credits spent.
+    ///
+    /// Default: 10,000 (well below the engine row cap of ~50,000 so the guard
+    /// always fires before the engine would cap-and-spend).  Set to 0 to always
+    /// decline all projection queries.
+    #[arg(long, default_value_t = DEFAULT_MAX_PROJECTION_CARDINALITY)]
+    max_projection_cardinality: usize,
 
     /// Path to a static XMLA catalog-map JSON file.
     ///
@@ -385,6 +398,7 @@ fn main() {
         inline_threshold: args.inline_threshold,
         enriched,
         xmla_model_coords,
+        max_projection_cardinality: args.max_projection_cardinality,
     };
 
     serve(&server);

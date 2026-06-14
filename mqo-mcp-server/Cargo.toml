@@ -19,6 +19,7 @@ path = "src/lib.rs"
 
 [dependencies]
 mqo-spec = { path = "../mqo-spec" }
+mqo-catalog-binder = { path = "../mqo-catalog-binder" }
 mqo-auth-bridge = { path = "../mqo-auth-bridge" }
 mcp-cluster-registry = { path = "../mcp-cluster-registry" }
 mcp-cluster-health-monitor = { path = "../mcp-cluster-health-monitor" }

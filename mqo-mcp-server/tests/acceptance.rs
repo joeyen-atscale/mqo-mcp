@@ -106,6 +106,7 @@ fn server() -> Server {
         inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: HashMap::new(),
+        max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
     }
 }
 
@@ -315,6 +316,7 @@ fn ac4_drillthrough_mqo_routes_to_mdx() {
         inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: HashMap::new(),
+        max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
     };
     let mqo = valid_mqo(
         vec![json!({ "hierarchy": "time.calendar", "level": "Year" })],
@@ -597,6 +599,7 @@ fn new_ac2_live_mode_routes_through_live_executor() {
         inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: test_coord_map(),
+        max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
     };
     let mqo = valid_mqo(
         vec![json!({ "hierarchy": "time.calendar", "level": "Year" })],
@@ -722,6 +725,7 @@ fn new_ac4_engine_error_surfaces_as_structured_engine_error() {
         inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: test_coord_map(),
+        max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
     };
     let mqo = valid_mqo(
         vec![json!({ "hierarchy": "time.calendar", "level": "Year" })],
@@ -930,6 +934,7 @@ fn ext5_list_models_with_empty_catalog_returns_empty_array() {
         inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: HashMap::new(),
+        max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
     };
     let result = call_tool(&srv, "list_models", json!({}));
     assert_eq!(result["isError"], json!(false), "{result}");
@@ -1142,6 +1147,7 @@ fn ext13_diff_clusters_missing_cluster_a_returns_error() {
         inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: HashMap::new(),
+        max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
     };
 
     // cluster_a is absent — only cluster_b is provided.
@@ -1202,6 +1208,7 @@ fn ext14_diff_clusters_unknown_cluster_names_returns_error() {
         inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: HashMap::new(),
+        max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
     };
 
     let result = call_tool(
@@ -1277,6 +1284,7 @@ fn ext15_list_clusters_with_registry_returns_cluster_list() {
         inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: HashMap::new(),
+        max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
     };
 
     let result = call_tool(&srv, "list_clusters", json!({}));
@@ -1400,6 +1408,7 @@ fn ext20_backend_override_sql_forces_sql_for_small_query() {
         inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
         enriched: None,
         xmla_model_coords: HashMap::new(),
+        max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
     };
     // Year-level: cardinality 5, normally DAX.
     let mqo = valid_mqo(
