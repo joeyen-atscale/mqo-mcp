@@ -173,8 +173,8 @@ fn ac1_golden_range_filter() {
     let mut bound = minimal_bound("sales.revenue");
     bound.mqo.filters.push(Filter::Range {
         level: "time.calendar.Year".to_string(),
-        lo: 2020.0,
-        hi: 2024.0,
+        lo: mqo_spec::RangeBound::Number(2020.0),
+        hi: mqo_spec::RangeBound::Number(2024.0),
     });
     bound.mqo.dimensions.push(LevelSelection {
         hierarchy: "time.calendar".to_string(),
@@ -875,8 +875,8 @@ fn range_filter_output_unchanged() {
     let mut bound = minimal_bound("sales.revenue");
     bound.mqo.filters.push(Filter::Range {
         level: "time.calendar.Year".to_string(),
-        lo: 2020.0,
-        hi: 2024.0,
+        lo: mqo_spec::RangeBound::Number(2020.0),
+        hi: mqo_spec::RangeBound::Number(2024.0),
     });
     bound.mqo.dimensions.push(LevelSelection {
         hierarchy: "time.calendar".to_string(),
