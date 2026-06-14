@@ -21,6 +21,7 @@ use crate::cursor::CursorStore;
 use crate::handle_ops::{self, HandleStore};
 use crate::pipeline::{self, PipelineError, PipelineOutput, ToolPaths};
 use crate::probe::BackendCapabilities;
+use crate::projection_guard::check_projection_cardinality;
 use crate::routing;
 use dh_spec::DatasetHandle;
 use mcp_cluster_health_monitor::report::HealthReport;
@@ -747,7 +748,21 @@ pub struct Server {
     ///
     /// Empty in fixture mode (no XMLA endpoint) and when discovery is not configured.
     pub xmla_model_coords: HashMap<String, (String, String)>,
+    /// Maximum allowed distinct-row cardinality estimate for a projection MQO.
+    ///
+    /// When an attribute-projection MQO's estimated distinct count exceeds this
+    /// value the server returns a typed `projection_too_large` decline instead of
+    /// executing (which would spend credits and return 0 rows due to the engine
+    /// row cap).  Default: `DEFAULT_MAX_PROJECTION_CARDINALITY`.  Set to 0 to
+    /// always decline projections.
+    pub max_projection_cardinality: usize,
 }
+
+/// Default maximum distinct-row estimate for a projection MQO (FR-4 / OQ-3).
+///
+/// Set to 10,000 — well below the typical engine row cap of ~50,000 — so
+/// the guard always declines before the engine would cap-and-spend.
+pub const DEFAULT_MAX_PROJECTION_CARDINALITY: usize = 10_000;
 
 /// The advertised tool list. The three catalog tools are read-only.
 #[must_use]
@@ -1494,6 +1509,28 @@ impl Server {
             (None, self.backend_override.clone())
         };
 
+        // ── Projection cardinality guard (FR-1 through FR-5) ─────────────────
+        // For projection MQOs (no measures), estimate the distinct-row count
+        // before execution.  Measure-bearing queries are unaffected (FR-6).
+        if let Ok(mqo_parsed) = serde_json::from_value::<mqo_spec::Mqo>(query.clone()) {
+            if mqo_parsed.measures.is_empty() {
+                // This is a projection MQO — apply the guard.
+                let catalog_snap: mqo_catalog_binder::catalog::CatalogSnapshot =
+                    serde_json::from_value(self.catalog.clone()).unwrap_or_default();
+                if let Err(too_large) = check_projection_cardinality(
+                    &mqo_parsed,
+                    &catalog_snap,
+                    self.max_projection_cardinality,
+                ) {
+                    return structured_err(&PipelineError::ProjectionTooLarge {
+                        level: too_large.level,
+                        estimate: too_large.estimate,
+                        cap: too_large.cap,
+                    });
+                }
+            }
+        }
+
         let start = std::time::Instant::now();
         let result = pipeline::run(
             &query,
@@ -1858,6 +1895,20 @@ fn structured_err(e: &PipelineError) -> Value {
                 "detail": format!(
                     "No XMLA catalog/cube found for model '{model}'. \
                      Populate --xmla-catalog-map or ensure XMLA discovery ran at startup."
+                )
+            }),
+        ),
+        PipelineError::ProjectionTooLarge { level, estimate, cap } => (
+            "projection_too_large",
+            json!({
+                "level": level,
+                "estimate": estimate,
+                "cap": cap,
+                "detail": format!(
+                    "Projection over level '{level}' has an estimated distinct cardinality \
+                     of {estimate}, which exceeds the configured cap of {cap}. \
+                     Add a filter to narrow the set or ask the operator to raise \
+                     --max-projection-cardinality."
                 )
             }),
         ),

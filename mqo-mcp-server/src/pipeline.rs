@@ -128,6 +128,19 @@ pub enum PipelineError {
         /// The model name that had no entry in the coordinate map.
         model: String,
     },
+
+    /// The pre-execution projection cardinality guard declined the query because
+    /// the estimated distinct-row count exceeds the configured cap.  No execution
+    /// occurred (FR-3: no credits spent).
+    #[error("projection_too_large: level '{level}' estimate {estimate} > cap {cap}")]
+    ProjectionTooLarge {
+        /// The first dimension level whose contribution pushed the estimate over cap.
+        level: String,
+        /// The total estimated distinct-row count.
+        estimate: u64,
+        /// The configured cap.
+        cap: usize,
+    },
 }
 
 // ── Error classification ──────────────────────────────────────────────────────
@@ -166,10 +179,11 @@ pub fn error_class(e: &PipelineError) -> &'static str {
         | PipelineError::XmlaCoordsNotFound { .. }
         | PipelineError::Io(_) => INFRASTRUCTURE,
         PipelineError::Engine(inner) => engine_error_class(inner),
-        // Model/path: query construction or binding failures.
+        // Model/path: query construction, binding, or pre-execution guard failures.
         PipelineError::NotGround { .. }
         | PipelineError::CrossFactIncompatible { .. }
         | PipelineError::ParamRejected { .. }
+        | PipelineError::ProjectionTooLarge { .. }
         | PipelineError::Invalid(_)
         | PipelineError::NotAnMqo(_)
         | PipelineError::Subprocess { .. } => MODEL_PATH,
