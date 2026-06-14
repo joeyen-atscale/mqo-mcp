@@ -135,8 +135,23 @@ struct Args {
     #[arg(long, value_name = "VARNAME")]
     oidc_client_secret_env: Option<String>,
 
-    /// `PGWire` username override. When set, disables OIDC bearer-token auth and
-    /// uses direct credentials instead. Must be paired with --pg-pass-env.
+    /// OIDC ROPC username. When set, the XMLA token fetch uses
+    /// `grant_type=password` (Resource Owner Password Credentials) instead of
+    /// `client_credentials`. Must be paired with --oidc-password-env. This is the
+    /// non-secret username value, not an env-var name.
+    #[arg(long, value_name = "USER")]
+    oidc_username: Option<String>,
+
+    /// Name of the environment variable that holds the OIDC ROPC user password.
+    /// Only used when --oidc-username is set. The secret is read from the named
+    /// env var; it is never accepted as a flag value and never logged.
+    #[arg(long, value_name = "VARNAME")]
+    oidc_password_env: Option<String>,
+
+    /// `PGWire` username override. When set, the PGWire (SQL) path uses direct
+    /// credentials instead of an OIDC bearer token. This affects SQL auth ONLY:
+    /// XMLA (DAX/MDX) still uses the OIDC token provider when the --oidc-* flags
+    /// are present. Must be paired with --pg-pass-env.
     #[arg(long, value_name = "USER")]
     pg_user: Option<String>,
 
@@ -446,31 +461,31 @@ fn build_engine(args: &Args) -> ServerEngine {
         (None, None) => (None, None),
     };
 
+    // `direct_auth` gates ONLY the PGWire executor's credential source. It must
+    // NOT suppress OIDC token-provider construction: the XMLA path (DAX/MDX)
+    // always authenticates with an OIDC bearer token, even when PGWire uses
+    // direct credentials (PRD-mqo-mcp-server-xmla-oidc-auth, FR1/FR3).
     let direct_auth = pg_pass.is_some();
 
-    // OIDC config is only required when direct-credential auth is not in use.
-    let oidc = if direct_auth {
-        OidcConfig {
-            token_url: String::new(),
-            client_id: String::new(),
-            client_secret_env_var: String::new(),
-            realm: String::new(),
-            username: None,
-            password_env_var: None,
-        }
-    } else {
-        OidcConfig {
-            token_url: require_flag(args.oidc_token_url.clone(), "--oidc-token-url"),
-            client_id: require_flag(args.oidc_client_id.clone(), "--oidc-client-id"),
-            client_secret_env_var: require_flag(
-                args.oidc_client_secret_env.clone(),
-                "--oidc-client-secret-env",
-            ),
-            realm: require_flag(args.oidc_realm.clone(), "--oidc-realm"),
-            username: None,
-            password_env_var: None,
+    // Build the OIDC config whenever the OIDC flags are present, regardless of
+    // PGWire auth mode. When OIDC flags are absent AND direct PGWire creds are
+    // in use, OIDC is unconfigured (SQL-only back-compat). When neither OIDC
+    // flags nor direct creds are present, OIDC is required (pure-OIDC PGWire).
+    let oidc = match build_oidc_config(args, direct_auth, |var| std::env::var(var).ok()) {
+        Ok(cfg) => cfg,
+        Err(msg) => {
+            eprintln!("mqo-mcp-server: {msg}");
+            process::exit(2);
         }
     };
+    // Whether an OIDC token provider was actually configured (drives the
+    // XMLA fail-fast probe and the "skipping OIDC" log line below).
+    let oidc_configured = !oidc.token_url.is_empty();
+    // ROPC is selected when an OIDC username is present (for the log line only).
+    let oidc_ropc = oidc.username.is_some();
+    // Non-secret username for the direct-auth log line; computed before `pg_user`
+    // is moved into the EndpointConfig.
+    let pg_user_log = pg_user.clone().unwrap_or_else(|| "token".to_string());
 
     // Resolve the XMLA URL for the primary DAX path. When the operator does not
     // pass --xmla-url, derive `https://<host>/v1/xmla` from the endpoint host so
@@ -500,35 +515,143 @@ fn build_engine(args: &Args) -> ServerEngine {
     let executor = LiveExecutor::new(config);
 
     if direct_auth {
-        eprintln!("mqo-mcp-server: auth: direct credentials (skipping OIDC)");
-    } else {
-        // Fail-fast OIDC check: one token fetch before serving any request.
+        eprintln!("mqo-mcp-server: auth: PGWire direct credentials (user '{}')", pg_user_log);
+    }
+
+    if oidc_configured {
+        // Fail-fast OIDC check: one token fetch before serving any request. This
+        // runs even when PGWire uses direct creds, because the XMLA executor
+        // (DAX/MDX) needs a working bearer token (FR1/FR4/FR5).
+        let flow = if oidc_ropc { "ROPC (grant_type=password)" } else { "client_credentials" };
         match executor.fetch_token_sync() {
             Ok(token) => {
                 let remaining = token
                     .expires_at
                     .saturating_duration_since(std::time::Instant::now());
                 eprintln!(
-                    "mqo-mcp-server: auth: ok (token expires in {}s)",
+                    "mqo-mcp-server: auth: XMLA OIDC ok via {flow} (token expires in {}s)",
                     remaining.as_secs()
                 );
             }
             Err(e) => {
-                eprintln!("mqo-mcp-server: auth error at startup: {e}");
+                eprintln!("mqo-mcp-server: XMLA OIDC auth error at startup: {e}");
                 process::exit(1);
             }
         }
+    } else if direct_auth {
+        eprintln!(
+            "mqo-mcp-server: auth: no OIDC flags set; XMLA (DAX/MDX) disabled, SQL only"
+        );
     }
 
     ServerEngine::Live(Box::new(executor))
 }
 
-/// Return the value or exit with a helpful error if it's `None`.
-fn require_flag(val: Option<String>, flag: &str) -> String {
-    val.unwrap_or_else(|| {
-        eprintln!("mqo-mcp-server: {flag} is required when --endpoint is set");
-        process::exit(2);
+/// Build the OIDC config for the XMLA token provider from CLI args.
+///
+/// This is decoupled from PGWire auth (PRD-mqo-mcp-server-xmla-oidc-auth, FR1):
+/// the OIDC provider is constructed whenever the OIDC flags are present, even
+/// when `--pg-user`/`--pg-pass-env` direct credentials are in use for SQL.
+///
+/// Returns:
+/// - An OIDC config with `client_credentials` (default) or ROPC
+///   `grant_type=password` (when `--oidc-username` + `--oidc-password-env` are
+///   set) when the OIDC flags are present.
+/// - An *empty* OIDC config (all fields blank) when no OIDC flags are present
+///   AND `direct_auth` is true — this is the SQL-only back-compat path; the
+///   XMLA executor will have no token provider, exactly as before.
+/// - `Err(message)` on misconfiguration: a partial OIDC flag set when no direct
+///   creds back it; `--oidc-username` without `--oidc-password-env`; or
+///   `--oidc-username` whose password env var is unset/empty (FR5 fail-fast).
+///
+/// Secret hygiene (NFR1): only the *names* of env vars are taken from the CLI;
+/// password/secret *values* are read from the environment via `env_lookup`,
+/// never from a flag. `env_lookup` returns `Some(value)` when the named var is
+/// set (production passes `std::env::var(..).ok()`); tests pass a fake map so
+/// the function stays pure and avoids mutating the process environment.
+fn build_oidc_config(
+    args: &Args,
+    direct_auth: bool,
+    env_lookup: impl Fn(&str) -> Option<String>,
+) -> Result<OidcConfig, String> {
+    let any_oidc = args.oidc_token_url.is_some()
+        || args.oidc_client_id.is_some()
+        || args.oidc_client_secret_env.is_some()
+        || args.oidc_realm.is_some()
+        || args.oidc_username.is_some()
+        || args.oidc_password_env.is_some();
+
+    // No OIDC flags at all: when direct PGWire creds carry SQL, OIDC is simply
+    // unconfigured (today's SQL-only behavior). When no direct creds either, the
+    // pure-OIDC PGWire path requires the OIDC flags — surface the missing one.
+    if !any_oidc {
+        if direct_auth {
+            return Ok(OidcConfig {
+                token_url: String::new(),
+                client_id: String::new(),
+                client_secret_env_var: String::new(),
+                realm: String::new(),
+                username: None,
+                password_env_var: None,
+            });
+        }
+        return Err(
+            "--oidc-token-url is required when --endpoint is set without --pg-user/--pg-pass-env"
+                .to_string(),
+        );
+    }
+
+    // OIDC flags are present (in whole or in part): all four core fields are
+    // required; report the first missing one clearly.
+    let token_url = require_oidc_field(args.oidc_token_url.clone(), "--oidc-token-url")?;
+    let client_id = require_oidc_field(args.oidc_client_id.clone(), "--oidc-client-id")?;
+    let client_secret_env_var =
+        require_oidc_field(args.oidc_client_secret_env.clone(), "--oidc-client-secret-env")?;
+    let realm = require_oidc_field(args.oidc_realm.clone(), "--oidc-realm")?;
+
+    // ROPC selection: --oidc-username requires --oidc-password-env, and the
+    // named env var must be set and non-empty (FR2/FR5 fail-fast at startup).
+    let (username, password_env_var) = match &args.oidc_username {
+        Some(user) => {
+            let pw_var = args.oidc_password_env.clone().ok_or_else(|| {
+                "--oidc-username requires --oidc-password-env".to_string()
+            })?;
+            match env_lookup(&pw_var) {
+                Some(v) if !v.is_empty() => {}
+                _ => {
+                    return Err(format!(
+                        "--oidc-username is set but the password env var '{pw_var}' \
+                         (--oidc-password-env) is unset or empty"
+                    ));
+                }
+            }
+            (Some(user.clone()), Some(pw_var))
+        }
+        None => {
+            // --oidc-password-env without --oidc-username is meaningless; flag it.
+            if args.oidc_password_env.is_some() {
+                return Err(
+                    "--oidc-password-env requires --oidc-username".to_string(),
+                );
+            }
+            (None, None)
+        }
+    };
+
+    Ok(OidcConfig {
+        token_url,
+        client_id,
+        client_secret_env_var,
+        realm,
+        username,
+        password_env_var,
     })
+}
+
+/// Return the OIDC flag value, or an `Err` message instead of exiting, so the
+/// OIDC config builder stays pure and unit-testable.
+fn require_oidc_field(val: Option<String>, flag: &str) -> Result<String, String> {
+    val.ok_or_else(|| format!("{flag} is required when --endpoint is set"))
 }
 
 /// Drive the server loop: read JSON-RPC from stdin, write responses to stdout.
@@ -812,5 +935,143 @@ mod tests {
         let got = resolve_xmla_url(None, "host");
         assert!(got.ends_with("/v1/xmla"), "uses engine path: {got}");
         assert!(!got.contains("/engine/xmla"), "not the Modeler app path");
+    }
+
+    // ── PRD-mqo-mcp-server-xmla-oidc-auth: OIDC config decoupling ──────────
+
+    use clap::Parser;
+
+    /// Parse `Args` from a synthetic CLI line. The binary name and the required
+    /// `--catalog` arg are prepended so only the auth flags vary per test.
+    fn args_from(extra: &[&str]) -> Args {
+        let mut v = vec!["mqo-mcp-server", "--catalog", "/dev/null"];
+        v.extend_from_slice(extra);
+        Args::parse_from(v)
+    }
+
+    const OIDC_FLAGS: &[&str] = &[
+        "--oidc-token-url",
+        "https://idp/token",
+        "--oidc-client-id",
+        "atscale-modeler",
+        "--oidc-client-secret-env",
+        "ATSCALE_OIDC_SECRET",
+        "--oidc-realm",
+        "atscale",
+    ];
+
+    /// Env lookup that always misses — every var unset (no process mutation).
+    fn env_empty(_: &str) -> Option<String> {
+        None
+    }
+
+    /// Env lookup that returns a non-empty value for `var`, else `None`.
+    fn env_with(var: &'static str, val: &'static str) -> impl Fn(&str) -> Option<String> {
+        move |q: &str| (q == var).then(|| val.to_string())
+    }
+
+    /// AC#1: PGWire direct creds AND OIDC flags → OIDC provider IS constructed
+    /// for XMLA (token_url present), decoupled from direct_auth.
+    #[test]
+    fn oidc_built_even_with_direct_pgwire_auth() {
+        let mut argv = vec!["--pg-user", "joe", "--pg-pass-env", "PG_PASS"];
+        argv.extend_from_slice(OIDC_FLAGS);
+        let args = args_from(&argv);
+        // direct_auth = true (pg creds present), yet OIDC must still build.
+        let cfg = build_oidc_config(&args, true, env_empty).expect("oidc config builds");
+        assert_eq!(cfg.token_url, "https://idp/token");
+        assert_eq!(cfg.client_id, "atscale-modeler");
+        assert_eq!(cfg.client_secret_env_var, "ATSCALE_OIDC_SECRET");
+        // client_credentials flow (no ROPC username).
+        assert!(cfg.username.is_none());
+    }
+
+    /// AC#2: --oidc-username + --oidc-password-env → ROPC flow selected.
+    #[test]
+    fn oidc_username_selects_ropc() {
+        let mut argv = vec!["--oidc-username", "modeler-user", "--oidc-password-env", "ROPC_PW"];
+        argv.extend_from_slice(OIDC_FLAGS);
+        let args = args_from(&argv);
+        let cfg = build_oidc_config(&args, false, env_with("ROPC_PW", "hunter2"))
+            .expect("ropc config builds");
+        assert_eq!(cfg.username.as_deref(), Some("modeler-user"));
+        assert_eq!(cfg.password_env_var.as_deref(), Some("ROPC_PW"));
+    }
+
+    /// AC#3 / AC#7 back-compat: only direct PGWire creds, no OIDC flags →
+    /// OIDC unconfigured (empty), identical to today's SQL-only behavior.
+    #[test]
+    fn sql_only_leaves_oidc_unconfigured() {
+        let args = args_from(&["--pg-user", "joe", "--pg-pass-env", "PG_PASS"]);
+        let cfg = build_oidc_config(&args, true, env_empty).expect("sql-only builds");
+        assert!(cfg.token_url.is_empty(), "no OIDC provider for SQL-only");
+        assert!(cfg.username.is_none());
+    }
+
+    /// AC#7 back-compat: pure-OIDC (no direct creds) still builds the provider.
+    #[test]
+    fn pure_oidc_builds_client_credentials() {
+        let args = args_from(OIDC_FLAGS);
+        let cfg = build_oidc_config(&args, false, env_empty).expect("pure-oidc builds");
+        assert_eq!(cfg.token_url, "https://idp/token");
+        assert!(cfg.username.is_none(), "client_credentials, not ROPC");
+    }
+
+    /// AC#4: --oidc-username set but password env var absent → fail fast with a
+    /// message naming the missing env var.
+    #[test]
+    fn ropc_missing_password_env_fails_fast() {
+        let mut argv = vec!["--oidc-username", "u", "--oidc-password-env", "ROPC_PW_ABSENT"];
+        argv.extend_from_slice(OIDC_FLAGS);
+        let args = args_from(&argv);
+        let err = build_oidc_config(&args, false, env_empty).expect_err("must fail fast");
+        assert!(err.contains("ROPC_PW_ABSENT"), "names the env var: {err}");
+    }
+
+    /// AC#4 edge: --oidc-username set but password env var present-but-EMPTY →
+    /// still fails fast (empty is treated as unset).
+    #[test]
+    fn ropc_empty_password_env_fails_fast() {
+        let mut argv = vec!["--oidc-username", "u", "--oidc-password-env", "ROPC_PW_EMPTY"];
+        argv.extend_from_slice(OIDC_FLAGS);
+        let args = args_from(&argv);
+        let err = build_oidc_config(&args, false, env_with("ROPC_PW_EMPTY", ""))
+            .expect_err("empty password fails");
+        assert!(err.contains("ROPC_PW_EMPTY"), "names the env var: {err}");
+    }
+
+    /// AC#4 variant: --oidc-username without --oidc-password-env → clear error.
+    #[test]
+    fn ropc_username_without_password_env_flag_fails() {
+        let mut argv = vec!["--oidc-username", "u"];
+        argv.extend_from_slice(OIDC_FLAGS);
+        let args = args_from(&argv);
+        let err = build_oidc_config(&args, false, env_empty).expect_err("must fail");
+        assert!(err.contains("--oidc-password-env"), "names the flag: {err}");
+    }
+
+    /// Partial OIDC flag set (no direct creds to fall back to) → names the
+    /// first missing required field rather than silently degrading.
+    #[test]
+    fn partial_oidc_flags_report_missing_field() {
+        let args = args_from(&["--oidc-token-url", "https://idp/token"]);
+        let err = build_oidc_config(&args, false, env_empty).expect_err("incomplete oidc");
+        assert!(err.contains("--oidc-client-id"), "names missing field: {err}");
+    }
+
+    /// AC#5 secret hygiene: the password/secret flags take VAR NAMES, not
+    /// values. Verify the config stores the env-var name, never a secret value.
+    #[test]
+    fn flags_store_env_var_names_not_secrets() {
+        let mut argv = vec!["--oidc-username", "u", "--oidc-password-env", "ROPC_PW"];
+        argv.extend_from_slice(OIDC_FLAGS);
+        let args = args_from(&argv);
+        let cfg = build_oidc_config(&args, false, env_with("ROPC_PW", "topsecret-value"))
+            .expect("builds");
+        assert_eq!(cfg.password_env_var.as_deref(), Some("ROPC_PW"));
+        assert_eq!(cfg.client_secret_env_var, "ATSCALE_OIDC_SECRET");
+        // The secret VALUE must never be stored in the config struct.
+        let dbg = format!("{cfg:?}");
+        assert!(!dbg.contains("topsecret-value"), "secret value leaked: {dbg}");
     }
 }
