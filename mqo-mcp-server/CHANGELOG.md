@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.26.0 — 2026-06-14
+
+Decouples XMLA OIDC token provider from PGWire direct-auth mode; adds --oidc-username/--oidc-password-env flags for ROPC flow. Enables DAX/MDX backends on OIDC clusters even when PGWire uses direct credentials.
+
 ## v0.24.0 — 2026-06-12
 
 - **result-completeness guard** — fixes the fm3-012 cross-fact leak
