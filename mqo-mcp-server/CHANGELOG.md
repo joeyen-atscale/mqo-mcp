@@ -1,12 +1,14 @@
 # Changelog
 
+## v0.26.0 — 2026-06-14
+
+Decouples XMLA OIDC token provider from PGWire direct-auth mode; adds --oidc-username/--oidc-password-env flags for ROPC flow. Enables DAX/MDX backends on OIDC clusters even when PGWire uses direct credentials. (PRD-mqo-mcp-server-xmla-oidc-auth)
+
+describe_model now returns related_attributes per level when projection fields are present; handle_op routes projection MQOs through the SQL SELECT DISTINCT path. (PRD-mqo-attribute-projection)
+
 ## v0.25.1 — 2026-06-14
 
 Pre-execution cardinality guard for measureless projection MQOs: estimates distinct-row count from catalog domain sizes and filter selectivity, declines with typed projection_too_large error when estimate exceeds --max-projection-cardinality cap (default 10,000). Prevents unbounded SELECT DISTINCT queries from consuming warehouse credits. (PRD-mqo-projection-cardinality-guard)
-
-## v0.26.0 — 2026-06-14
-
-Decouples XMLA OIDC token provider from PGWire direct-auth mode; adds --oidc-username/--oidc-password-env flags for ROPC flow. Enables DAX/MDX backends on OIDC clusters even when PGWire uses direct credentials.
 
 ## v0.24.0 — 2026-06-12
 

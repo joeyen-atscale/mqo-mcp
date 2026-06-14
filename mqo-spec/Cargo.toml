@@ -1,6 +1,6 @@
 [package]
 name = "mqo-spec"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.70.0"
 description = "Multidimensional Query Object — typed, serde-serializable schema and JSON Schema contract for the MQO fleet"

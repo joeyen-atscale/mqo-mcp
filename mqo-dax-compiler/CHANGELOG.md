@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.11.0 — 2026-06-14
+
+Lifted the EmptyMeasures guard for projection MQOs (mqo.is_projection()). The SUMMARIZECOLUMNS path at codegen.rs now emits dimension columns + filters with no measure argument for projections. SQL router emits SELECT DISTINCT. (PRD-mqo-attribute-projection)
+
 ## v0.10.0 — Real OR semantics for Filter::Group
 
 PRD-mqo-filter-predicate-grammar: Group now compiles to ONE combined predicate
