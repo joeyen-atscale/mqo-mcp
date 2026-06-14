@@ -19,6 +19,7 @@ use mqo_dax_compiler::{
     catalog_context::DaxCatalogContext,
     input::BoundMqoInput,
     syntax_check::validate_dax_syntax,
+    validation::validate_dax_output,
 };
 use std::path::PathBuf;
 use std::process;
@@ -90,6 +91,23 @@ fn main() {
             eprintln!("mqo-dax: syntax check failed: {e}");
             process::exit(1);
         }
+        // Engine-validation gate (FR-1/FR-2): hard-fail on ungrounded refs or
+        // unquoted space-bearing table identifiers, naming the token (FR-4/FR-6).
+        if let Err(e) = validate_dax_output(&dax) {
+            eprintln!("mqo-dax: engine-validation gate rejected DAX: {e}");
+            process::exit(1);
+        }
+    }
+
+    // FR-5 (SHOULD): opt-in engine-parse validation. Default-off; when the
+    // env flag is unset we log a clean skip and never fail for infra (AC-4).
+    if std::env::var_os("MQO_DAX_ENGINE_CHECK").is_none() {
+        eprintln!("mqo-dax: engine-check-skipped (MQO_DAX_ENGINE_CHECK unset)");
+    } else {
+        // TODO: FR-5 live engine check — submit `dax` to the XMLA parser using
+        // creds by env-var name and fail on a parse error (AC-5). No cluster
+        // creds are available in tests, so live validation is left as a stub.
+        eprintln!("mqo-dax: engine-check-skipped (live engine validation not yet implemented)");
     }
 
     println!("{dax}");

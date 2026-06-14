@@ -23,10 +23,12 @@ pub mod catalog_context;
 pub mod codegen;
 pub mod input;
 pub mod syntax_check;
+pub mod validation;
 
 pub use catalog_context::DaxCatalogContext;
 pub use codegen::{compile, compile_grounded};
 pub use input::{BoundMqoInput, BoundMeasureInput, BoundDimensionInput, CalcGroupMemberInput};
+pub use validation::{validate_dax_output, DaxValidationError};
 
 use thiserror::Error;
 
@@ -52,6 +54,13 @@ pub enum DaxCompileError {
     /// The emitted DAX failed the bundled syntax check.
     #[error("emitted DAX failed syntax check: {0}")]
     SyntaxCheckFailed(String),
+
+    /// The emitted DAX failed the engine-validation gate — it contained an
+    /// ungrounded reference or an unquoted space-bearing table identifier
+    /// (PRD-mqo-dax-engine-validation-gate). The wrapped error names the
+    /// specific offending token.
+    #[error("emitted DAX failed the engine-validation gate: {0}")]
+    ValidationFailed(#[from] DaxValidationError),
 
     /// A `Member` filter with an empty members list — an empty IN-set is
     /// not valid DAX.
