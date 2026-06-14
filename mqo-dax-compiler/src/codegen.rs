@@ -93,12 +93,15 @@ pub fn compile_grounded(
         build_measure_pairs(bound, ctx)?
     };
 
-    // Build groupBy columns list (from bound.dimensions).
+    // Build groupBy columns list (from bound.dimensions). Each dimension level is
+    // grounded to its per-level physical table (FR-1); a level that cannot be
+    // grounded FR-4-declines (UngroundableLevel) rather than emitting an
+    // /* ungrounded */ reference to the engine.
     let group_by_cols: Vec<String> = bound
         .dimensions
         .iter()
-        .map(|d| level_col_ref_ctx(&d.unique_name, ctx))
-        .collect();
+        .map(|d| level_col_ref_grounded(&d.unique_name, ctx))
+        .collect::<Result<Vec<_>, _>>()?;
 
     // Build filter expressions. The query's dimension level unique_names are
     // passed so an ambiguous Member value (e.g. "M" in both Gender and Marital
@@ -149,11 +152,12 @@ pub fn compile_grounded(
         // For projection MQOs sort by the first dimension; for regular queries
         // sort by the first measure (existing behaviour).
         if bound.mqo.is_projection() {
-            // Projection: sort by first dimension level column.
-            let first_dim_ref = bound
-                .dimensions
-                .first()
-                .map_or_else(|| "1".to_string(), |d| level_col_ref_ctx(&d.unique_name, ctx));
+            // Projection: sort by first dimension level column. Grounding already
+            // succeeded for this level in group_by_cols above, so it resolves here.
+            let first_dim_ref = match bound.dimensions.first() {
+                Some(d) => level_col_ref_grounded(&d.unique_name, ctx)?,
+                None => "1".to_string(),
+            };
             format!("TOPN({limit}, {inner}, {first_dim_ref}, ASC)")
         } else {
             let first_measure_ref = measure_dax_ref_ctx(&bound.measures[0].unique_name, ctx);
@@ -504,7 +508,11 @@ fn filter_predicate(
             Ok((format!("{col} IN {{{}}}", list.join(", ")), vec![col]))
         }
         Filter::MemberLevel { level, members, exclude, .. } => {
-            let col = level_col_ref_ctx(level, ctx);
+            // FR-2: `level` may be a bare display label ("Ship Mode Type") or a
+            // full unique_name ("ship_mode.[Ship Mode Type]"); both ground to the
+            // same column. FR-4: decline (UngroundableLevel) instead of emitting
+            // an /* ungrounded */ ref.
+            let col = level_col_ref_grounded(level, ctx)?;
             let list: Vec<String> = members.iter().map(|m| format!("\"{m}\"")).collect();
             let set = format!("{col} IN {{{}}}", list.join(", "));
             let pred = if *exclude { format!("NOT({set})") } else { set };
@@ -623,7 +631,10 @@ fn filter_expr_ctx(
         Filter::MemberLevel { level, members, exclude, .. } => {
             // Caller pinned the level explicitly (PRD-mqo-member-filter-explicit-level):
             // bind directly to it, no domain-scan grounding. `exclude` → NOT-IN.
-            let col = level_col_ref_ctx(level, ctx);
+            // FR-2: accept a bare display label OR a full unique_name as `level`;
+            // both ground to the same column. FR-4: decline rather than emit an
+            // /* ungrounded */ reference to the engine.
+            let col = level_col_ref_grounded(level, ctx)?;
             let member_list: Vec<String> =
                 members.iter().map(|m| format!("\"{m}\"")).collect();
             let set = format!("{col} IN {{{}}}", member_list.join(", "));
@@ -700,22 +711,65 @@ fn measure_dax_ref_ctx(unique_name: &str, ctx: Option<&DaxCatalogContext>) -> St
 
 /// Emit a DAX column reference for a dimension level.
 ///
-/// - With context and a known `unique_name`: `'TableName'[Display Label]`
+/// - With context and a known `unique_name`: `'<physical table>'[Display Label]`
+///   where the physical table is the level's hierarchy prefix (FR-1), single-quoted
+///   (FR-3 handles spaces/reserved chars).
 /// - With context but unknown `unique_name`: `<fallback_ref> /* ungrounded: <unique_name> */`
 /// - Without context: delegates to `level_col_ref` (existing behaviour)
+///
+/// This is the *infallible* variant used where the level is already known to be
+/// catalog-resolved (e.g. measure-bearing query paths). Paths that must FR-4-decline
+/// on an unmappable level use [`level_col_ref_grounded`] instead.
 fn level_col_ref_ctx(unique_name: &str, ctx: Option<&DaxCatalogContext>) -> String {
     let Some(c) = ctx else {
         return level_col_ref(unique_name);
     };
 
     if let Some(label) = c.labels.get(unique_name) {
-        // Apostrophe-quoted table name for safety (handles spaces/hyphens).
-        return format!("'{}'[{label}]", c.table_name);
+        // Per-level physical table (FR-1): the hierarchy prefix of the
+        // unique_name, NOT the single global table_name (= the PGWire database
+        // name, invalid as a DAX table). Fall back to the global table_name for
+        // backward compat with contexts built before the per-level map existed.
+        let table = c.tables.get(unique_name).unwrap_or(&c.table_name);
+        return format!("{}[{label}]", quote_table_ident(table));
     }
 
     // Unknown unique_name — fall back to heuristic and annotate.
     let fallback = level_col_ref(unique_name);
     format!("{fallback} /* ungrounded: {unique_name} */")
+}
+
+/// Single-quote a DAX table identifier (FR-3).
+///
+/// AtScale XMLA accepts (and we always emit) single-quoted table names so that
+/// hierarchy names containing spaces or DAX-reserved characters are valid
+/// (`'Ship Mode'[Carrier]`). An embedded apostrophe is doubled per DAX escaping.
+fn quote_table_ident(table: &str) -> String {
+    format!("'{}'", table.replace('\'', "''"))
+}
+
+/// Emit a grounded `'<physical table>'[Display Label]` column reference for a
+/// level, or FR-4-decline with [`DaxCompileError::UngroundableLevel`] when the
+/// level cannot be grounded.
+///
+/// Accepts `key` as either a fully-qualified `unique_name`
+/// (`ship_mode.[Ship Mode Type]`) or a bare display label (`Ship Mode Type`) —
+/// both resolve to the same grounded column (FR-2). When a `ctx` is present and
+/// `key` matches neither, returns `UngroundableLevel` instead of emitting a
+/// `/* ungrounded */` reference to the engine (FR-4).
+///
+/// With no `ctx`, delegates to the heuristic [`level_col_ref`] (backward compat).
+fn level_col_ref_grounded(
+    key: &str,
+    ctx: Option<&DaxCatalogContext>,
+) -> Result<String, DaxCompileError> {
+    let Some(c) = ctx else {
+        return Ok(level_col_ref(key));
+    };
+    let unique_name = c.canonical_level_key(key).ok_or_else(|| {
+        DaxCompileError::UngroundableLevel { unique_name: key.to_string() }
+    })?;
+    Ok(level_col_ref_ctx(&unique_name, ctx))
 }
 
 #[cfg(test)]
@@ -968,8 +1022,10 @@ mod tests {
             Some("inventory_date_dimension.calendar.[Inventory Calendar Month]"),
         );
         let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        // FR-1: grounds to the per-level physical table (hierarchy prefix of the
+        // unique_name = "inventory_date_dimension"), NOT the catalog/database name.
         assert!(
-            dax.contains("'tpcds_benchmark_model'[Inventory Calendar Month]"),
+            dax.contains("'inventory_date_dimension'[Inventory Calendar Month]"),
             "expected grounded level ref, got: {dax}"
         );
     }
@@ -986,22 +1042,30 @@ mod tests {
         );
     }
 
-    /// Unknown `unique_name` falls back gracefully — no panic, annotated with comment.
+    /// FR-4: an unknown dimension `unique_name` with a context present declines
+    /// with a typed `UngroundableLevel` error naming the level — it does NOT emit a
+    /// `/* ungrounded */` reference to the engine (which the engine rejects with an
+    /// opaque 500).
     #[test]
-    fn grounded_unknown_level_falls_back_with_comment() {
+    fn grounded_unknown_level_declines_ungroundable() {
         let ctx = fixture_ctx();
         let bound = minimal_bound("tpcds.total_store_sales", Some("no.such.level"));
-        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
-        // Should contain ungrounded annotation for the dim ref.
+        let err = compile_grounded(&bound, Some(&ctx)).unwrap_err();
         assert!(
-            dax.contains("/* ungrounded: no.such.level */"),
-            "expected ungrounded annotation, got: {dax}"
+            matches!(err, crate::DaxCompileError::UngroundableLevel { ref unique_name } if unique_name == "no.such.level"),
+            "expected UngroundableLevel(no.such.level), got: {err:?}"
         );
-        // Must not panic — query should still be valid (SUMMARIZECOLUMNS present).
-        // Syntax check: SUMMARIZECOLUMNS is present despite the comment.
+    }
+
+    /// FR-4 boundary: with NO context, an unknown level still falls back to the
+    /// heuristic ref (backward compat — un-grounded paths are unchanged).
+    #[test]
+    fn unknown_level_no_ctx_uses_heuristic() {
+        let bound = minimal_bound("tpcds.total_store_sales", Some("foo.bar.[Baz]"));
+        let dax = compile_grounded(&bound, None).unwrap();
         assert!(
-            crate::syntax_check::validate_dax_syntax(&dax).is_ok(),
-            "syntax check failed on ungrounded output: {dax}"
+            dax.contains("Bar[Baz]"),
+            "no-ctx path should use heuristic level_col_ref, got: {dax}"
         );
     }
 
@@ -1010,7 +1074,7 @@ mod tests {
     /// Range filter with a bare display label → resolves via reverse lookup.
     ///
     /// fixture_ctx() has: unique_name "inventory_date_dimension.calendar.[Inventory Calendar Month]"
-    /// → label "Inventory Calendar Month", table "tpcds_benchmark_model".
+    /// → label "Inventory Calendar Month", per-level table "inventory_date_dimension".
     #[test]
     fn range_filter_bare_label_resolves() {
         let ctx = fixture_ctx();
@@ -1021,8 +1085,8 @@ mod tests {
         };
         let result = filter_expr_ctx(&filter, Some(&ctx), &[]).unwrap();
         assert!(
-            result.contains("'tpcds_benchmark_model'"),
-            "expected grounded column with table name, got: {result}"
+            result.contains("'inventory_date_dimension'"),
+            "expected grounded column with per-level table name, got: {result}"
         );
         assert!(
             !result.contains("Inventory Calendar Month[Inventory Calendar Month]"),
@@ -1045,8 +1109,8 @@ mod tests {
             "should keep label: {result}"
         );
         assert!(
-            result.contains("'tpcds_benchmark_model'"),
-            "should be grounded to table: {result}"
+            result.contains("'inventory_date_dimension'"),
+            "should be grounded to per-level table: {result}"
         );
     }
 
@@ -1447,5 +1511,148 @@ mod tests {
             matches!(err, crate::DaxCompileError::EmptyMeasures),
             "expected EmptyMeasures, got: {err:?}"
         );
+    }
+}
+
+// ── PRD-mqo-projection-dax-grounding: per-level table + filter key alignment ────
+#[cfg(test)]
+mod projection_grounding_tests {
+    use super::compile_grounded;
+    use crate::catalog_context::DaxCatalogContext;
+    use crate::input::{BoundDimensionInput, BoundMqoInput};
+    use mqo_spec::Mqo;
+
+    /// Catalog whose `catalog` (database) name is `atscale_catalogs` — the live
+    /// failure case. ship_mode hierarchy has Carrier + Ship Mode Type levels.
+    /// A space-bearing hierarchy ("Ship Mode") is included for the FR-3 quote test.
+    fn ship_mode_ctx() -> DaxCatalogContext {
+        let json = r#"{
+            "catalog": "atscale_catalogs",
+            "schema": "tpcds_Snowflake",
+            "columns": [
+                {"unique_name":"ship_mode.[Carrier]","label":"Carrier","kind":"level","hierarchy":"ship_mode","level":"Carrier"},
+                {"unique_name":"ship_mode.[Ship Mode Type]","label":"Ship Mode Type","kind":"level","hierarchy":"ship_mode","level":"Ship Mode Type"},
+                {"unique_name":"store_dimension.[Store Name]","label":"Store Name","kind":"level","hierarchy":"store_dimension","level":"Store Name"},
+                {"unique_name":"store_dimension.[Store Manager]","label":"Store Manager","kind":"level","hierarchy":"store_dimension","level":"Store Manager"}
+            ]
+        }"#;
+        DaxCatalogContext::from_json(json).unwrap()
+    }
+
+    fn proj(dims: &[&str]) -> BoundMqoInput {
+        BoundMqoInput {
+            mqo: Mqo {
+                model: "tpcds".into(),
+                measures: vec![],
+                // is_projection() requires mqo.dimensions to be non-empty.
+                dimensions: dims
+                    .iter()
+                    .map(|u| mqo_spec::LevelSelection {
+                        hierarchy: u.split('.').next().unwrap_or("").to_string(),
+                        level: (*u).to_string(),
+                    })
+                    .collect(),
+                filters: vec![],
+                limit: None,
+                order: None,
+                time_intelligence: vec![],
+                non_empty: false,
+                projection: true,
+            },
+            measures: vec![],
+            dimensions: dims
+                .iter()
+                .map(|u| BoundDimensionInput {
+                    unique_name: (*u).to_string(),
+                    hierarchy: u.split('.').next().unwrap_or("").to_string(),
+                })
+                .collect(),
+            calc_group_members: vec![],
+        }
+    }
+
+    /// AC-2 (dimension half): the projection dimension grounds to the per-level
+    /// physical table `ship_mode`, NOT the database name `atscale_catalogs`.
+    #[test]
+    fn ac2_projection_dim_grounds_to_hierarchy_table() {
+        let ctx = ship_mode_ctx();
+        let dax = compile_grounded(&proj(&["ship_mode.[Carrier]"]), Some(&ctx)).unwrap();
+        assert!(dax.contains("'ship_mode'[Carrier]"), "got: {dax}");
+        assert!(!dax.contains("atscale_catalogs"), "must not use db name, got: {dax}");
+        assert!(!dax.contains("/* ungrounded"), "no ungrounded annotation, got: {dax}");
+    }
+
+    /// AC-2 (filter half) + FR-2: a MemberLevel filter whose `level` is the BARE
+    /// label ("Ship Mode Type") still grounds to 'ship_mode'[Ship Mode Type] —
+    /// no /* ungrounded */, no unquoted space-bearing identifier.
+    #[test]
+    fn ac2_member_level_filter_bare_label_grounds() {
+        let ctx = ship_mode_ctx();
+        let mut bound = proj(&["ship_mode.[Carrier]"]);
+        bound.mqo.filters = vec![mqo_spec::Filter::MemberLevel {
+            hierarchy: "ship_mode".into(),
+            level: "Ship Mode Type".into(), // bare label, as the live failure carried
+            members: vec!["EXPRESS".into()],
+            exclude: false,
+        }];
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        assert!(dax.contains("'ship_mode'[Ship Mode Type]"), "got: {dax}");
+        assert!(!dax.contains("/* ungrounded"), "got: {dax}");
+        // No unquoted multi-word identifier (the old bug emitted `Ship Mode Type[...]`).
+        assert!(!dax.contains(" Ship Mode Type["), "no unquoted space-bearing ident, got: {dax}");
+    }
+
+    /// FR-2: the same filter with a FULL unique_name as `level` grounds identically.
+    #[test]
+    fn member_level_filter_unique_name_grounds_identically() {
+        let ctx = ship_mode_ctx();
+        let mut bound = proj(&["ship_mode.[Carrier]"]);
+        bound.mqo.filters = vec![mqo_spec::Filter::MemberLevel {
+            hierarchy: "ship_mode".into(),
+            level: "ship_mode.[Ship Mode Type]".into(),
+            members: vec!["EXPRESS".into()],
+            exclude: false,
+        }];
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        assert!(dax.contains("'ship_mode'[Ship Mode Type]"), "got: {dax}");
+    }
+
+    /// AC-3: multi-level projection — each level grounds to its physical table.
+    #[test]
+    fn ac3_multi_level_projection_grounds_each_table() {
+        let ctx = ship_mode_ctx();
+        let dax = compile_grounded(
+            &proj(&["store_dimension.[Store Name]", "store_dimension.[Store Manager]"]),
+            Some(&ctx),
+        )
+        .unwrap();
+        assert!(dax.contains("'store_dimension'[Store Name]"), "got: {dax}");
+        assert!(dax.contains("'store_dimension'[Store Manager]"), "got: {dax}");
+    }
+
+    /// AC-4: a projection level absent from the catalog declines with a typed
+    /// UngroundableLevel naming the level — no DAX emitted.
+    #[test]
+    fn ac4_ungroundable_projection_level_declines() {
+        let ctx = ship_mode_ctx();
+        let err = compile_grounded(&proj(&["nope.[Mystery]"]), Some(&ctx)).unwrap_err();
+        assert!(
+            matches!(err, crate::DaxCompileError::UngroundableLevel { ref unique_name } if unique_name == "nope.[Mystery]"),
+            "expected UngroundableLevel(nope.[Mystery]), got: {err:?}"
+        );
+    }
+
+    /// AC-5: a hierarchy/table name containing a space is single-quoted.
+    #[test]
+    fn ac5_space_bearing_table_is_quoted() {
+        let json = r#"{
+            "catalog": "atscale_catalogs",
+            "columns": [
+                {"unique_name":"Ship Mode.[Carrier]","label":"Carrier","kind":"level","hierarchy":"Ship Mode","level":"Carrier"}
+            ]
+        }"#;
+        let ctx = DaxCatalogContext::from_json(json).unwrap();
+        let dax = compile_grounded(&proj(&["Ship Mode.[Carrier]"]), Some(&ctx)).unwrap();
+        assert!(dax.contains("'Ship Mode'[Carrier]"), "space-bearing table must be quoted, got: {dax}");
     }
 }
