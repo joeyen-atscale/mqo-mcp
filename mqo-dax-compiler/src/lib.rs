@@ -115,6 +115,28 @@ pub enum DaxCompileError {
         level: String,
     },
 
+    /// A projection dimension level (or a `MemberLevel` filter level) could not
+    /// be grounded to a physical `'Table'[Column]` reference.
+    ///
+    /// This fires when a `DaxCatalogContext` is present but the level is neither a
+    /// known `unique_name` (key in `labels`/`tables`) nor a recognized display
+    /// label, so no per-level physical table can be derived. Emitting a
+    /// `/* ungrounded */` reference would produce DAX the XMLA engine rejects with
+    /// an opaque 500; this typed decline names the unmappable level instead
+    /// (PRD-mqo-projection-dax-grounding, FR-4).
+    ///
+    /// To fix: supply a catalog that covers this level, or pass the level's
+    /// fully-qualified `unique_name` / exact display label from `describe_model`.
+    #[error(
+        "level '{unique_name}' cannot be grounded to a physical 'Table'[Column] \
+         reference (not a known unique-name or display label in the catalog); \
+         supply a catalog covering it or pass its fully-qualified unique-name"
+    )]
+    UngroundableLevel {
+        /// The level identifier (unique-name or label) that could not be grounded.
+        unique_name: String,
+    },
+
     /// A time-intelligence op is not supported by the target engine.
     ///
     /// This error is raised **before** any DAX is dispatched, so callers can

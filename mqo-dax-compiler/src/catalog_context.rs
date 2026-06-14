@@ -62,6 +62,22 @@ pub struct DaxCatalogContext {
     /// `unique_name → display_label` for every column (measures and levels).
     pub labels: HashMap<String, String>,
 
+    /// `level unique_name → physical table name` for every non-measure column.
+    ///
+    /// AtScale's XMLA tabular model creates one table per *hierarchy*, named by
+    /// the hierarchy prefix of the level's `unique_name`
+    /// (e.g. `ship_mode.[Carrier]` → `ship_mode`, `ship_mode.[Ship Mode Type]`
+    /// → `ship_mode`). Used by [`crate::codegen::compile_grounded`] to emit
+    /// `'<hierarchy>'[<label>]` column refs per level, instead of grounding
+    /// every column to the single global `table_name` (which is the PGWire
+    /// *database* name, `atscale_catalogs`, and invalid as a DAX table).
+    ///
+    /// Keyed by `unique_name`. A bare display label is NOT a key here — callers
+    /// that may pass a bare label (e.g. a `MemberLevel` filter `level`) must
+    /// reverse-resolve to the `unique_name` first (see
+    /// [`Self::resolve_level_label`]).
+    pub tables: HashMap<String, String>,
+
     /// `unique_name` set for columns whose `kind` is `"measure"`.
     pub measure_names: std::collections::HashSet<String>,
 
@@ -141,6 +157,7 @@ impl DaxCatalogContext {
             .unwrap_or_else(|| "model".to_string());
 
         let mut labels: HashMap<String, String> = HashMap::new();
+        let mut tables: HashMap<String, String> = HashMap::new();
         let mut measure_names = std::collections::HashSet::new();
         let mut hierarchy_levels: HashMap<String, Vec<String>> = HashMap::new();
         let mut level_domains: HashMap<String, Vec<String>> = HashMap::new();
@@ -153,6 +170,18 @@ impl DaxCatalogContext {
             if col.kind == "measure" {
                 measure_names.insert(col.unique_name.clone());
             } else {
+                // Per-level physical table = the hierarchy prefix of the
+                // unique_name (AtScale XMLA: one table per hierarchy).
+                // ship_mode.[Carrier] → ship_mode.
+                let table = col
+                    .unique_name
+                    .split('.')
+                    .next()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("model")
+                    .to_string();
+                tables.insert(col.unique_name.clone(), table);
+
                 // Track date dimension levels for time-intel grounding.
                 if inferred_date_level.is_none()
                     && (col.kind == "date_level" || col.kind == "date_dim")
@@ -217,12 +246,29 @@ impl DaxCatalogContext {
         Ok(Self {
             table_name,
             labels,
+            tables,
             measure_names,
             hierarchy_levels,
             level_domains,
             has_date_table: snapshot.has_date_table,
             date_level_unique_name,
         })
+    }
+
+    /// Resolve a level key (a `unique_name`, OR a bare display label) to its
+    /// canonical `unique_name` as known to this context.
+    ///
+    /// Returns the input verbatim when it is already a key in `labels`
+    /// (a `unique_name`); otherwise reverse-resolves a bare display label to its
+    /// `unique_name` via [`Self::resolve_level_label`]. Returns `None` when the
+    /// key matches neither — the caller should then FR-4-decline rather than emit
+    /// an ungrounded reference.
+    #[must_use]
+    pub fn canonical_level_key(&self, key: &str) -> Option<String> {
+        if self.labels.contains_key(key) {
+            return Some(key.to_string());
+        }
+        self.resolve_level_label(key).map(ToString::to_string)
     }
 
     /// Resolve a `Member` filter to the level whose enumerated domain CONTAINS the
@@ -387,6 +433,34 @@ mod tests {
             ctx.labels.get("tpcds.total_store_sales"),
             Some(&"Total Store Sales".to_string())
         );
+    }
+
+    #[test]
+    fn tables_map_uses_hierarchy_prefix_not_catalog() {
+        // FR-1: per-level table = hierarchy prefix of unique_name, NOT the catalog
+        // (database) name. The level's table must NOT be "tpcds_benchmark_model".
+        let ctx = DaxCatalogContext::from_json(fixture_json()).unwrap();
+        assert_eq!(
+            ctx.tables
+                .get("inventory_date_dimension.calendar.[Inventory Calendar Month]"),
+            Some(&"inventory_date_dimension".to_string())
+        );
+        // Measures carry no per-level table entry.
+        assert!(!ctx.tables.contains_key("tpcds.total_store_sales"));
+    }
+
+    #[test]
+    fn canonical_level_key_accepts_unique_name_and_bare_label() {
+        // FR-2: both the unique_name and the bare display label resolve to the
+        // same canonical unique_name key.
+        let ctx = DaxCatalogContext::from_json(fixture_json()).unwrap();
+        let un = "inventory_date_dimension.calendar.[Inventory Calendar Month]";
+        assert_eq!(ctx.canonical_level_key(un).as_deref(), Some(un));
+        assert_eq!(
+            ctx.canonical_level_key("Inventory Calendar Month").as_deref(),
+            Some(un)
+        );
+        assert_eq!(ctx.canonical_level_key("no such level"), None);
     }
 
     #[test]
