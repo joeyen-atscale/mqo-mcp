@@ -80,21 +80,21 @@ pub fn check_projection_cardinality(
     let mut total_estimate: u64 = 1;
 
     for dim in &mqo.dimensions {
-        let level_un = format!("{}.{}", dim.hierarchy, dim.level);
+        // Look up the catalog entry for this level.  A client may supply the
+        // level in several forms (see `level_matches`); resolve against all of
+        // them so we hit the SAME catalog column that `describe_model`'s
+        // `has_domain` keys off (its `unique_name`).
+        let maybe_entry = catalog
+            .columns
+            .iter()
+            .find(|col| col.kind == "level" && level_matches(col, &dim.hierarchy, &dim.level));
 
-        // Look up the catalog entry for this level.
-        let maybe_entry = catalog.columns.iter().find(|col| {
-            col.kind == "level"
-                && (col.unique_name == level_un
-                    || col
-                        .hierarchy
-                        .as_deref()
-                        .is_some_and(|h| h == dim.hierarchy)
-                        && col
-                            .level
-                            .as_deref()
-                            .is_some_and(|l| l == dim.level))
-        });
+        // Canonical unique_name for diagnostics + filter matching: prefer the
+        // resolved catalog column's unique_name (what describe_model advertises);
+        // otherwise reconstruct `hierarchy.level`.
+        let level_un = maybe_entry
+            .map(|e| e.unique_name.clone())
+            .unwrap_or_else(|| format!("{}.{}", dim.hierarchy, dim.level));
 
         // Total member count for this level.
         let total_members: Option<u64> = maybe_entry
@@ -152,6 +152,47 @@ pub fn check_projection_cardinality(
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
+
+/// Does catalog column `col` correspond to the MQO dimension
+/// (`dim_hierarchy`, `dim_level`)?
+///
+/// `describe_model` keys a level by its `unique_name` (e.g.
+/// `"ship_mode.[Carrier]"`).  A client therefore commonly passes the dimension
+/// `level` in one of several forms, and the guard MUST resolve all of them to
+/// the same catalog column — otherwise a domain-bearing level looks
+/// "cardinality unknown" and the projection is wrongly declined.  Accepted
+/// forms for `dim_level`:
+///
+/// * the bare level name — `"Carrier"`            (matches `col.level`)
+/// * the bracketed level name — `"[Carrier]"`     (matches `col.level` w/ brackets)
+/// * the full unique_name — `"ship_mode.[Carrier]"` (matches `col.unique_name`)
+///
+/// plus the reconstructed `"{dim_hierarchy}.{dim_level}"` against
+/// `col.unique_name` (back-compat with the bracketed `unique_name` form).
+fn level_matches(col: &mqo_catalog_binder::catalog::ColumnEntry, dim_hierarchy: &str, dim_level: &str) -> bool {
+    // 1. Client passed the full unique_name as `level`.
+    if col.unique_name == dim_level {
+        return true;
+    }
+    // 2. Reconstructed hierarchy.level matches the unique_name
+    //    (handles bracketed level e.g. `level = "[Carrier]"`).
+    if col.unique_name == format!("{dim_hierarchy}.{dim_level}") {
+        return true;
+    }
+    // 3. Hierarchy + level fields match (bare or bracketed level name).
+    let hier_ok = col.hierarchy.as_deref() == Some(dim_hierarchy);
+    if hier_ok {
+        if let Some(catalog_level) = col.level.as_deref() {
+            // Strip surrounding brackets from the supplied level so `[Carrier]`
+            // and `Carrier` both match a catalog `level` of `Carrier`.
+            let bare = dim_level.strip_prefix('[').and_then(|s| s.strip_suffix(']')).unwrap_or(dim_level);
+            if catalog_level == dim_level || catalog_level == bare {
+                return true;
+            }
+        }
+    }
+    false
+}
 
 /// The result of estimating cardinality for a single level.
 enum LevelEstimate {
@@ -433,6 +474,80 @@ mod tests {
         let mqo = make_projection_mqo("store_dimension", "State");
         let result = check_projection_cardinality(&mqo, &catalog, 0);
         assert!(result.is_err());
+    }
+
+    /// Build a catalog column shaped like the real `tpcds_catalog.json` /
+    /// live-ingested snapshot: `unique_name` is `"{hierarchy}.[{Level}]"`, the
+    /// `level` field is the BARE name (no brackets), and the member set lives in
+    /// the `domain` array (there is no separate count field).
+    fn make_realistic_catalog(hierarchy: &str, level: &str, domain_size: usize) -> CatalogSnapshot {
+        let unique_name = format!("{hierarchy}.[{level}]");
+        let mut col = ColumnEntry {
+            unique_name,
+            label: level.to_string(),
+            kind: "level".to_string(),
+            hierarchy: Some(hierarchy.to_string()),
+            level: Some(level.to_string()), // BARE — mirrors the real fixture
+            ..Default::default()
+        };
+        if domain_size > 0 {
+            col.domain = Some((0..domain_size).map(|i| format!("m{i}")).collect());
+        }
+        CatalogSnapshot { columns: vec![col], ..Default::default() }
+    }
+
+    // Regression (cardinality-guard-fix): a level the catalog has a `domain` for
+    // must be resolved — and its count read from `domain.len()` — REGARDLESS of
+    // which level-name form the client supplies.  Previously, passing the full
+    // unique_name (what describe_model advertises) made the guard miss the
+    // domain-bearing column and wrongly decline with `cardinality_unknown`.
+    #[test]
+    fn domain_resolves_for_all_level_name_forms() {
+        // 20-member domain (like ship_mode.[Carrier]); cap 10_000 → must pass.
+        let catalog = make_realistic_catalog("ship_mode", "Carrier", 20);
+        for level_form in ["Carrier", "[Carrier]", "ship_mode.[Carrier]"] {
+            let mqo = make_projection_mqo("ship_mode", level_form);
+            let result = check_projection_cardinality(&mqo, &catalog, 10_000);
+            assert!(
+                result.is_ok(),
+                "level form {level_form:?} should resolve to the 20-member domain and pass, got: {result:?}"
+            );
+        }
+    }
+
+    // Regression: a 2-member domain (like customer_demographics.[Gender]) passes
+    // even when the client sends the full unique_name as the level.
+    #[test]
+    fn small_domain_via_unique_name_passes() {
+        let catalog = make_realistic_catalog("customer_demographics", "Gender", 2);
+        let mqo = make_projection_mqo("customer_demographics", "customer_demographics.[Gender]");
+        assert!(check_projection_cardinality(&mqo, &catalog, 10_000).is_ok());
+    }
+
+    // Regression: count comes from `domain.len()`, so a domain larger than the
+    // cap still declines (fail-safe preserved) for every level-name form.
+    #[test]
+    fn large_domain_declines_for_all_level_name_forms() {
+        let catalog = make_realistic_catalog("customer_dimension", "Customer Id", 50_000);
+        for level_form in ["Customer Id", "[Customer Id]", "customer_dimension.[Customer Id]"] {
+            let mqo = make_projection_mqo("customer_dimension", level_form);
+            let result = check_projection_cardinality(&mqo, &catalog, 10_000);
+            assert!(
+                result.is_err(),
+                "level form {level_form:?} (50k domain) must decline, got: {result:?}"
+            );
+            assert!(result.unwrap_err().estimate > 10_000);
+        }
+    }
+
+    // Regression: a level the catalog has NO domain for is still unknown →
+    // fail-safe decline, regardless of level-name form.
+    #[test]
+    fn no_domain_still_declines() {
+        let catalog = make_realistic_catalog("store_dimension", "Store Id", 0);
+        let mqo = make_projection_mqo("store_dimension", "store_dimension.[Store Id]");
+        let err = check_projection_cardinality(&mqo, &catalog, 10_000).unwrap_err();
+        assert_eq!(err.level, "cardinality_unknown");
     }
 
     // Extra: MemberLevel filter selectivity
