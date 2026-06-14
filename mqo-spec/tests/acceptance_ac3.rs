@@ -13,6 +13,7 @@ fn minimal() -> Mqo {
         order: None,
         limit: None,
         non_empty: false,
+        projection: false,
     }
 }
 
@@ -65,6 +66,7 @@ fn validate_empty_measures_is_distinct_from_limit_zero() {
         order: None,
         limit: Some(0),
         non_empty: false,
+        projection: false,
     };
     let errs = validate(&mqo).expect_err("should collect multiple errors");
     let has_empty = errs.iter().any(|e| matches!(e, MqoError::EmptyMeasures));

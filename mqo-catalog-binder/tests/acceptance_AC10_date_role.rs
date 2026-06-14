@@ -109,7 +109,8 @@ fn ac10_fm1_009_per_measure_roles_bind() {
         order: None,
         limit: None,
         non_empty: false,
-    };
+        projection: false,
+        };
     match bind_with_date_roles(&mqo, &snapshot(), &e) {
         BindResult::Bound(b) => {
             let inv = b.measures.iter().find(|m| m.unique_name.contains("inventory")).unwrap();
@@ -141,7 +142,8 @@ fn ac10_fm1_009_shared_sold_date_is_rejected() {
         order: None,
         limit: None,
         non_empty: false,
-    };
+        projection: false,
+        };
     match bind_with_date_roles(&mqo, &snapshot(), &e) {
         BindResult::DateRoleIncompatible(rs) => {
             assert_eq!(rs.len(), 1);
@@ -169,7 +171,8 @@ fn ac10_single_fact_sales_binds() {
         order: None,
         limit: None,
         non_empty: false,
-    };
+        projection: false,
+        };
     assert!(matches!(
         bind_with_date_roles(&mqo, &snapshot(), &e),
         BindResult::Bound(_)

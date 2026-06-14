@@ -164,9 +164,9 @@ pub fn estimate_rows(bound: &mqo_spec::BoundMqo, stats: &LevelStats) -> u64 {
 /// last-segment / unqualified-FROM behaviour (backwards-compatible).
 #[derive(Debug, Clone, Default)]
 pub struct CatalogContext {
-    /// AtScale catalog name, e.g. `"atscale_catalogs"`.
+    /// `AtScale` catalog name, e.g. `"atscale_catalogs"`.
     pub catalog: Option<String>,
-    /// AtScale schema name, e.g. `"tpcds_Snowflake"`.
+    /// `AtScale` schema name, e.g. `"tpcds_Snowflake"`.
     pub schema: Option<String>,
     /// Maps every column `unique_name` → its human-readable display label.
     pub labels: HashMap<String, String>,
@@ -218,6 +218,11 @@ impl CatalogContext {
 /// FROM "atscale_catalogs"."tpcds_Snowflake"."model" LIMIT n
 /// ```
 ///
+/// For **projection** MQOs (`mqo.is_projection()` is true) the form is:
+/// ```sql
+/// SELECT DISTINCT "Dim Label", ... FROM "model" [LIMIT n]
+/// ```
+///
 /// The alias on each measure uses the last `.`-segment of the `unique_name`
 /// so callers can map response columns back to MQO unique names.
 #[must_use]
@@ -231,12 +236,12 @@ pub fn build_sql_projection(
     for d in &bound.dimensions {
         let col = catalog
             .and_then(|c| c.labels.get(&d.unique_name))
-            .map(|label| format!("\"{label}\""))
-            .unwrap_or_else(|| quote_last_segment(&d.unique_name));
+            .map_or_else(|| quote_last_segment(&d.unique_name), |label| format!("\"{label}\""));
         cols.push(col);
     }
 
     // Measure columns — SUM("Display Label") AS "slug" when catalog present.
+    // Skipped for projection MQOs (no measures).
     for m in &bound.measures {
         let col = if let Some(label) = catalog.and_then(|c| c.labels.get(&m.unique_name)) {
             let slug = m.unique_name.rsplit('.').next().unwrap_or(&m.unique_name);
@@ -253,7 +258,13 @@ pub fn build_sql_projection(
         .mqo
         .limit
         .map_or_else(String::new, |n| format!(" LIMIT {n}"));
-    format!("SELECT {col_list} FROM {from}{limit_clause}")
+
+    // Projection MQOs emit SELECT DISTINCT (no aggregation, distinct members).
+    if bound.mqo.is_projection() {
+        format!("SELECT DISTINCT {col_list} FROM {from}{limit_clause}")
+    } else {
+        format!("SELECT {col_list} FROM {from}{limit_clause}")
+    }
 }
 
 /// Build the fully-qualified FROM clause.
@@ -305,18 +316,22 @@ fn quote_model_path(model: &str) -> String {
 /// 1. Shape flags set (`asymmetric_axes`, `drill_through`, `cellset_requested`)
 ///    → **MDX**.
 /// 2. `estimated_rows > row_threshold` → **SQL** with flat projection.
-/// 3. Otherwise → **DAX**.
+/// 3. Projection MQO (`mqo.is_projection()`) → **DAX** (SUMMARIZECOLUMNS path).
+/// 4. Otherwise → **DAX**.
 ///
 /// # Errors
 ///
-/// Returns [`RouterError::NoMeasures`] when `bound.measures` is empty.
+/// Returns [`RouterError::NoMeasures`] when `bound.measures` is empty and the
+/// MQO is not a valid projection.
 pub fn route(
     bound: &mqo_spec::BoundMqo,
     stats: &StatBundle,
     row_threshold: u64,
     catalog: Option<&CatalogContext>,
 ) -> Result<RoutingDecision, RouterError> {
-    if bound.measures.is_empty() {
+    // Allow projection MQOs through (no measures, explicit opt-in, ≥1 dim).
+    // Non-projection measureless MQOs are still an error.
+    if bound.measures.is_empty() && !bound.mqo.is_projection() {
         return Err(RouterError::NoMeasures);
     }
 
@@ -404,6 +419,7 @@ mod tests {
             order: None,
             limit: None,
             non_empty: false,
+            projection: false,
         }
     }
 
@@ -661,6 +677,7 @@ mod tests {
                 order: None,
                 limit: None,
                 non_empty: false,
+                projection: false,
             },
             measures: vec![],
             dimensions: vec![],

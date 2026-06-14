@@ -57,7 +57,8 @@ fn ac2_no_enriched_catalog_returns_bound() {
         order: None,
         limit: None,
         non_empty: false,
-    };
+        projection: false,
+        };
 
     // Without enriched catalog: must return Bound (identical to pre-extension behavior).
     match bind(&mqo, &snapshot) {

@@ -20,6 +20,7 @@
 //!     order: None,
 //!     limit: Some(100),
 //!     non_empty: true,
+//!     projection: false,
 //! };
 //!
 //! let result = validate(&mqo);
@@ -41,13 +42,22 @@ use thiserror::Error;
 /// An LLM constructs this *instead of SQL*. It is a selection of measures,
 /// dimension levels, filters, calc-group members, and time-intelligence
 /// operations, with optional ordering, limit, and non-empty flags.
+///
+/// ## Projection mode
+///
+/// When `projection: true` and `measures` is empty but `dimensions` is
+/// non-empty, the MQO is a **projection** — it returns distinct member
+/// combinations of the selected levels (+ their related attributes),
+/// optionally filtered. A measureless MQO without `projection: true` still
+/// returns `EmptyMeasures` (prevents silent reinterpretation of malformed
+/// requests).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[schemars(description = "Multidimensional Query Object — top-level query payload")]
 pub struct Mqo {
     /// The model (cube) this query runs against.
     pub model: String,
 
-    /// Measures to project. Must be non-empty.
+    /// Measures to project. Must be non-empty unless `projection` is true.
     pub measures: Vec<MeasureRef>,
 
     /// Dimension levels to project (rows/columns).
@@ -67,6 +77,25 @@ pub struct Mqo {
 
     /// If true, exclude tuples where all measures are empty/null.
     pub non_empty: bool,
+
+    /// If true, this is a **projection** MQO: `measures` may be empty when
+    /// `dimensions` is non-empty. The compilers will emit a measureless
+    /// `SUMMARIZECOLUMNS` / `SELECT DISTINCT` instead of an aggregation.
+    ///
+    /// A measureless MQO with `projection: false` (the default) still returns
+    /// `EmptyMeasures` — this field prevents silent reinterpretation of
+    /// malformed requests.
+    #[serde(default)]
+    pub projection: bool,
+}
+
+impl Mqo {
+    /// Returns `true` when this MQO is a projection (no measures, explicit opt-in,
+    /// and at least one dimension to project).
+    #[must_use]
+    pub fn is_projection(&self) -> bool {
+        self.projection && self.measures.is_empty() && !self.dimensions.is_empty()
+    }
 }
 
 // ── Reference types ────────────────────────────────────────────────────────
@@ -124,6 +153,7 @@ pub enum RangeBound {
 
 impl RangeBound {
     /// True when this bound is strictly greater than `other` within the same type.
+    #[must_use]
     pub fn gt_bound(&self, other: &Self) -> bool {
         match (self, other) {
             (RangeBound::Number(a), RangeBound::Number(b)) => a > b,
@@ -132,10 +162,12 @@ impl RangeBound {
         }
     }
     /// Extract the numeric value when this is a `Number` bound.
+    #[must_use]
     pub fn as_f64(&self) -> Option<f64> {
         if let RangeBound::Number(n) = self { Some(*n) } else { None }
     }
     /// Extract the string value when this is a `Text` bound.
+    #[must_use]
     pub fn as_str(&self) -> Option<&str> {
         if let RangeBound::Text(s) = self { Some(s.as_str()) } else { None }
     }
@@ -164,7 +196,7 @@ pub enum Filter {
     MemberLevel {
         /// The hierarchy to filter on.
         hierarchy: String,
-        /// The fully-qualified level unique_name (e.g. `customer_demographics.[Gender]`).
+        /// The fully-qualified level `unique_name` (e.g. `customer_demographics.[Gender]`).
         level: String,
         /// The member keys.
         members: Vec<String>,
@@ -335,13 +367,20 @@ pub enum MqoError {
 /// # Errors
 ///
 /// Returns `Err(errors)` when one or more structural constraints are violated:
-/// - [`MqoError::EmptyMeasures`] — `measures` is empty.
+/// - [`MqoError::EmptyMeasures`] — `measures` is empty (and it is not a valid
+///   projection: either `projection` is false, or `dimensions` is also empty).
 /// - [`MqoError::LimitZero`] — `limit` is `Some(0)`.
 /// - [`MqoError::RangeLoGtHi`] — a `Range` filter has `lo > hi`.
 pub fn validate(mqo: &Mqo) -> Result<(), Vec<MqoError>> {
     let mut errors = Vec::new();
 
-    if mqo.measures.is_empty() {
+    // EmptyMeasures fires when:
+    //   - measures are empty AND it is NOT a valid projection
+    //     (projection requires `projection: true` + at least one dimension)
+    // Valid projection: measures.is_empty() && projection && !dimensions.is_empty()
+    // Still an error:   measures.is_empty() && !projection
+    //                   measures.is_empty() && projection && dimensions.is_empty()
+    if mqo.measures.is_empty() && !mqo.is_projection() {
         errors.push(MqoError::EmptyMeasures);
     }
 
@@ -396,6 +435,7 @@ mod unit_tests {
             order: None,
             limit: None,
             non_empty: false,
+            projection: false,
         }
     }
 
@@ -460,6 +500,7 @@ mod unit_tests {
             order: None,
             limit: Some(0),
             non_empty: false,
+            projection: false,
         };
         let errs = validate(&mqo).unwrap_err();
         assert_eq!(errs.len(), 3);
@@ -471,5 +512,113 @@ mod unit_tests {
         let parsed: serde_json::Value =
             serde_json::from_str(&schema_str).expect("schema is valid JSON");
         assert!(parsed.is_object());
+    }
+
+    // ── Projection MQO tests (PRD-mqo-attribute-projection) ──────────────────
+
+    /// AC-1: measureless MQO + `projection: true` + at least one dimension → valid.
+    #[test]
+    fn validate_projection_with_dimension_is_ok() {
+        let mqo = Mqo {
+            model: "tpcds".to_string(),
+            measures: vec![],
+            dimensions: vec![LevelSelection {
+                hierarchy: "ship_mode".to_string(),
+                level: "Carrier".to_string(),
+            }],
+            filters: vec![],
+            time_intelligence: vec![],
+            order: None,
+            limit: None,
+            non_empty: false,
+            projection: true,
+        };
+        assert!(validate(&mqo).is_ok(), "projection MQO with a dimension must be valid");
+    }
+
+    /// AC-3: empty measures AND empty dimensions → `EmptyMeasures` (nothing to project).
+    #[test]
+    fn validate_rejects_empty_measures_and_empty_dimensions() {
+        let mqo = Mqo {
+            model: "tpcds".to_string(),
+            measures: vec![],
+            dimensions: vec![],
+            filters: vec![],
+            time_intelligence: vec![],
+            order: None,
+            limit: None,
+            non_empty: false,
+            projection: true,
+        };
+        let errs = validate(&mqo).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(e, MqoError::EmptyMeasures)),
+            "projection=true but no dimensions must still fire EmptyMeasures"
+        );
+    }
+
+    /// `projection: false` + empty measures → `EmptyMeasures` (guard not relaxed).
+    #[test]
+    fn validate_rejects_empty_measures_without_projection_flag() {
+        let mqo = Mqo {
+            model: "tpcds".to_string(),
+            measures: vec![],
+            dimensions: vec![LevelSelection {
+                hierarchy: "ship_mode".to_string(),
+                level: "Carrier".to_string(),
+            }],
+            filters: vec![],
+            time_intelligence: vec![],
+            order: None,
+            limit: None,
+            non_empty: false,
+            projection: false,
+        };
+        let errs = validate(&mqo).unwrap_err();
+        assert!(
+            errs.iter().any(|e| matches!(e, MqoError::EmptyMeasures)),
+            "measureless MQO without projection:true must still fire EmptyMeasures"
+        );
+    }
+
+    /// `is_projection()` returns true only for the correct combination.
+    #[test]
+    fn is_projection_returns_correct_value() {
+        let base = Mqo {
+            model: "m".to_string(),
+            measures: vec![],
+            dimensions: vec![LevelSelection {
+                hierarchy: "h".to_string(),
+                level: "l".to_string(),
+            }],
+            filters: vec![],
+            time_intelligence: vec![],
+            order: None,
+            limit: None,
+            non_empty: false,
+            projection: true,
+        };
+        assert!(base.is_projection(), "projection:true + measures:[] + dims:1 → true");
+
+        let with_measure = Mqo {
+            measures: vec![MeasureRef { unique_name: "m.r".to_string() }],
+            projection: true,
+            ..base.clone()
+        };
+        assert!(!with_measure.is_projection(), "has a measure → not a projection");
+
+        let no_flag = Mqo { projection: false, ..base.clone() };
+        assert!(!no_flag.is_projection(), "projection:false → not a projection");
+
+        let no_dims = Mqo { dimensions: vec![], ..base.clone() };
+        assert!(!no_dims.is_projection(), "no dimensions → not a projection");
+    }
+
+    /// Default `projection` field is `false` when deserializing without it.
+    #[test]
+    fn projection_defaults_to_false_when_absent() {
+        let json = r#"{"model":"m","measures":[{"unique_name":"m.r"}],"dimensions":[],"filters":[],"time_intelligence":[],"non_empty":false}"#;
+        let mqo: Mqo = serde_json::from_str(json).expect("must deserialize");
+        assert!(!mqo.projection, "projection should default to false");
     }
 }

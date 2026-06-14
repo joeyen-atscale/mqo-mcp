@@ -78,7 +78,8 @@ fn ac7_measure_absent_from_enriched_catalog_not_flagged() {
         order: None,
         limit: None,
         non_empty: false,
-    };
+        projection: false,
+        };
 
     // Absent measure treated as conformed (empty set) → never flagged → Bound.
     match bind_with_compat(&mqo, &snapshot, &enriched) {
@@ -118,7 +119,8 @@ fn ac7_dimension_absent_from_enriched_catalog_not_flagged() {
         order: None,
         limit: None,
         non_empty: false,
-    };
+        projection: false,
+        };
 
     // Absent dimension treated as conformed → never flagged → Bound.
     match bind_with_compat(&mqo, &snapshot, &enriched) {
@@ -155,7 +157,8 @@ fn ac7_both_absent_from_enriched_catalog_not_flagged() {
         order: None,
         limit: None,
         non_empty: false,
-    };
+        projection: false,
+        };
 
     match bind_with_compat(&mqo, &snapshot, &enriched) {
         BindResult::Bound(_) => {}

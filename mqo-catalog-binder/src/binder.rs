@@ -476,8 +476,9 @@ fn check_cross_fact_paths(
     use mqo_spec::Filter;
     let filter_hierarchies: std::collections::HashSet<&str> = bound.mqo.filters.iter()
         .filter_map(|f| match f {
-            Filter::Member { hierarchy, .. } => Some(hierarchy.as_str()),
-            Filter::MemberLevel { hierarchy, .. } => Some(hierarchy.as_str()),
+            Filter::Member { hierarchy, .. } | Filter::MemberLevel { hierarchy, .. } => {
+                Some(hierarchy.as_str())
+            }
             _ => None,
         })
         .collect();
@@ -840,6 +841,7 @@ mod binder_unit_tests {
             order: None,
             limit: None,
             non_empty: false,
+            projection: false,
         };
         let result = bind(&mqo, &snapshot);
         match result {
@@ -875,6 +877,7 @@ mod binder_unit_tests {
             order: None,
             limit: None,
             non_empty: false,
+            projection: false,
         };
         let result = bind(&mqo, &snapshot);
         // No describe_model → member not found
@@ -988,6 +991,7 @@ mod binder_unit_tests {
             order: None,
             limit: None,
             non_empty: false,
+            projection: false,
         };
         let result = bind(&mqo, &snapshot);
         // Dimension is ambiguous (2 candidates) — must surface as Ambiguous.
@@ -1031,6 +1035,7 @@ mod binder_unit_tests {
             order: None,
             limit: None,
             non_empty: false,
+            projection: false,
         };
         // The malformed entry is invisible to resolve_level (both hierarchy and level None)
         // → not_found. Documents the documented non-goal "no catalog validation."
@@ -1068,6 +1073,7 @@ mod binder_unit_tests {
             order: None,
             limit: None,
             non_empty: false,
+            projection: false,
         };
         let result = bind(&mqo, &snapshot);
         match result {
@@ -1146,6 +1152,7 @@ mod binder_unit_tests {
             order: None,
             limit: None,
             non_empty: false,
+            projection: false,
         }
     }
 
