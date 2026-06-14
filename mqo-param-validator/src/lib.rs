@@ -113,6 +113,10 @@ pub enum LevelValueType {
     Integer,
     /// A calendar date (e.g. "2001-01-15").
     Date,
+    /// A decimal/numeric key stored in engine-comparable form (e.g. "-5.00", "3.14").
+    /// Used for levels whose LEVEL_DBTYPE is NUMERIC/DECIMAL or float (OLE DB types
+    /// 4/5/6/131). The domain stores the member KEY (engine-comparable) not the caption.
+    Decimal,
 }
 
 /// Per-level domain/type metadata for the filter-level guard (Rule 4).
@@ -1557,9 +1561,9 @@ fn check_calc_misaggregation(
 // ---------------------------------------------------------------------------
 
 /// Infer the value type of a raw filter value string. A pure-integer string is
-/// `Integer`; a `YYYY-MM-DD`-shaped string is `Date`; everything else is
-/// `String`. Conservative — only the two well-formed numeric/date shapes are
-/// recognized, all else stays `String`.
+/// `Integer`; a `YYYY-MM-DD`-shaped string is `Date`; a number with a decimal
+/// point (e.g. `-5.00`, `3.14`) is `Decimal`; everything else is `String`.
+/// Conservative — only the well-formed numeric/date shapes are recognized.
 fn infer_value_type(v: &str) -> LevelValueType {
     let t = v.trim();
     if !t.is_empty() && t.chars().all(|c| c.is_ascii_digit()) {
@@ -1572,6 +1576,21 @@ fn infer_value_type(v: &str) -> LevelValueType {
         && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
     {
         return LevelValueType::Date;
+    }
+    // Decimal: optional leading minus, digits, dot, digits (e.g. "-5.00", "3.14").
+    // Keyed on the decimal point — distinguishes from Integer (no dot) and String.
+    let body = t.strip_prefix('-').unwrap_or(t);
+    if body.contains('.') {
+        let mut parts_dec = body.splitn(2, '.');
+        let int_part = parts_dec.next().unwrap_or("");
+        let frac_part = parts_dec.next().unwrap_or("");
+        if !int_part.is_empty()
+            && int_part.bytes().all(|b| b.is_ascii_digit())
+            && !frac_part.is_empty()
+            && frac_part.bytes().all(|b| b.is_ascii_digit())
+        {
+            return LevelValueType::Decimal;
+        }
     }
     LevelValueType::String
 }
