@@ -271,7 +271,7 @@ pub fn ingest_live_metadata(
                     let h = col.get("hierarchy").and_then(Value::as_str).unwrap_or_default().to_string();
                     let l = col.get("level").and_then(Value::as_str).unwrap_or_default().to_string();
                     let key = (h, l);
-                    if let Some((vt, _, _)) = level_meta.get(&key) {
+                    if let Some((vt, _, card)) = level_meta.get(&key) {
                         summary.levels_mapped += 1;
                         let dom = domains.get(&key);
                         // Prefer value_type inferred from the captured members
@@ -281,6 +281,15 @@ pub fn ingest_live_metadata(
                             o.insert("value_type".into(), json!(value_type));
                             if let Some(d) = dom {
                                 o.insert("domain".into(), json!(d));
+                            }
+                            // Persist the true LEVEL_CARDINALITY onto the column so
+                            // the projection guard can use it instead of domain.len()
+                            // (which is capped at domain_cap and thus truncated for
+                            // high-cardinality levels like Sold Calendar Week).
+                            // card == usize::MAX means the cluster reported no
+                            // LEVEL_CARDINALITY (defaulted); skip those.
+                            if *card != 0 && *card != usize::MAX {
+                                o.insert("cardinality".into(), json!(*card as u64));
                             }
                         }
                     }

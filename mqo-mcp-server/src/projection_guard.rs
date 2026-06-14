@@ -97,10 +97,20 @@ pub fn check_projection_cardinality(
             .unwrap_or_else(|| format!("{}.{}", dim.hierarchy, dim.level));
 
         // Total member count for this level.
-        let total_members: Option<u64> = maybe_entry
-            .and_then(|e| e.domain.as_ref())
-            .map(|d| d.len() as u64)
-            .filter(|&n| n > 0);
+        // Prefer the persisted `cardinality` field (true LEVEL_CARDINALITY from
+        // MDSCHEMA_LEVELS, not capped) over `domain.len()` (truncated at
+        // domain_cap). Falls back to domain.len() when cardinality is absent
+        // (old snapshot back-compat, or levels the cluster has no metadata for).
+        let total_members: Option<u64> = maybe_entry.and_then(|e| {
+            // 1. Prefer true cardinality if present and non-zero.
+            if let Some(card) = e.cardinality {
+                if card > 0 {
+                    return Some(card);
+                }
+            }
+            // 2. Fall back to domain.len() if we have a domain.
+            e.domain.as_ref().map(|d| d.len() as u64).filter(|&n| n > 0)
+        });
 
         // Apply filter selectivity if a filter targets this level's hierarchy.
         let level_estimate = estimate_level_cardinality(
@@ -563,5 +573,146 @@ mod tests {
         });
         let result = check_projection_cardinality(&mqo, &catalog, 10_000);
         assert!(result.is_ok());
+    }
+
+    // ── New tests: cardinality field (PRD-mqo-cardinality-from-level-count) ─────
+
+    /// Build a catalog column that has BOTH a truncated domain AND a known true
+    /// cardinality (the cardinality field wins over domain.len()).
+    fn make_catalog_with_known_cardinality(
+        hierarchy: &str,
+        level: &str,
+        domain_size: usize,
+        cardinality: Option<u64>,
+    ) -> CatalogSnapshot {
+        let unique_name = format!("{hierarchy}.[{level}]");
+        let mut col = ColumnEntry {
+            unique_name,
+            label: level.to_string(),
+            kind: "level".to_string(),
+            hierarchy: Some(hierarchy.to_string()),
+            level: Some(level.to_string()),
+            cardinality,
+            ..Default::default()
+        };
+        if domain_size > 0 {
+            col.domain = Some((0..domain_size).map(|i| format!("m{i}")).collect());
+        }
+        CatalogSnapshot { columns: vec![col], ..Default::default() }
+    }
+
+    // PRD AC-1: level with cardinality: Some(10436) and a truncated 50-member
+    // domain (like Sold Calendar Week) → projection declines projection_too_large
+    // with an estimate ≈ 10,436 (NOT ≈ 50 from the truncated domain).
+    #[test]
+    fn ac_card1_known_large_cardinality_declines_with_true_estimate() {
+        // domain is only 50 (truncated), but true cardinality is 10,436.
+        let catalog = make_catalog_with_known_cardinality(
+            "sold_date_week_hierarchy",
+            "Sold Calendar Week",
+            50,
+            Some(10_436),
+        );
+        let mqo = make_projection_mqo("sold_date_week_hierarchy", "Sold Calendar Week");
+        let result = check_projection_cardinality(&mqo, &catalog, 1_000);
+        assert!(result.is_err(), "known-large level must decline");
+        let err = result.unwrap_err();
+        // estimate should reflect the true cardinality (~10,436), not the
+        // truncated domain (50).
+        assert!(
+            err.estimate >= 10_436,
+            "estimate should be ≥ true cardinality (10,436), got {}",
+            err.estimate
+        );
+        // NOT cardinality_unknown — we have a real count.
+        assert_ne!(err.level, "cardinality_unknown");
+    }
+
+    // PRD AC-3: level with cardinality: Some(20) (small known count) → admitted.
+    #[test]
+    fn ac_card3_small_known_cardinality_passes() {
+        let catalog = make_catalog_with_known_cardinality(
+            "ship_mode",
+            "Carrier",
+            20,
+            Some(20),
+        );
+        let mqo = make_projection_mqo("ship_mode", "Carrier");
+        let result = check_projection_cardinality(&mqo, &catalog, 1_000);
+        assert!(result.is_ok(), "small known-cardinality level should pass; got: {result:?}");
+    }
+
+    // PRD AC-4: cardinality: None + no domain → cardinality_unknown fail-safe.
+    #[test]
+    fn ac_card4_no_cardinality_no_domain_is_unknown() {
+        let catalog = make_catalog_with_known_cardinality(
+            "store_dimension",
+            "Store Id",
+            0,    // no domain
+            None, // no cardinality
+        );
+        let mqo = make_projection_mqo("store_dimension", "Store Id");
+        let result = check_projection_cardinality(&mqo, &catalog, 10_000);
+        assert!(result.is_err(), "no cardinality + no domain must fail safe");
+        assert_eq!(result.unwrap_err().level, "cardinality_unknown");
+    }
+
+    // PRD AC-4 variant: cardinality: Some(0) + no domain → cardinality_unknown.
+    #[test]
+    fn ac_card4_zero_cardinality_no_domain_is_unknown() {
+        let catalog = make_catalog_with_known_cardinality(
+            "store_dimension",
+            "Store Id",
+            0,
+            Some(0), // zero is treated as absent
+        );
+        let mqo = make_projection_mqo("store_dimension", "Store Id");
+        let result = check_projection_cardinality(&mqo, &catalog, 10_000);
+        assert!(result.is_err(), "zero cardinality + no domain must fail safe");
+        assert_eq!(result.unwrap_err().level, "cardinality_unknown");
+    }
+
+    // PRD AC-5: cardinality: None but a domain present → falls back to domain.len().
+    #[test]
+    fn ac_card5_no_cardinality_falls_back_to_domain_len() {
+        // 30-member domain, no cardinality field (old snapshot back-compat).
+        let catalog = make_catalog_with_known_cardinality(
+            "store_dimension",
+            "State",
+            30,
+            None,
+        );
+        let mqo = make_projection_mqo("store_dimension", "State");
+        // cap of 10,000 → should pass (30 < 10,000).
+        let result = check_projection_cardinality(&mqo, &catalog, 10_000);
+        assert!(result.is_ok(), "fall-back to domain.len() should pass for small domain; got: {result:?}");
+    }
+
+    // FR-5: selectivity is applied to the TRUE cardinality (not the truncated domain).
+    // A range filter on a 10,436-cardinality level should multiply the true count,
+    // not the 50-element domain.
+    #[test]
+    fn ac_card5_selectivity_uses_true_cardinality() {
+        use mqo_spec::RangeBound;
+        // Sold Calendar Week: 10,436 true cardinality, 50-member truncated domain.
+        let catalog = make_catalog_with_known_cardinality(
+            "sold_date_week_hierarchy",
+            "Sold Calendar Week",
+            50,
+            Some(10_436),
+        );
+        let mut mqo = make_projection_mqo("sold_date_week_hierarchy", "Sold Calendar Week");
+        // A tight 1-unit range: selectivity ≈ 2/10436 ≈ 0.019% → estimate ≈ 1.
+        mqo.filters.push(Filter::Range {
+            level: "sold_date_week_hierarchy.[Sold Calendar Week]".to_string(),
+            lo: RangeBound::Number(100.0),
+            hi: RangeBound::Number(101.0),
+        });
+        // With a cap of 1,000 this should pass (tight range on true total).
+        let result = check_projection_cardinality(&mqo, &catalog, 1_000);
+        assert!(
+            result.is_ok(),
+            "tight range on large-cardinality level should pass within cap; got: {result:?}"
+        );
     }
 }
