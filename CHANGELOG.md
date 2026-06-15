@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.42.0] - 2026-06-15
+
+### Added
+- **Project-not-count grounding** (`mqo-mcp-server` v0.42.0, `mqo-param-validator` v0.8.0):
+  targets the count-evasion failure in `store-employee-counts` where the model
+  responded to RULE 5's sum-block by switching to a `count` measure instead of
+  projecting the numeric attribute.
+  - **FR-1 (`describe_model` flag):** hierarchy_levels entries with `kind=level`
+    and a numeric `value_type` (integer/decimal/float/number) now carry
+    `projectable_per_member_quantity: true` — signals to the LLM that this is a
+    stored per-entity attribute that should be projected, not aggregated.
+  - **FR-2 (tool description):** `query_multidimensional` description now includes
+    a "Per-entity numeric attributes (projectable quantities)" section explaining
+    the project-not-count pattern with a worked example (`Store Number of
+    Employees`) and an explicit contrast against genuine member-count measures
+    (`total_product_count`).
+  - **FR-3 (validator nudge):** `check_dataset_aggregate_attribute` doc and
+    rejection message updated to explicitly cover `count`/`count_distinct` in
+    addition to sum/avg; rejection now includes the correct projection shape.
+    Two new tests: `count_on_numeric_level_rejected` (FR-3 fire) and
+    `count_measure_query_not_rejected` (FR-4 guardrail — genuine count measure
+    passes through).
+  - **FR-1 test:** `numeric_level_carries_projectable_per_member_quantity` —
+    integer level carries the flag; string level does not.
+  - **FR-2 test:** `query_multidimensional_describes_per_entity_numeric_attribute_projection`
+    — tool description must mention `projectable_per_member_quantity`,
+    "count rows", and "count measure".
+  - Target: `store-employee-counts` projects `[Store Name, Store Number of
+    Employees]` instead of `[Store Name, count_count]` on ≥3/4 reps.
+
 ## [0.41.0] - 2026-06-15
 
 ### Added
