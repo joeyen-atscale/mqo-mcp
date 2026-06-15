@@ -1368,15 +1368,26 @@ impl Server {
                         c.get("unique_name").and_then(Value::as_str).map(str::to_string)
                     })
                     .collect();
-                map.entry(hier)
-                    .or_default()
-                    .push(json!({
-                        "unique_name": un,
-                        "label": label,
-                        "has_domain": has_domain,
-                        "projectable": true,
-                        "related_attributes": related_attributes
-                    }));
+                // Pass through value_type from the catalog when present.  This is
+                // critical for numeric levels (e.g. "Store Number of Employees",
+                // value_type:"integer") — without it the LLM cannot distinguish a
+                // projectable integer-valued attribute from an aggregatable measure,
+                // leading to incorrect SUM aggregation instead of a projection.
+                let value_type = col
+                    .get("value_type")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                let mut entry = json!({
+                    "unique_name": un,
+                    "label": label,
+                    "has_domain": has_domain,
+                    "projectable": true,
+                    "related_attributes": related_attributes
+                });
+                if let Some(vt) = value_type {
+                    entry["value_type"] = json!(vt);
+                }
+                map.entry(hier).or_default().push(entry);
             }
             map
         };
@@ -3254,5 +3265,187 @@ mod disambiguation_tests {
             .map(|t| t["unique_name"].as_str().unwrap())
             .collect();
         assert_eq!(canonical, vec!["product_dimension.[Product Brand Name]"]);
+    }
+}
+
+// ── hierarchy_levels value_type passthrough (store-employee-attribute-projection fix) ──
+
+#[cfg(test)]
+mod hierarchy_levels_value_type_tests {
+    //! Regression tests for the fix that passes `value_type` through to
+    //! `hierarchy_levels` entries.  Without this fix, the LLM cannot distinguish
+    //! a numeric-valued projectable level (e.g. "Store Number of Employees",
+    //! value_type:"integer") from an aggregatable measure, and incorrectly SUMs
+    //! it instead of projecting it.
+    use super::*;
+    use crate::cursor::CursorStore;
+    use crate::handle_ops::HandleStore;
+    use std::sync::Arc;
+
+    /// Build a minimal test Server with a synthetic catalog containing a level
+    /// that has `value_type: "integer"` (mirroring "Store Number of Employees").
+    fn test_server_with_integer_level() -> Server {
+        let catalog = json!({
+            "models": [{"unique_name": "test_model", "label": "Test Model"}],
+            "columns": [
+                {
+                    "unique_name": "test_model.revenue",
+                    "label": "Revenue",
+                    "kind": "measure",
+                    "is_calc": false
+                },
+                {
+                    "unique_name": "store_dimension.[Store Name]",
+                    "label": "Store Name",
+                    "kind": "level",
+                    "hierarchy": "store_dimension",
+                    "level": "Store Name",
+                    "value_type": "string"
+                },
+                {
+                    "unique_name": "store_dimension.[Store Number of Employees]",
+                    "label": "Store Number of Employees",
+                    "kind": "level",
+                    "hierarchy": "store_dimension",
+                    "level": "Store Number of Employees",
+                    "value_type": "integer",
+                    "domain": ["200", "201", "202"]
+                }
+            ]
+        });
+        Server {
+            catalog,
+            stats: json!({}),
+            tools: crate::pipeline::ToolPaths::resolve(None),
+            row_threshold: 1000,
+            engine: ServerEngine::Fixture,
+            backend_override: None,
+            capabilities: crate::probe::BackendCapabilities::all_live(),
+            registry: None,
+            health_cache: None,
+            handle_store: Some(HandleStore::new()),
+            cursor_store: Some(Arc::new(CursorStore::new(600))),
+            page_size: crate::cursor::DEFAULT_PAGE_SIZE,
+            inline_threshold: crate::handle_ops::INLINE_THRESHOLD,
+            enriched: None,
+            xmla_model_coords: std::collections::HashMap::new(),
+            max_projection_cardinality: DEFAULT_MAX_PROJECTION_CARDINALITY,
+        }
+    }
+
+    /// AC-1 (store-employee fix): a level with `value_type:"integer"` in the
+    /// catalog MUST carry `value_type:"integer"` in the `hierarchy_levels` block
+    /// of `describe_model`.  Without this the LLM mistakes numeric-valued
+    /// projectable levels for aggregatable measures.
+    #[test]
+    fn integer_level_value_type_surfaces_in_hierarchy_levels() {
+        let srv = test_server_with_integer_level();
+        let resp = srv.describe_model(&json!({"model": "test_model"}));
+        let hl = resp
+            .get("hierarchy_levels")
+            .and_then(Value::as_object)
+            .expect("hierarchy_levels must be an object");
+        let store_levels = hl
+            .get("store_dimension")
+            .and_then(Value::as_array)
+            .expect("store_dimension must be in hierarchy_levels");
+
+        // Find "Store Number of Employees"
+        let emp_entry = store_levels
+            .iter()
+            .find(|l| l.get("label").and_then(Value::as_str) == Some("Store Number of Employees"))
+            .expect("Store Number of Employees must appear in hierarchy_levels");
+
+        assert_eq!(
+            emp_entry.get("value_type").and_then(Value::as_str),
+            Some("integer"),
+            "integer-valued level must carry value_type:integer in hierarchy_levels: {emp_entry}"
+        );
+        assert_eq!(
+            emp_entry.get("projectable").and_then(Value::as_bool),
+            Some(true),
+            "level must still be projectable: {emp_entry}"
+        );
+    }
+
+    /// AC-2 (string level): a level with `value_type:"string"` should likewise
+    /// pass through its value_type.
+    #[test]
+    fn string_level_value_type_surfaces_in_hierarchy_levels() {
+        let srv = test_server_with_integer_level();
+        let resp = srv.describe_model(&json!({"model": "test_model"}));
+        let hl = resp
+            .get("hierarchy_levels")
+            .and_then(Value::as_object)
+            .expect("hierarchy_levels must be an object");
+        let store_levels = hl
+            .get("store_dimension")
+            .and_then(Value::as_array)
+            .expect("store_dimension must be in hierarchy_levels");
+
+        let name_entry = store_levels
+            .iter()
+            .find(|l| l.get("label").and_then(Value::as_str) == Some("Store Name"))
+            .expect("Store Name must appear in hierarchy_levels");
+
+        assert_eq!(
+            name_entry.get("value_type").and_then(Value::as_str),
+            Some("string"),
+            "string-valued level must carry value_type:string in hierarchy_levels: {name_entry}"
+        );
+    }
+
+    /// AC-3 (no value_type): a level without `value_type` in the catalog should
+    /// NOT emit a `value_type` key (absent is better than a spurious null).
+    #[test]
+    fn level_without_value_type_omits_the_field() {
+        // Build a catalog with a level that has no value_type.
+        let catalog = json!({
+            "models": [{"unique_name": "test_model", "label": "Test Model"}],
+            "columns": [
+                {
+                    "unique_name": "dim.[No Type Level]",
+                    "label": "No Type Level",
+                    "kind": "level",
+                    "hierarchy": "dim"
+                }
+            ]
+        });
+        let srv = Server {
+            catalog,
+            stats: json!({}),
+            tools: crate::pipeline::ToolPaths::resolve(None),
+            row_threshold: 1000,
+            engine: ServerEngine::Fixture,
+            backend_override: None,
+            capabilities: crate::probe::BackendCapabilities::all_live(),
+            registry: None,
+            health_cache: None,
+            handle_store: Some(HandleStore::new()),
+            cursor_store: Some(Arc::new(CursorStore::new(600))),
+            page_size: crate::cursor::DEFAULT_PAGE_SIZE,
+            inline_threshold: crate::handle_ops::INLINE_THRESHOLD,
+            enriched: None,
+            xmla_model_coords: std::collections::HashMap::new(),
+            max_projection_cardinality: DEFAULT_MAX_PROJECTION_CARDINALITY,
+        };
+        let resp = srv.describe_model(&json!({"model": "test_model"}));
+        let hl = resp
+            .get("hierarchy_levels")
+            .and_then(Value::as_object)
+            .expect("hierarchy_levels must be an object");
+        let dim_levels = hl
+            .get("dim")
+            .and_then(Value::as_array)
+            .expect("dim must be in hierarchy_levels");
+        let entry = dim_levels
+            .iter()
+            .find(|l| l.get("label").and_then(Value::as_str) == Some("No Type Level"))
+            .expect("No Type Level must appear");
+
+        assert!(
+            entry.get("value_type").is_none(),
+            "level without catalog value_type must not emit value_type key: {entry}"
+        );
     }
 }

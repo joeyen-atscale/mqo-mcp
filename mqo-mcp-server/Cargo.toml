@@ -1,6 +1,6 @@
 [package]
 name = "mqo-mcp-server"
-version = "0.33.0"
+version = "0.34.0"
 edition = "2021"
 rust-version = "1.88.0"
 description = "MQO MCP server — exposes query_multidimensional (bind→route→compile→execute) plus read-only catalog tools over JSON-RPC stdio"
