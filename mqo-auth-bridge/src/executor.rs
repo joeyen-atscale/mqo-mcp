@@ -12,6 +12,8 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use futures::StreamExt;
+
 use serde_json::Value;
 
 use crate::{
@@ -570,6 +572,64 @@ impl LiveExecutor {
                     reason: format!("failed to build tokio runtime for mdschema discover: {e}"),
                 })?;
             rt2.block_on(fut)
+        }
+    }
+
+    /// Fetch MDSCHEMA_MEMBERS for multiple levels concurrently.
+    ///
+    /// Fetches the bearer token **once**, then fans out up to `concurrency`
+    /// simultaneous `xmla_discover_rows` calls using `buffer_unordered`.
+    /// Returns a `Vec` of `(key, Result<rows>)` in completion order; the caller
+    /// is responsible for ordering / BTreeMap insertion.
+    ///
+    /// Per-level errors are returned as `Err` entries (fail-open); the batch
+    /// never aborts on a single failure. `concurrency == 1` serializes the
+    /// fetches exactly like the old loop.
+    pub fn discover_members_batch(
+        &self,
+        levels: &[((String, String), String)],
+        catalog: &str,
+        cube: &str,
+        concurrency: usize,
+    ) -> Result<Vec<((String, String), Result<Vec<BTreeMap<String, String>>, EngineError>)>, EngineError> {
+        let token = self.fetch_token_sync()?;
+        let access_token = token.access_token;
+        let xmla_url = self.config.xmla_url.clone();
+        let cat = catalog.to_string();
+        let cb = cube.to_string();
+        let conc = concurrency.max(1);
+
+        // Build one future per level; each yields (key, Result<rows>).
+        let futures_iter = levels.iter().map(|(key, lun)| {
+            let url = xmla_url.clone();
+            let tok = access_token.clone();
+            let cat2 = cat.clone();
+            let cb2 = cb.clone();
+            let lun2 = lun.clone();
+            let key2 = key.clone();
+            async move {
+                let result =
+                    xmla_discover_rows(&url, &tok, "MDSCHEMA_MEMBERS", &cat2, &cb2, Some(&lun2))
+                        .await;
+                (key2, result)
+            }
+        });
+
+        let stream = futures::stream::iter(futures_iter).buffer_unordered(conc);
+
+        // Drive the bounded stream synchronously — we are in a sync caller.
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            Ok(tokio::task::block_in_place(|| {
+                handle.block_on(stream.collect::<Vec<_>>())
+            }))
+        } else {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| EngineError::ConnectionFailure {
+                    reason: format!("failed to build tokio runtime for batch discover: {e}"),
+                })?;
+            Ok(rt.block_on(stream.collect::<Vec<_>>()))
         }
     }
 }

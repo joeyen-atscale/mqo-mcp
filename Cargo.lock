@@ -2351,6 +2351,7 @@ dependencies = [
 name = "mqo-auth-bridge"
 version = "0.4.0"
 dependencies = [
+ "futures",
  "native-tls",
  "postgres-native-tls",
  "quick-xml",
@@ -2488,7 +2489,7 @@ dependencies = [
 
 [[package]]
 name = "mqo-dax-compiler"
-version = "0.11.0"
+version = "0.13.0"
 dependencies = [
  "clap",
  "mqo-spec",
