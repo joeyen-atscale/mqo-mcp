@@ -213,6 +213,7 @@ mod tests {
             order: None,
             limit: None,
             non_empty: true,
+            projection: false,
         }
     }
 

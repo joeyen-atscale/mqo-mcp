@@ -24,6 +24,7 @@ fn minimal_mqo(model: &str) -> Mqo {
         order: None,
         limit: None,
         non_empty: true,
+        projection: false,
     }
 }
 
