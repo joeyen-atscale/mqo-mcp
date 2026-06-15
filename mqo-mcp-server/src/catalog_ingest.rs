@@ -400,6 +400,76 @@ pub fn ingest_live_metadata(
     summary
 }
 
+/// Build `{catalog_unique_name → LEVEL_CARDINALITY}` for the cache validity check.
+///
+/// Uses the same `(hierarchy_key, level_name)` matching as `ingest_live_metadata` to
+/// translate MDSCHEMA's 3-part bracket `LEVEL_UNIQUE_NAME` into the catalog's
+/// snake-cased convention (e.g. `store_dimension.[Store City]`), then joins against
+/// the catalog columns. Only levels with a real, non-zero, in-range cardinality are
+/// included — matching the storage condition in `ingest_live_metadata` so the diff
+/// against `catalog_cache::cardinality_map` is apples-to-apples.
+///
+/// Returns an empty map on Discover failure (caller degrades to full re-ingest).
+pub fn fresh_cardinality_map(
+    ex: &crate::LiveExecutor,
+    xmla_catalog: &str,
+    cube: &str,
+    catalog_columns: &serde_json::Value,
+) -> std::collections::HashMap<String, usize> {
+    let mut level_meta: std::collections::BTreeMap<(String, String), usize> =
+        std::collections::BTreeMap::new();
+    match ex.discover_mdschema("MDSCHEMA_LEVELS", xmla_catalog, cube, None) {
+        Ok(rows) => {
+            for r in &rows {
+                let level_name = r.get("LEVEL_NAME").map(String::as_str).unwrap_or("");
+                if level_name.is_empty() || level_name == "(All)" {
+                    continue;
+                }
+                if r.get("LEVEL_NUMBER").map(String::as_str) == Some("0") {
+                    continue;
+                }
+                let card = r.get("LEVEL_CARDINALITY")
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(0);
+                if card == 0 || card >= usize::MAX {
+                    continue;
+                }
+                let hier_key_v = r.get("HIERARCHY_UNIQUE_NAME")
+                    .map(|h| hierarchy_key(h))
+                    .unwrap_or_default();
+                let dim_key_v = r.get("DIMENSION_UNIQUE_NAME")
+                    .map(|d| snake(&strip_brackets(d)))
+                    .unwrap_or_default();
+                for key in [hier_key_v, dim_key_v] {
+                    if !key.is_empty() {
+                        level_meta.entry((key, level_name.to_string())).or_insert(card);
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("mqo-mcp-server: catalog cache: MDSCHEMA_LEVELS failed: {e}");
+            return std::collections::HashMap::new();
+        }
+    }
+    // Join against catalog columns using their (hierarchy, level) fields.
+    let mut out = std::collections::HashMap::new();
+    if let Some(cols) = catalog_columns.as_array() {
+        for col in cols {
+            if col.get("kind").and_then(|v| v.as_str()) != Some("level") {
+                continue;
+            }
+            let Some(un) = col.get("unique_name").and_then(|v| v.as_str()) else { continue };
+            let hier = col.get("hierarchy").and_then(|v| v.as_str()).unwrap_or("");
+            let level = col.get("level").and_then(|v| v.as_str()).unwrap_or("");
+            if let Some(&card) = level_meta.get(&(hier.to_string(), level.to_string())) {
+                out.insert(un.to_string(), card);
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -144,48 +144,21 @@ pub fn fetch_schema_update(ex: &LiveExecutor, xmla_catalog: &str, cube: &str) ->
     None
 }
 
-/// Build `{level_unique_name → cardinality}` from the two bulk Discovers
-/// (`MDSCHEMA_MEASURES` is not needed here — cardinalities live in `MDSCHEMA_LEVELS`).
+/// Build `{catalog_unique_name → cardinality}` from the two bulk Discovers,
+/// keyed by the catalog's unique_name convention (e.g. `store_dimension.[Store City]`).
+///
+/// Delegates to `catalog_ingest::fresh_cardinality_map` which has access to the
+/// private `hierarchy_key` / `snake` helpers needed to translate MDSCHEMA 3-part
+/// bracket LUNs to the catalog's snake-cased hierarchy prefix.
 ///
 /// Returns an empty map on Discover failure (caller degrades gracefully).
 pub fn ingest_cardinalities_only(
     ex: &LiveExecutor,
     xmla_catalog: &str,
     cube: &str,
+    catalog_columns: &serde_json::Value,
 ) -> HashMap<String, usize> {
-    let mut map = HashMap::new();
-    match ex.discover_mdschema("MDSCHEMA_LEVELS", xmla_catalog, cube, None) {
-        Ok(rows) => {
-            for r in &rows {
-                let level_name = r.get("LEVEL_NAME").map(String::as_str).unwrap_or("");
-                if level_name.is_empty() || level_name == "(All)" {
-                    continue;
-                }
-                if r.get("LEVEL_NUMBER").map(String::as_str) == Some("0") {
-                    continue;
-                }
-                let lun = r.get("LEVEL_UNIQUE_NAME").cloned().unwrap_or_default();
-                if lun.is_empty() {
-                    continue;
-                }
-                let card = r
-                    .get("LEVEL_CARDINALITY")
-                    .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(0);
-                // Mirror the storage condition in ingest_live_metadata: only keep
-                // levels with a real, non-zero, non-sentinel cardinality so the diff
-                // against cardinality_map() is apples-to-apples. Over-cap / unknown
-                // levels are absent from both maps and never trigger a partial re-fetch.
-                if card > 0 && card < usize::MAX {
-                    map.entry(lun).or_insert(card);
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("mqo-mcp-server: catalog cache: MDSCHEMA_LEVELS failed: {e}");
-        }
-    }
-    map
+    crate::catalog_ingest::fresh_cardinality_map(ex, xmla_catalog, cube, catalog_columns)
 }
 
 // ── Cardinality map from cached columns ──────────────────────────────────────
@@ -204,7 +177,7 @@ pub fn cardinality_map(columns: &Value) -> HashMap<String, usize> {
             continue;
         }
         let lun = col
-            .get("level_unique_name")
+            .get("unique_name")      // catalog field name (not "level_unique_name")
             .and_then(Value::as_str)
             .unwrap_or_default();
         if lun.is_empty() {

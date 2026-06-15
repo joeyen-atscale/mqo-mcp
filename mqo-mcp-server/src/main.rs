@@ -449,7 +449,7 @@ fn main() {
                                 let fresh_schema_update =
                                     fetch_schema_update(ex, &xmla_catalog, &cube);
                                 let fresh_cardinalities =
-                                    ingest_cardinalities_only(ex, &xmla_catalog, &cube);
+                                    ingest_cardinalities_only(ex, &xmla_catalog, &cube, &catalog);
                                 let cache_cardinalities = cardinality_map(&cached.columns);
 
                                 let verdict = validate_cache(
