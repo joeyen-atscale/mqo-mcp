@@ -395,7 +395,19 @@ pub fn run<S: std::hash::BuildHasher>(
     };
 
     // ── Bind ─────────────────────────────────────────────────────────────
-    let bound_value = bind_step(tools, &mqo_path, &catalog_path, enriched_path.as_deref())?;
+    let mut bound_value = bind_step(tools, &mqo_path, &catalog_path, enriched_path.as_deref())?;
+
+    // ── Canonical near-twin labels (PRD-mqo-near-twin-dimension-drop, G2) ──
+    // A near-twin dimension level (a role-playing/snowflaked copy whose caption
+    // is the base caption prefixed with the relationship path, e.g.
+    // `Promotion Product Item Item Product Name` for base `Item Product Name`)
+    // would otherwise surface its **prefixed** caption as the result column,
+    // breaking exact-name comparison against the canonical attribute. Attach the
+    // canonical label to each bound dimension entry so `clean_result_rows`
+    // emits the canonical name on the projected column. Pure label logic —
+    // derived from the catalog's level-caption set, no domain metadata needed.
+    attach_canonical_dimension_labels(&mut bound_value, catalog);
+
     let bound_path = scratch.write(
         "bound.json",
         &serde_json::to_string(&bound_value).map_err(|e| PipelineError::Io(e.to_string()))?,
@@ -1054,6 +1066,64 @@ fn make_filter_report(
 ///
 /// When `enriched_catalog_path` is `Some`, passes `--enriched-catalog <path>` so the binder's
 /// `bind_with_compat` path activates and can return exit 5 (`CrossFactIncompatible`).
+/// Collect every dimension-level **caption** in the catalog into a set.
+///
+/// Used as the registry the near-twin canonical-suffix derivation
+/// (`canonical_level_label`) checks against. Captions are read from each
+/// `kind == "level"` column's `level` (falling back to `label`).
+fn catalog_level_captions(catalog: &Value) -> std::collections::HashSet<String> {
+    let mut captions = std::collections::HashSet::new();
+    if let Some(cols) = catalog.get("columns").and_then(Value::as_array) {
+        for c in cols {
+            if c.get("kind").and_then(Value::as_str) != Some("level") {
+                continue;
+            }
+            let caption = c
+                .get("level")
+                .and_then(Value::as_str)
+                .or_else(|| c.get("label").and_then(Value::as_str));
+            if let Some(cap) = caption {
+                captions.insert(cap.to_string());
+            }
+        }
+    }
+    captions
+}
+
+/// Attach a canonical `label` to each bound **dimension** entry whose level is a
+/// near-twin (PRD-mqo-near-twin-dimension-drop, G2 — canonical output labels).
+///
+/// For each `bound.dimensions[i]`, the level caption is taken from its
+/// `unique_name` (`hier.[Level Caption]`); `canonical_level_label` collapses a
+/// near-twin caption to the shared base attribute name. When the canonical label
+/// differs from the verbatim caption, it is written as the entry's `label`,
+/// which `clean_result_rows` prefers when naming the result column. Unique
+/// (non-twin) levels are left untouched (no `label` added).
+fn attach_canonical_dimension_labels(bound: &mut Value, catalog: &Value) {
+    let captions = catalog_level_captions(catalog);
+    let Some(dims) = bound.get_mut("dimensions").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for dim in dims {
+        let Some(un) = dim.get("unique_name").and_then(Value::as_str) else {
+            continue;
+        };
+        // The level caption is the contents of the trailing `[...]` of the
+        // unique_name (`hier.[Caption]`); fall back to the part after the dot.
+        let caption = un
+            .rsplit_once(".[")
+            .map(|(_, rest)| rest.trim_end_matches(']').to_string())
+            .or_else(|| un.split_once('.').map(|(_, c)| c.to_string()))
+            .unwrap_or_else(|| un.to_string());
+        let canonical = crate::handle_ops::canonical_level_label(&caption, &captions);
+        if canonical != caption {
+            if let Some(obj) = dim.as_object_mut() {
+                obj.insert("label".to_string(), Value::String(canonical));
+            }
+        }
+    }
+}
+
 fn bind_step(
     tools: &ToolPaths,
     mqo_path: &Path,
@@ -1336,6 +1406,102 @@ mod result_guard_tests {
             assert_eq!(missing, 1);
             assert_eq!(requested, 1);
         }
+    }
+}
+
+#[cfg(test)]
+mod canonical_label_tests {
+    use super::{attach_canonical_dimension_labels, catalog_level_captions};
+    use serde_json::{json, Value};
+
+    /// Minimal catalog with a base hierarchy + two near-twin hierarchies (the
+    /// TPC-DS benchmark-model shape that drives both eval failures).
+    fn near_twin_catalog() -> Value {
+        json!({
+            "catalog": "atscale_catalogs",
+            "columns": [
+                { "kind": "level", "hierarchy": "product_dimension",
+                  "unique_name": "product_dimension.[Item Product Name]", "level": "Item Product Name" },
+                { "kind": "level", "hierarchy": "product_dimension",
+                  "unique_name": "product_dimension.[Product Brand Name]", "level": "Product Brand Name" },
+                { "kind": "level", "hierarchy": "product_dimension",
+                  "unique_name": "product_dimension.[Product Category]", "level": "Product Category" },
+                { "kind": "level", "hierarchy": "promotion_product_item_product_dimension",
+                  "unique_name": "promotion_product_item_product_dimension.[Promotion Product Item Item Product Name]",
+                  "level": "Promotion Product Item Item Product Name" },
+                { "kind": "level", "hierarchy": "store_item_product_dimension",
+                  "unique_name": "store_item_product_dimension.[Store Item Product Category]",
+                  "level": "Store Item Product Category" },
+                { "kind": "level", "hierarchy": "sold_date_dimensions",
+                  "unique_name": "sold_date_dimensions.[Sold Calendar Year]", "level": "Sold Calendar Year" },
+                { "kind": "measure", "unique_name": "tpcds_benchmark_model.total_product_count",
+                  "label": "Total Product Count" }
+            ]
+        })
+    }
+
+    #[test]
+    fn level_captions_collects_all_levels() {
+        let caps = catalog_level_captions(&near_twin_catalog());
+        assert!(caps.contains("Item Product Name"));
+        assert!(caps.contains("Promotion Product Item Item Product Name"));
+        assert!(caps.contains("Sold Calendar Year"));
+        // Measures are NOT level captions.
+        assert!(!caps.contains("Total Product Count"));
+    }
+
+    /// Failure-1 shape: a near-twin dimension entry gets the canonical `label`
+    /// (`Item Product Name`) attached; unique levels get none.
+    #[test]
+    fn attaches_canonical_label_to_near_twin_dimension() {
+        let catalog = near_twin_catalog();
+        // Bound shape as emitted by the binder (no label on dimensions).
+        let mut bound = json!({
+            "measures": [{ "unique_name": "tpcds_benchmark_model.total_product_count" }],
+            "dimensions": [
+                { "unique_name": "promotion_product_item_product_dimension.[Promotion Product Item Item Product Name]",
+                  "hierarchy": "promotion_product_item_product_dimension" }
+            ]
+        });
+        attach_canonical_dimension_labels(&mut bound, &catalog);
+        let dim = &bound["dimensions"][0];
+        assert_eq!(dim["label"], json!("Item Product Name"));
+    }
+
+    /// Failure-2 shape: the store-prefixed near-twin category collapses to the
+    /// canonical `Product Category`.
+    #[test]
+    fn attaches_canonical_label_for_store_twin_category() {
+        let catalog = near_twin_catalog();
+        let mut bound = json!({
+            "measures": [{ "unique_name": "tpcds_benchmark_model.total_product_count" }],
+            "dimensions": [
+                { "unique_name": "store_item_product_dimension.[Store Item Product Category]",
+                  "hierarchy": "store_item_product_dimension" }
+            ]
+        });
+        attach_canonical_dimension_labels(&mut bound, &catalog);
+        assert_eq!(bound["dimensions"][0]["label"], json!("Product Category"));
+    }
+
+    /// FR-4 (no regression): a base / unique level gets NO `label` added — its
+    /// caption is already canonical, so the column name is unchanged.
+    #[test]
+    fn base_and_unique_levels_unchanged() {
+        let catalog = near_twin_catalog();
+        let mut bound = json!({
+            "measures": [{ "unique_name": "tpcds_benchmark_model.total_product_count" }],
+            "dimensions": [
+                { "unique_name": "product_dimension.[Product Category]",
+                  "hierarchy": "product_dimension" },
+                { "unique_name": "sold_date_dimensions.[Sold Calendar Year]",
+                  "hierarchy": "sold_date_dimensions" }
+            ]
+        });
+        attach_canonical_dimension_labels(&mut bound, &catalog);
+        // No canonical collapse → no `label` injected.
+        assert!(bound["dimensions"][0].get("label").is_none());
+        assert!(bound["dimensions"][1].get("label").is_none());
     }
 }
 
