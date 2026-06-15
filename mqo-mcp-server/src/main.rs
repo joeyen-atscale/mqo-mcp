@@ -593,6 +593,20 @@ fn main() {
     // ── Enriched catalog (optional; graceful degradation on failure) ──────
     let enriched = build_enriched(&args, &catalog);
 
+    // FR-1 (PRD-mqo-projection-handle-over-cap): The projection guard cap and the
+    // materialization budget must be the same value — one knob (OQ-2).  In live mode,
+    // clamp `max_result_rows` the same way `build_engine` does and use it as the
+    // effective projection cap.  In fixture mode, the `--max-projection-cardinality`
+    // arg defaults to `DEFAULT_MAX_PROJECTION_CARDINALITY` (= DEFAULT_MAX_RESULT_ROWS)
+    // and the budget is `DEFAULT_MAX_RESULT_ROWS` — they agree by construction.
+    let effective_max_projection = if args.endpoint.is_some() {
+        args.max_result_rows
+            .clamp(1, mqo_mcp_server::MAX_RESULT_ROWS_CEILING)
+    } else {
+        args.max_projection_cardinality
+    };
+    eprintln!("mqo-mcp-server: projection guard cap: {effective_max_projection}");
+
     let server = Server {
         catalog,
         stats,
@@ -609,7 +623,7 @@ fn main() {
         inline_threshold: args.inline_threshold,
         enriched,
         xmla_model_coords,
-        max_projection_cardinality: args.max_projection_cardinality,
+        max_projection_cardinality: effective_max_projection,
     };
 
     serve(&server);
