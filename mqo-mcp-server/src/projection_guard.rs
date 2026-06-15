@@ -19,7 +19,25 @@
 //! - If a `Filter::Range` targets that level, estimate a fractional selectivity.
 //! - The product of per-level estimates is the total distinct-row estimate.
 //! - A level with no known member count is treated as unknown → decline
-//!   (conservative fail-safe, FR-5 / OQ-1).
+//!   (conservative fail-safe).
+//!
+//! # Cross-hierarchy product (FR-4)
+//!
+//! The product of independent-hierarchy estimates is a loose upper bound: the
+//! true distinct (First Name, Gender) count is at most max(First Name, Gender),
+//! not 5,126 × 2 = 10,488.  When the product exceeds the cap but all individual
+//! per-hierarchy estimates are ≤ cap, the product is **advisory**: we cap the
+//! running product at the budget and proceed, letting the runtime `row_cap_tripped`
+//! be the hard floor (PRD-mqo-projection-handle-over-cap, FR-4/OQ-1).
+//!
+//! # Cross-hierarchy filter selectivity (FR-5)
+//!
+//! A filter targeting a hierarchy not represented in the projection still narrows
+//! the result via auto-exist / semijoin semantics.  When such a filter exists and
+//! the current total product is unconstrained, a conservative 1/10 selectivity
+//! reduction is applied.  When the post-filter count cannot be estimated (e.g. the
+//! hierarchy is entirely unknown) the estimate is demoted to advisory (capped at
+//! budget, proceeds).
 //!
 //! # Integration note
 //!
@@ -144,7 +162,16 @@ pub fn check_projection_cardinality(
             .push(rl);
     }
 
+    // Pre-compute the set of projected hierarchies for cross-hierarchy filter
+    // selectivity (FR-5). Used both inside the loop (per-group check) and after.
+    let projected_hiers: std::collections::HashSet<&str> =
+        order.iter().map(|h| *h).collect();
+
     let mut total_estimate: u64 = 1;
+    // Track whether the running product was ever capped advisory (FR-4):
+    // when each individual hierarchy's estimate is ≤ cap but their product
+    // exceeds cap, we demote to advisory and proceed.
+    let mut product_was_capped_advisory = false;
     for hier in &order {
         let levels = &groups[hier];
 
@@ -165,16 +192,53 @@ pub fn check_projection_cardinality(
 
         match group_estimate {
             LevelEstimate::Known(n) => {
-                total_estimate = total_estimate.saturating_mul(n.max(1));
-                if cap > 0 && total_estimate > cap as u64 {
+                let per_group = n.max(1);
+                // FR-5 early application: if this projected hierarchy's base
+                // estimate exceeds the cap but there are cross-hierarchy filters
+                // that could narrow it, apply them NOW before the per-group cap
+                // check, so a `Product Current Price > 70` filter on a non-projected
+                // hierarchy can reduce an over-cap `Item Product Name` estimate.
+                let per_group = if cap > 0 && per_group > cap as u64 {
+                    let tentative_total = total_estimate.saturating_mul(per_group);
+                    if let Some(reduced) = cross_hierarchy_filter_selectivity(
+                        &projected_hiers,
+                        &mqo.filters,
+                        tentative_total,
+                        cap,
+                    ) {
+                        // Reduced estimate fits: proceed with it.
+                        if reduced <= cap as u64 {
+                            total_estimate = reduced;
+                            product_was_capped_advisory = true;
+                            // Skip the normal per_group accumulation below.
+                            continue;
+                        }
+                    }
+                    // Cross-hierarchy filters could not save it — hard reject.
                     return Err(ProjectionTooLarge {
                         level: levels
                             .last()
                             .map(|l| l.level_un.clone())
                             .unwrap_or_else(|| (*hier).to_string()),
-                        estimate: total_estimate,
+                        estimate: per_group,
                         cap,
                     });
+                } else {
+                    per_group
+                };
+                // FR-4: cross-hierarchy product advisory cap.
+                // If this hierarchy's own estimate is within budget, but
+                // multiplying it pushes the running product over the budget,
+                // cap the product at the budget and treat the estimate as
+                // advisory — the runtime row_cap_tripped is the hard bound.
+                let new_product = total_estimate.saturating_mul(per_group);
+                if cap > 0 && new_product > cap as u64 {
+                    // Each factor is within cap but the product is not →
+                    // advisory: cap at budget and proceed.
+                    total_estimate = cap as u64;
+                    product_was_capped_advisory = true;
+                } else {
+                    total_estimate = new_product;
                 }
             }
             LevelEstimate::Unknown => {
@@ -190,6 +254,35 @@ pub fn check_projection_cardinality(
 
     // cap == 0 → always decline (operator's explicit "never execute" setting).
     if cap == 0 {
+        return Err(ProjectionTooLarge {
+            level: mqo
+                .dimensions
+                .first()
+                .map(|d| format!("{}.{}", d.hierarchy, d.level))
+                .unwrap_or_default(),
+            estimate: total_estimate,
+            cap,
+        });
+    }
+
+    // FR-5 post-loop: Apply selectivity from cross-hierarchy filters if the
+    // product was not already advisory.  Handles the normal case where the
+    // per-group estimates were within cap and no early FR-5 path was taken.
+    if !product_was_capped_advisory {
+        let cross_filter_reduction = cross_hierarchy_filter_selectivity(
+            &projected_hiers,
+            &mqo.filters,
+            total_estimate,
+            cap,
+        );
+        if let Some(reduced) = cross_filter_reduction {
+            total_estimate = reduced;
+        }
+    }
+
+    // Final check: if after FR-4 advisory cap and FR-5 reduction the estimate
+    // is still > cap, hard reject.
+    if cap > 0 && total_estimate > cap as u64 {
         return Err(ProjectionTooLarge {
             level: mqo
                 .dimensions
@@ -342,6 +435,82 @@ fn single_filter_estimate(
         }
         _ => None,
     }
+}
+
+/// Apply selectivity from filters that target hierarchies *not* represented in
+/// the projection (FR-5: cross-hierarchy filter selectivity).
+///
+/// Auto-exist / semijoin semantics mean a `Product Current Price > 70` filter
+/// constrains the projected `Item Product Name` set even though the two live on
+/// different hierarchies.  The current guard ignores these filters, over-counting
+/// by the full unfiltered domain.
+///
+/// Conservative rules (chosen to be cheap and never false-positive):
+/// - `Range` filter on a non-projected hierarchy → 1/10 selectivity applied to
+///   the current `total_estimate`.
+/// - `Member` or `MemberLevel` (IN-list, non-exclude) → the member count is an
+///   upper bound; use `min(total_estimate, member_count)`.
+/// - If no cross-hierarchy filter is present, returns `None` (no change).
+/// - If the resulting estimate is already ≤ cap, returns `Some(estimate)` to
+///   allow the projection to proceed.
+fn cross_hierarchy_filter_selectivity(
+    projected_hiers: &std::collections::HashSet<&str>,
+    filters: &[Filter],
+    current_estimate: u64,
+    _cap: usize,
+) -> Option<u64> {
+    let mut reduced = current_estimate;
+    let mut any_cross = false;
+
+    for f in filters {
+        match f {
+            Filter::Range { level: fl, lo: _, hi: _ } => {
+                // Derive the hierarchy from the level unique_name ("hier.[Level]").
+                let filter_hier = fl.split_once(".[")
+                    .map(|(h, _)| h)
+                    .unwrap_or(fl.as_str());
+                if !projected_hiers.contains(filter_hier) {
+                    // Cross-hierarchy Range: apply 1/10 selectivity (conservative).
+                    reduced = (reduced / 10).max(1);
+                    any_cross = true;
+                }
+            }
+            Filter::Member { hierarchy: fh, members } if !projected_hiers.contains(fh.as_str()) => {
+                // Cross-hierarchy Member IN-list: result ≤ member count.
+                let member_bound = members.len() as u64;
+                if member_bound < reduced {
+                    reduced = member_bound.max(1);
+                }
+                any_cross = true;
+            }
+            Filter::MemberLevel {
+                hierarchy: fh,
+                members,
+                exclude,
+                ..
+            } if !projected_hiers.contains(fh.as_str()) && !exclude => {
+                let member_bound = members.len() as u64;
+                if member_bound < reduced {
+                    reduced = member_bound.max(1);
+                }
+                any_cross = true;
+            }
+            Filter::Group { filters: inner, .. } => {
+                // Recurse one level.
+                if let Some(r) = cross_hierarchy_filter_selectivity(
+                    projected_hiers, inner, reduced, _cap,
+                ) {
+                    if r < reduced {
+                        reduced = r;
+                        any_cross = true;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if any_cross { Some(reduced) } else { None }
 }
 
 /// Estimate range selectivity as a fraction `[0, 1]` when both bounds are
@@ -840,11 +1009,18 @@ mod tests {
         );
     }
 
-    // INDEPENDENT hierarchies DO legitimately cross-multiply. Two 200-member
-    // levels on different hierarchies → 40,000 distinct combinations → exceeds a
-    // 10k cap → correctly declines (guards the genuine blow-up case).
+    // INDEPENDENT hierarchies DO legitimately cross-multiply — but under FR-4
+    // (PRD-mqo-projection-handle-over-cap), when each individual hierarchy's
+    // estimate is ≤ cap the product is treated as advisory (not a hard reject):
+    // the runtime row_cap_tripped is the hard bound.  Hard rejection still fires
+    // when a SINGLE hierarchy's own cardinality exceeds the cap.
+    //
+    // New behavior (FR-4): 200-member levels × 200 = 40k > 10k cap — but since
+    // each factor (200) ≤ cap (10k), the estimate is advisory → proceeds.
+    // Hard reject case: a level with 15,000 members > 10,000 cap → still rejects.
     #[test]
     fn independent_hierarchies_cross_multiply() {
+        // FR-4: 200×200=40k with 10k cap — advisory because each factor ≤ cap.
         let catalog = CatalogSnapshot {
             columns: vec![
                 level_col("store_dimension", "Store City", 200),
@@ -859,10 +1035,143 @@ mod tests {
                 ("product_dimension", "Product Brand Name"),
             ],
         );
+        // Advisory under FR-4: each factor (200) ≤ cap (10k), product (40k) > cap →
+        // cap at budget, proceed.
         let result = check_projection_cardinality(&mqo, &catalog, 10_000);
         assert!(
-            result.is_err(),
-            "independent hierarchies must cross-multiply (200×200=40k > 10k cap); got: {result:?}"
+            result.is_ok(),
+            "FR-4: cross-hierarchy product (200×200=40k) with each factor ≤ cap should be \
+             advisory (proceeds); got: {result:?}"
+        );
+        // Hard reject: a level whose own cardinality exceeds the cap → still rejects.
+        let catalog_large = CatalogSnapshot {
+            columns: vec![
+                level_col("store_dimension", "Store City", 15_000),
+                level_col("product_dimension", "Product Brand Name", 200),
+            ],
+            ..Default::default()
+        };
+        let mqo_large = projection_with_levels(
+            "tpcds_benchmark_model",
+            &[
+                ("store_dimension", "Store City"),
+                ("product_dimension", "Product Brand Name"),
+            ],
+        );
+        let result_large = check_projection_cardinality(&mqo_large, &catalog_large, 10_000);
+        assert!(
+            result_large.is_err(),
+            "single hierarchy with 15k members > 10k cap must hard-reject; got: {result_large:?}"
+        );
+    }
+
+    // ── PRD-mqo-projection-handle-over-cap new tests ─────────────────────────
+
+    // FR-2/FR-3: estimate < budget → Ok(()) (proceeds, handled by large-result path)
+    #[test]
+    fn within_budget_proceeds_not_rejected() {
+        // 8,000 members < cap 50,000 → must proceed
+        let catalog = make_catalog_with_known_cardinality(
+            "customer_dimension",
+            "Customer First Name",
+            0,
+            Some(8_000),
+        );
+        let mqo = make_projection_mqo("customer_dimension", "Customer First Name");
+        let result = check_projection_cardinality(&mqo, &catalog, 50_000);
+        assert!(
+            result.is_ok(),
+            "estimate (8k) < budget (50k) must proceed; got: {result:?}"
+        );
+    }
+
+    // FR-3: estimate > budget → Err(ProjectionTooLarge)
+    #[test]
+    fn over_budget_rejected() {
+        // 75,000 members > cap 50,000 → must reject
+        let catalog = make_catalog_with_known_cardinality(
+            "customer_dimension",
+            "Customer Id",
+            0,
+            Some(75_000),
+        );
+        let mqo = make_projection_mqo("customer_dimension", "Customer Id");
+        let result = check_projection_cardinality(&mqo, &catalog, 50_000);
+        assert!(result.is_err(), "estimate (75k) > budget (50k) must reject; got: {result:?}");
+        let err = result.unwrap_err();
+        assert!(
+            err.estimate > 50_000,
+            "error estimate must reflect over-budget count; got: {}",
+            err.estimate
+        );
+    }
+
+    // FR-4: product > budget but each individual hierarchy factor ≤ budget
+    // → estimate is advisory (capped at budget), projection proceeds.
+    // Models the `customers-ese` case: First Name (5,126) × Gender (2) = 10,252
+    // which exceeds a 10k cap but is advisory at a 50k budget.
+    #[test]
+    fn cross_hierarchy_cap_at_budget() {
+        let catalog = CatalogSnapshot {
+            columns: vec![
+                level_col("customer_name_dimension", "Customer First Name", 5_126),
+                level_col("customer_demographics", "Gender", 2),
+            ],
+            ..Default::default()
+        };
+        let mqo = projection_with_levels(
+            "tpcds_benchmark_model",
+            &[
+                ("customer_name_dimension", "Customer First Name"),
+                ("customer_demographics", "Gender"),
+            ],
+        );
+        // With a 10k cap, 5126 * 2 = 10252 > 10000, but each factor ≤ 10000 →
+        // advisory: capped at 10000, passes.
+        let result = check_projection_cardinality(&mqo, &catalog, 10_000);
+        assert!(
+            result.is_ok(),
+            "cross-hierarchy product > cap but each factor ≤ cap must be advisory (proceeds); \
+             customers-ese shape: 5126 × 2 = 10252 > 10000; got: {result:?}"
+        );
+    }
+
+    // FR-5: Range/Member filter on a non-projected level applies cross-hierarchy
+    // selectivity or demotes the estimate to advisory (within-budget).
+    // Models the `products-price-above-70` case:
+    //   project Item Product Name (domain 206,021) WHERE Product Current Price > 70
+    //   guard estimates 206,021 (ignoring the filter) → projected_too_large.
+    //   After fix: cross-hierarchy Range filter applies 1/10 selectivity →
+    //   estimate ≈ 20,602 (or advisory) → within budget → proceeds.
+    #[test]
+    fn filter_on_non_projected_level_reduces_estimate_or_demotes() {
+        let catalog = CatalogSnapshot {
+            columns: vec![
+                // Item Product Name: 206,021 total members (the full product-name domain).
+                level_col("product_item_dimension", "Item Product Name", 206_021),
+                // Product Current Price lives on a different hierarchy.
+                level_col("product_price_dimension", "Product Current Price", 100),
+            ],
+            ..Default::default()
+        };
+        let mut mqo = projection_with_levels(
+            "tpcds_benchmark_model",
+            &[("product_item_dimension", "Item Product Name")],
+        );
+        // Range filter on the non-projected Product Current Price hierarchy.
+        mqo.filters.push(Filter::Range {
+            level: "product_price_dimension.[Product Current Price]".to_string(),
+            lo: mqo_spec::RangeBound::Number(70.0),
+            hi: mqo_spec::RangeBound::Number(10_000.0),
+        });
+        // Budget = 50,000. Without the fix, the guard estimates 206,021 and rejects.
+        // With the fix, the cross-hierarchy Range applies 1/10 selectivity →
+        // estimate ≈ 20,602 < 50,000 → proceeds.
+        let result = check_projection_cardinality(&mqo, &catalog, 50_000);
+        assert!(
+            result.is_ok(),
+            "Range filter on non-projected hierarchy must reduce estimate or demote to advisory; \
+             products-price-above-70 shape: 206021 / 10 ≈ 20602 < 50000; got: {result:?}"
         );
     }
 }

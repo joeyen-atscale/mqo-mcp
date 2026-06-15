@@ -761,11 +761,15 @@ pub struct Server {
     pub max_projection_cardinality: usize,
 }
 
-/// Default maximum distinct-row estimate for a projection MQO (FR-4 / OQ-3).
+/// Default maximum distinct-row estimate for a projection MQO.
 ///
-/// Set to 10,000 — well below the typical engine row cap of ~50,000 — so
-/// the guard always declines before the engine would cap-and-spend.
-pub const DEFAULT_MAX_PROJECTION_CARDINALITY: usize = 10_000;
+/// Aligned to `DEFAULT_MAX_RESULT_ROWS` (the materialization budget) so the
+/// projection cap and the handle materialization budget are the same number —
+/// one knob, no gap (PRD-mqo-projection-handle-over-cap, FR-1/OQ-2).
+///
+/// Rollback to old behavior: pass `--max-projection-cardinality 10000` (or set
+/// `--max-result-rows 10000`).
+pub const DEFAULT_MAX_PROJECTION_CARDINALITY: usize = mqo_auth_bridge::DEFAULT_MAX_RESULT_ROWS;
 
 /// The advertised tool list. The three catalog tools are read-only.
 #[must_use]
