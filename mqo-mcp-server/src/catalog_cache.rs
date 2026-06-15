@@ -171,9 +171,14 @@ pub fn ingest_cardinalities_only(
                 let card = r
                     .get("LEVEL_CARDINALITY")
                     .and_then(|s| s.parse::<usize>().ok())
-                    .unwrap_or(usize::MAX);
-                // Use or_insert so if the same LUN appears twice we keep the first.
-                map.entry(lun).or_insert(card);
+                    .unwrap_or(0);
+                // Mirror the storage condition in ingest_live_metadata: only keep
+                // levels with a real, non-zero, non-sentinel cardinality so the diff
+                // against cardinality_map() is apples-to-apples. Over-cap / unknown
+                // levels are absent from both maps and never trigger a partial re-fetch.
+                if card > 0 && card < usize::MAX {
+                    map.entry(lun).or_insert(card);
+                }
             }
         }
         Err(e) => {
