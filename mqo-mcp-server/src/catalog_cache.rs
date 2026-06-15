@@ -425,9 +425,9 @@ mod tests {
     #[test]
     fn cardinality_map_from_columns() {
         let columns = json!([
-            {"kind": "level", "level_unique_name": "[Store].[Store State]", "cardinality": 50},
-            {"kind": "level", "level_unique_name": "[Ship].[Mode]"},  // no cardinality
-            {"kind": "measure", "level_unique_name": "[Measures].[Sales]"},
+            {"kind": "level", "unique_name": "[Store].[Store State]", "cardinality": 50},
+            {"kind": "level", "unique_name": "[Ship].[Mode]"},  // no cardinality
+            {"kind": "measure", "unique_name": "[Measures].[Sales]"},
         ]);
         let map = cardinality_map(&columns);
         assert_eq!(map.get("[Store].[Store State]"), Some(&50_usize));
