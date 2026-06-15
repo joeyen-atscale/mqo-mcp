@@ -1063,6 +1063,161 @@ pub fn handle_dataset_chart(store: &SharedStore, args: &Value, inline_threshold:
     handle_ok(&spec)
 }
 
+// ── dataset_export (dh-export backed; JSON/CSV/Parquet) ───────────────────────
+
+/// Default row cap for `dataset_export` JSON mode.
+///
+/// Above this the tool returns a typed `result_too_large` error.  Callers may
+/// pass a smaller `max_rows`; they may not exceed this cap without a server
+/// rebuild.
+pub const DEFAULT_EXPORT_MAX_ROWS: usize = 10_000;
+
+/// `dataset_export` — materialize a handle out-of-band.
+///
+/// * `format = "json"`: returns rows as bounded JSON, capped at
+///   `max_rows` (caller-supplied or [`DEFAULT_EXPORT_MAX_ROWS`]).  Above the cap
+///   returns a typed `result_too_large` error.
+/// * `format = "csv"` / `"parquet"`: writes a file to `destination` (or a temp
+///   path), returns `{path, row_count}` — no rows inlined.
+pub fn handle_dataset_export(store: &SharedStore, args: &Value) -> Value {
+    let handle = match parse_handle(args) {
+        Ok(h) => h,
+        Err(e) => return e,
+    };
+
+    let format = args.get("format").and_then(Value::as_str).unwrap_or("json");
+
+    // Lock the store for the duration of the export.
+    let Ok(guard) = store.lock() else {
+        return handle_err("store_error", "store lock poisoned");
+    };
+
+    match format {
+        "json" => {
+            let max_rows = args
+                .get("max_rows")
+                .and_then(Value::as_u64)
+                .map(|n| n as usize)
+                .unwrap_or(DEFAULT_EXPORT_MAX_ROWS)
+                .min(DEFAULT_EXPORT_MAX_ROWS);
+
+            // First check row count against cap without materializing rows.
+            let dataset = match guard.get(&handle) {
+                Ok(d) => d,
+                Err(e) => return handle_err("handle_not_found", &e.to_string()),
+            };
+            let row_count = dataset.row_count();
+            if row_count > max_rows {
+                let payload = json!({
+                    "error": {
+                        "code": "result_too_large",
+                        "detail": format!(
+                            "dataset has {row_count} rows which exceeds the json export cap \
+                             ({max_rows}). Use format='csv' or 'parquet' to write to a file, \
+                             or apply dataset_filter/dataset_top_n to reduce the row count."
+                        ),
+                        "row_count": row_count,
+                        "cap": max_rows,
+                    }
+                });
+                return json!({
+                    "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+                    "structuredContent": payload,
+                    "isError": true
+                });
+            }
+
+            use dh_export::{export, ExportDest, ExportFmt, ExportOptions};
+            let fmt = ExportFmt::Json { max_rows };
+            // Use a generous inline byte cap (128 MiB) — the row cap is the real guard.
+            let dest = ExportDest::Inline { max_bytes: 128 * 1024 * 1024 };
+            let opts = ExportOptions::default();
+
+            match export(&*guard, &handle, fmt, dest, opts) {
+                Ok(receipt) => {
+                    let rows: Value = receipt
+                        .inline_payload
+                        .as_deref()
+                        .and_then(|b| serde_json::from_slice(b).ok())
+                        .unwrap_or(Value::Array(vec![]));
+                    let payload = json!({
+                        "handle": handle.id,
+                        "format": "json",
+                        "row_count": receipt.row_count,
+                        "rows": rows,
+                    });
+                    handle_ok(&payload)
+                }
+                Err(dh_export::ExportError::LookupFailed(msg)) => {
+                    handle_err("handle_not_found", &msg)
+                }
+                Err(dh_export::ExportError::JsonLimitExceeded { actual, limit }) => {
+                    let payload = json!({
+                        "error": {
+                            "code": "result_too_large",
+                            "row_count": actual,
+                            "cap": limit,
+                        }
+                    });
+                    json!({
+                        "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+                        "structuredContent": payload,
+                        "isError": true
+                    })
+                }
+                Err(e) => handle_err("export_error", &e.to_string()),
+            }
+        }
+
+        "csv" | "parquet" => {
+            use dh_export::{export, ExportDest, ExportFmt, ExportOptions};
+            use std::path::PathBuf;
+
+            let fmt = if format == "csv" { ExportFmt::Csv } else { ExportFmt::Parquet };
+            let ext = if format == "csv" { "csv" } else { "parquet" };
+
+            let dest_path: PathBuf = args
+                .get("destination")
+                .and_then(Value::as_str)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    let tmp = std::env::temp_dir();
+                    tmp.join(format!("dh-export-{}.{ext}", handle.id))
+                });
+
+            let opts = ExportOptions { overwrite: true, override_json_limit: false };
+
+            match export(&*guard, &handle, fmt, ExportDest::File(dest_path.clone()), opts) {
+                Ok(receipt) => {
+                    let payload = json!({
+                        "handle": handle.id,
+                        "format": format,
+                        "path": dest_path.to_string_lossy(),
+                        "row_count": receipt.row_count,
+                        "bytes": receipt.bytes,
+                        "sha256": receipt.sha256,
+                    });
+                    handle_ok(&payload)
+                }
+                Err(dh_export::ExportError::LookupFailed(msg)) => {
+                    handle_err("handle_not_found", &msg)
+                }
+                Err(dh_export::ExportError::ParquetNotEnabled) => {
+                    handle_err("parquet_not_enabled",
+                        "Parquet export requires the `parquet` cargo feature; \
+                         use format='csv' instead or rebuild with --features parquet")
+                }
+                Err(e) => handle_err("export_error", &e.to_string()),
+            }
+        }
+
+        other => handle_err(
+            "invalid_params",
+            &format!("unsupported format '{other}': must be one of json, csv, parquet"),
+        ),
+    }
+}
+
 /// Build a Vega-Lite v5 spec for the given chart parameters and data rows.
 fn build_vega_spec(mark: &str, x_col: &str, y_cols: &[String], title: &str, rows: &[Value]) -> Value {
     let mut spec = if y_cols.len() == 1 {
@@ -1264,6 +1419,37 @@ pub fn handle_op_descriptors() -> Vec<Value> {
                     "title": { "type": "string", "description": "Optional chart title." }
                 },
                 "required": ["handle","chart_type","x_col","y_cols"]
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "dataset_export",
+            "description": "Materialize a result handle out-of-band. This is the deliberate, audited exit for full row data — use it when the user genuinely needs all rows (e.g. CSV download, eval harness ground-truth). \
+\n\n**Large results:** when query_multidimensional returns a handle with row_count above the inline threshold, work with the handle via dataset_* ops first. Only call dataset_export when you need the full materialized rows. \
+\n\n**Formats:** json (returns rows inline, bounded by max_rows cap — use for programmatic access), csv (writes a file, no rows inlined), parquet (writes a file, no rows inlined). \
+\n\n**JSON cap:** json mode is bounded by the operator row cap; if the handle's row_count exceeds the cap a result_too_large error is returned instead of rows. csv/parquet write to a file and are exempt from the json cap. \
+\n\nReturns {path, row_count} for csv/parquet; {rows, row_count} for json within cap. Expired/unknown handles return a typed handle_not_found error. Read-only by construction — computes server-side, no AtScale round-trip.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "handle": { "type": "string", "description": "Handle id of the result to export (from query_multidimensional or a dataset_* op)." },
+                    "format": {
+                        "type": "string",
+                        "enum": ["json", "csv", "parquet"],
+                        "description": "Export format. json: returns bounded rows inline (capped at max_rows). csv/parquet: writes a file and returns {path, row_count}."
+                    },
+                    "max_rows": {
+                        "type": "integer",
+                        "description": "For json format: maximum rows to return. Defaults to the operator row cap. Above the cap returns result_too_large.",
+                        "minimum": 1
+                    },
+                    "destination": {
+                        "type": "string",
+                        "description": "For csv/parquet: file path to write to (absolute). Defaults to a temp path if omitted."
+                    }
+                },
+                "required": ["handle", "format"],
+                "additionalProperties": false
             },
             "annotations": { "readOnlyHint": true }
         }),

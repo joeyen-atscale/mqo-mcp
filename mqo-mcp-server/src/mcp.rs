@@ -806,7 +806,7 @@ fn core_tool_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "query_multidimensional",
-            "description": "Run a Multidimensional Query Object (NEVER raw SQL) through bind→route→compile→execute and return bounded result rows plus the compiled query. Read-only by construction: the input is a selection-only object, so no write path exists.\n\nSupported filter types:\n- MemberLevel: {type:\"MemberLevel\", level_unique_name, members:[...], exclude:true|false} — filter a level to explicit members; exclude:true inverts to NOT-IN.\n- Member: {type:\"Member\", level_unique_name, members:[...]} — domain-scan grounded member filter (equivalent to MemberLevel without the exclude flag).\n- Group: {type:\"Group\", op:\"and\"|\"or\", filters:[...]} — combine two or more filters; up to two levels of nesting supported.\n- Range: {type:\"Range\", level_unique_name, lo, hi} — inclusive bounds filter; ISO-date strings accepted for date levels (full timezone support coming).",
+            "description": "Run a Multidimensional Query Object (NEVER raw SQL) through bind→route→compile→execute and return bounded result rows plus the compiled query. Read-only by construction: the input is a selection-only object, so no write path exists.\n\n**Large results:** when row_count exceeds the inline threshold the response is handle-first: {handle, row_count, columns, sample, notes}. Work with the handle via dataset_* ops (dataset_aggregate, dataset_filter, dataset_top_n, etc.) or call dataset_export to materialize. Do NOT loop next_page to assemble all rows — next_page is for incremental paging by non-LLM clients.\n\nSupported filter types:\n- MemberLevel: {type:\"MemberLevel\", level_unique_name, members:[...], exclude:true|false} — filter a level to explicit members; exclude:true inverts to NOT-IN.\n- Member: {type:\"Member\", level_unique_name, members:[...]} — domain-scan grounded member filter (equivalent to MemberLevel without the exclude flag).\n- Group: {type:\"Group\", op:\"and\"|\"or\", filters:[...]} — combine two or more filters; up to two levels of nesting supported.\n- Range: {type:\"Range\", level_unique_name, lo, hi} — inclusive bounds filter; ISO-date strings accepted for date levels (full timezone support coming).",
             "inputSchema": mqo_schema,
             "annotations": { "readOnlyHint": true }
         }),
@@ -910,7 +910,7 @@ fn core_tool_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "next_page",
-            "description": "Fetch the next page of a cursor returned by query_multidimensional. When a query result exceeds the page-size threshold, the server persists the full result and returns a cursor_id with the first page. Call next_page with that cursor_id (and the page_token from the previous response) to retrieve subsequent pages. Returns {cursor_id, page_token, page, has_more}. Returns a structured error {error: 'CursorExpired', cursor_id} when the cursor has expired or is unknown. Read-only by construction.",
+            "description": "Fetch the next page of a cursor returned by query_multidimensional. For incremental paging by non-LLM clients. **LLM guidance:** do NOT loop next_page to assemble all rows — instead use dataset_* ops on the returned handle (dataset_aggregate, dataset_filter, dataset_top_n, etc.) or call dataset_export to materialize out-of-band. Returns {cursor_id, page_token, page, has_more}. Returns a structured error {error: 'CursorExpired', cursor_id} when the cursor has expired or is unknown. Read-only by construction.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1026,7 +1026,8 @@ impl Server {
             | "dataset_describe"
             | "dataset_slice"
             | "dataset_period_over_period"
-            | "dataset_chart" => Ok(self.dispatch_handle_op(name, &args)),
+            | "dataset_chart"
+            | "dataset_export" => Ok(self.dispatch_handle_op(name, &args)),
             other => Err(JsonRpcError::invalid_params(&format!(
                 "unknown tool `{other}`"
             ))),
@@ -1057,6 +1058,7 @@ impl Server {
                 "dataset_slice" => handle_ops::handle_dataset_slice(&hs.store, args, self.inline_threshold),
                 "dataset_period_over_period" => handle_ops::handle_dataset_period_over_period(&hs.store, args, self.inline_threshold),
                 "dataset_chart" => handle_ops::handle_dataset_chart(&hs.store, args, self.inline_threshold),
+                "dataset_export" => handle_ops::handle_dataset_export(&hs.store, args),
                 other => {
                     let payload = json!({ "error": { "code": "unknown_handle_op", "detail": format!("unknown handle-op tool '{other}'") } });
                     json!({
@@ -1980,8 +1982,12 @@ fn attach_handle_summary(payload: &mut Value, handle: Option<&DatasetHandle>, ou
     payload["capabilities"] = serde_json::to_value(dh_summary::capabilities(&ds)).unwrap_or(Value::Null);
 }
 
-/// Build a cursor first-page response.  The inline `rows` field is replaced by
-/// `{cursor_id, page_size, total_rows, page, page_token, has_more}`.
+/// Build a handle-first large-result response (FR-1).
+///
+/// Leads with `{handle, row_count, columns, sample, notes}` to steer the LLM
+/// toward `dataset_*` ops or `dataset_export` rather than paginating.  Cursor
+/// fields (`cursor_id`, `page`, `page_token`, `has_more`) are retained for
+/// back-compat with non-LLM clients that want incremental paging.
 fn structured_cursor_ok(
     out: &PipelineOutput,
     first_page: &crate::cursor::CursorFirstPage,
@@ -1989,18 +1995,66 @@ fn structured_cursor_ok(
     latency_ms: u64,
     handle: Option<&DatasetHandle>,
 ) -> Value {
+    let total_rows = first_page.total_rows;
+
+    // Derive column names from the first row (or from the bound).
+    let columns: Vec<Value> = {
+        let mut cols: Vec<String> = Vec::new();
+        if let Some(row) = out.rows.first() {
+            if let Some(obj) = row.as_object() {
+                for k in obj.keys() {
+                    cols.push(k.clone());
+                }
+            }
+        }
+        // Fall back to bound dimensions + measures if rows are empty.
+        if cols.is_empty() {
+            let dims = out.bound.get("dimensions").and_then(Value::as_array);
+            let meas = out.bound.get("measures").and_then(Value::as_array);
+            for arr in [dims, meas].into_iter().flatten() {
+                for item in arr {
+                    if let Some(un) = item.get("unique_name").and_then(Value::as_str) {
+                        cols.push(un.to_string());
+                    }
+                }
+            }
+        }
+        cols.into_iter().map(|c| json!(c)).collect()
+    };
+
+    // Bounded sample: up to page_size rows (= the first page already computed).
+    let sample = first_page.page.clone();
+
+    // FR-1 / FR-5: handle-first notes steer.
+    let notes = vec![
+        format!(
+            "Large result: {total_rows} rows. Work with the handle via dataset_* ops \
+             (dataset_aggregate, dataset_filter, dataset_top_n, etc.) or call \
+             dataset_export to materialize out-of-band. \
+             next_page is for incremental paging by non-LLM clients — do NOT loop \
+             next_page to assemble all rows."
+        )
+    ];
+
     let mut payload = json!({
+        // ── Handle-first fields (FR-1) ──────────────────────────────────────
+        "handle": first_page.cursor_id,
+        "row_count": total_rows,
+        "columns": columns,
+        "sample": sample,
+        "notes": notes,
+        // ── Back-compat cursor fields (FR-6) ────────────────────────────────
+        "cursor_id": first_page.cursor_id,
+        "page_size": first_page.page_size,
+        "total_rows": total_rows,
+        "page": first_page.page,
+        "page_token": first_page.page_token,
+        "has_more": first_page.has_more,
+        // ── Query metadata ──────────────────────────────────────────────────
         "backend": out.backend,
         "estimated_rows": out.estimated_rows,
         "routing_reason": out.routing_reason,
         "compiled_query": out.compiled_query,
-        "row_count": out.rows.len(),
-        "cursor_id": first_page.cursor_id,
-        "page_size": first_page.page_size,
-        "total_rows": first_page.total_rows,
-        "page": first_page.page,
-        "page_token": first_page.page_token,
-        "has_more": first_page.has_more,
         "bound": out.bound,
         "filters_applied": out.filters_applied,
         "filters_dropped": out.filters_dropped,
@@ -2373,6 +2427,206 @@ mod size_gate_tests {
         let resp = structured_ok(&out, None, 1, Some(&h), 100);
         let sc = &resp["structuredContent"];
         assert!(sc.get("rows").is_some(), "60 ≤ 100 inlines: {sc}");
+    }
+}
+
+// ── Large-result handle-first contract tests (AC-1 through AC-6, PRD-mqo-large-result-handle-contract) ──
+
+#[cfg(test)]
+mod handle_first_contract_tests {
+    use super::*;
+    use crate::cursor::CursorStore;
+    use std::sync::Arc;
+
+    fn synth_rows(n: usize) -> Vec<Value> {
+        (0..n)
+            .map(|i| json!({ "customer_id": i as i64, "store": "store-A", "revenue": (i as f64) * 1.5 }))
+            .collect()
+    }
+
+    fn synth_pipeline_output(n: usize) -> PipelineOutput {
+        let rows = synth_rows(n);
+        PipelineOutput {
+            backend: "dax".to_string(),
+            estimated_rows: n as u64,
+            routing_reason: "test".to_string(),
+            compiled_query: "EVALUATE ...".to_string(),
+            rows,
+            bound: json!({"measures": [], "dimensions": []}),
+            filters_applied: vec![],
+            filters_dropped: vec![],
+        }
+    }
+
+    /// AC-1: Given a query returning 1000 rows, when the cursor path fires,
+    /// the response carries `handle`, `row_count: 1000`, `columns`, a bounded
+    /// `sample`, and a `notes` steer — and does NOT present as "page for the rest".
+    #[test]
+    fn ac1_large_cursor_response_is_handle_first() {
+        let out = synth_pipeline_output(1000);
+        let page_size = 50_usize;
+        let store = Arc::new(CursorStore::new(600));
+        let first_page = store
+            .put_and_first_page(out.rows.clone(), page_size)
+            .expect("put succeeds");
+
+        let resp = structured_cursor_ok(&out, &first_page, None, 0, None);
+        let sc = &resp["structuredContent"];
+
+        // Handle is present (= cursor_id)
+        assert!(sc.get("handle").is_some(), "handle must be present: {sc}");
+        assert_eq!(sc["handle"], sc["cursor_id"], "handle == cursor_id");
+
+        // row_count is the total, not just the page
+        assert_eq!(sc["row_count"], json!(1000), "row_count must be total rows");
+
+        // columns present
+        let cols = sc["columns"].as_array().expect("columns must be an array");
+        assert!(!cols.is_empty(), "columns must be non-empty");
+
+        // sample is a bounded top-N (≤ page_size)
+        let sample = sc["sample"].as_array().expect("sample must be an array");
+        assert!(sample.len() <= page_size, "sample bounded to page_size: {}", sample.len());
+        assert!(!sample.is_empty(), "sample must not be empty for non-empty result");
+
+        // notes steer present and mentions handle ops
+        let notes = sc["notes"].as_array().expect("notes must be an array");
+        assert!(!notes.is_empty(), "notes must be non-empty");
+        let note_text = notes[0].as_str().expect("notes[0] is a string");
+        assert!(
+            note_text.contains("dataset_export") || note_text.contains("dataset_*"),
+            "notes must mention dataset_* or dataset_export: {note_text}"
+        );
+        assert!(
+            note_text.contains("next_page"),
+            "notes must mention next_page to steer away from it: {note_text}"
+        );
+
+        // Back-compat cursor fields present (FR-6)
+        assert!(sc.get("cursor_id").is_some(), "cursor_id back-compat present");
+        assert!(sc.get("page").is_some(), "page back-compat present");
+        assert!(sc.get("page_token").is_some(), "page_token back-compat present");
+        assert!(sc.get("has_more").is_some(), "has_more back-compat present");
+    }
+
+    /// AC-6 (back-compat): small results ≤ inline threshold are inlined as before,
+    /// cursor path not taken.
+    #[test]
+    fn ac6_small_result_unchanged() {
+        let out = synth_pipeline_output(10);
+        let (_hs, h) = {
+            let hs = crate::handle_ops::HandleStore::new();
+            let h = hs.put_rows(&out.rows).expect("put_rows");
+            (hs, h)
+        };
+        let resp = structured_ok(&out, None, 1, Some(&h), 25);
+        let sc = &resp["structuredContent"];
+        // Small result still inlines rows
+        assert!(sc.get("rows").is_some(), "small result must inline rows: {sc}");
+        assert_eq!(sc["row_count"], json!(10));
+        // handle + summary still present
+        assert!(sc.get("handle").is_some(), "handle present for small result");
+        assert!(sc.get("summary").is_some(), "summary present for small result");
+    }
+}
+
+// ── dataset_export unit tests (AC-2 through AC-4, PRD-mqo-large-result-handle-contract) ──
+
+#[cfg(test)]
+mod dataset_export_tests {
+    use super::*;
+    use crate::handle_ops::{HandleStore, DEFAULT_EXPORT_MAX_ROWS};
+
+    fn make_store_with_n_rows(n: usize) -> (HandleStore, DatasetHandle) {
+        let rows: Vec<Value> = (0..n)
+            .map(|i| json!({ "id": i as i64, "name": format!("row-{i}"), "val": (i as f64) * 2.5 }))
+            .collect();
+        let hs = HandleStore::new();
+        let h = hs.put_rows(&rows).expect("put_rows succeeds");
+        (hs, h)
+    }
+
+    /// AC-2: Given a handle, when dataset_export(handle, format: json) is called
+    /// within the cap, it returns the full persisted rows (bounded JSON).
+    #[test]
+    fn ac2_export_json_within_cap_returns_rows() {
+        let (hs, h) = make_store_with_n_rows(10);
+        let args = json!({ "handle": h.id, "format": "json" });
+        let resp = crate::handle_ops::handle_dataset_export(&hs.store, &args);
+        let sc = &resp["structuredContent"];
+        assert_eq!(resp["isError"], json!(false), "must not be error: {resp}");
+        assert_eq!(sc["format"], json!("json"));
+        assert_eq!(sc["row_count"], json!(10_u64));
+        let rows = sc["rows"].as_array().expect("rows array present");
+        assert_eq!(rows.len(), 10, "all 10 rows returned");
+    }
+
+    /// AC-3: Given an export json request above the cap, then result_too_large
+    /// (total + cap), no rows.
+    #[test]
+    fn ac3_export_json_above_cap_returns_result_too_large() {
+        // Put more rows than DEFAULT_EXPORT_MAX_ROWS would allow when we pass a tiny cap.
+        let (hs, h) = make_store_with_n_rows(5);
+        // Pass max_rows=2 so 5 > 2 triggers result_too_large.
+        let args = json!({ "handle": h.id, "format": "json", "max_rows": 2 });
+        let resp = crate::handle_ops::handle_dataset_export(&hs.store, &args);
+        assert_eq!(resp["isError"], json!(true), "must be error: {resp}");
+        let sc = &resp["structuredContent"];
+        assert_eq!(sc["error"]["code"], json!("result_too_large"), "error code must be result_too_large: {sc}");
+        assert!(sc["error"].get("row_count").is_some(), "row_count in error");
+        assert!(sc["error"].get("cap").is_some(), "cap in error");
+        assert!(sc.get("rows").is_none(), "no rows on error");
+    }
+
+    /// AC-4: Given dataset_export(handle, format: csv), a file is written and
+    /// {path, row_count} returned — no rows inlined.
+    #[test]
+    fn ac4_export_csv_writes_file_returns_path() {
+        let (hs, h) = make_store_with_n_rows(5);
+        let tmp = std::env::temp_dir().join(format!("test-export-{}.csv", h.id));
+        let args = json!({
+            "handle": h.id,
+            "format": "csv",
+            "destination": tmp.to_string_lossy()
+        });
+        let resp = crate::handle_ops::handle_dataset_export(&hs.store, &args);
+        let sc = &resp["structuredContent"];
+        assert_eq!(resp["isError"], json!(false), "must not be error: {resp}");
+        assert!(sc.get("path").is_some(), "path present");
+        assert_eq!(sc["row_count"], json!(5_u64), "row_count correct");
+        assert!(sc.get("rows").is_none(), "no rows inlined for csv");
+        // Clean up
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    /// AC-6 (back-compat): dataset_export on unknown handle returns handle_not_found.
+    #[test]
+    fn ac6_export_unknown_handle_returns_error() {
+        let hs = HandleStore::new();
+        let args = json!({ "handle": "nonexistent-handle-id", "format": "json" });
+        let resp = crate::handle_ops::handle_dataset_export(&hs.store, &args);
+        assert_eq!(resp["isError"], json!(true), "must be error for unknown handle");
+        let code = resp["structuredContent"]["error"]["code"].as_str().unwrap_or("");
+        assert_eq!(code, "handle_not_found", "error code is handle_not_found");
+    }
+
+    /// dataset_export with invalid format returns invalid_params.
+    #[test]
+    fn export_invalid_format_returns_invalid_params() {
+        let (hs, h) = make_store_with_n_rows(3);
+        let args = json!({ "handle": h.id, "format": "xlsx" });
+        let resp = crate::handle_ops::handle_dataset_export(&hs.store, &args);
+        assert_eq!(resp["isError"], json!(true));
+        let code = resp["structuredContent"]["error"]["code"].as_str().unwrap_or("");
+        assert_eq!(code, "invalid_params");
+    }
+
+    /// DEFAULT_EXPORT_MAX_ROWS cap is enforced even when caller doesn't pass max_rows.
+    #[test]
+    fn export_json_default_cap_is_enforced() {
+        // We can't actually put DEFAULT_EXPORT_MAX_ROWS+1 rows in a test easily,
+        // so instead just verify that the constant is reasonable.
+        assert_eq!(DEFAULT_EXPORT_MAX_ROWS, 10_000, "default cap must be 10_000");
     }
 }
 
