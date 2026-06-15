@@ -192,8 +192,8 @@ fn ac1_server_advertises_tools_with_readonly_hints() {
     }
 
     // Sanity: tool_descriptors() exposed publicly returns the same shape
-    // (4 core + 3 federation + 4 chart + 1 next_page + 4 handle-ops = 16 total).
-    assert_eq!(tool_descriptors().as_array().unwrap().len(), 23);
+    // (4 core + 3 federation + 4 chart + 1 next_page + 12 dataset ops incl. dataset_export = 24 total).
+    assert_eq!(tool_descriptors().as_array().unwrap().len(), 24);
 }
 
 // ── AC2 ─────────────────────────────────────────────────────────────────────
@@ -833,8 +833,8 @@ fn new_ac6_mcp_contract_unchanged() {
         .handle(&json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}))
         .expect("tools/list response");
     let tools = listed["result"]["tools"].as_array().expect("tools array");
-    // 4 core tools + 3 federation tools + 4 chart tools + 1 next_page + 4 handle-ops = 16 total.
-    assert_eq!(tools.len(), 23);
+    // 4 core tools + 3 federation tools + 4 chart tools + 1 next_page + 12 dataset ops = 24 total.
+    assert_eq!(tools.len(), 24);
     // query_multidimensional has readOnlyHint: true.
     let qmd = tools
         .iter()
@@ -1569,7 +1569,7 @@ fn ext24_tools_list_advertises_chart_tools_total_nine() {
         .expect("tools/list response");
     let tools = listed["result"]["tools"].as_array().expect("tools array");
 
-    assert_eq!(tools.len(), 23, "must advertise 23 tools (12 core + 11 dataset ops): {tools:?}");
+    assert_eq!(tools.len(), 24, "must advertise 24 tools (12 core + 12 dataset ops incl. dataset_export): {tools:?}");
 
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     for expected in [
