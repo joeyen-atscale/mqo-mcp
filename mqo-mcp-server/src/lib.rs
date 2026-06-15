@@ -26,6 +26,7 @@
 #![deny(clippy::all, clippy::pedantic)]
 #![allow(clippy::module_name_repetitions)]
 
+pub mod catalog_cache;
 pub mod catalog_ingest;
 pub mod chart_tools;
 pub mod cursor;

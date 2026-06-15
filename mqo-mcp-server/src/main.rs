@@ -35,6 +35,11 @@ use clap::Parser;
 use mcp_cluster_health_monitor::report::OverallStatus;
 use mcp_cluster_registry::ClusterRegistry;
 use mqo_mcp_server::{
+    catalog_cache::{
+        apply_cached_columns, cardinality_map, default_cache_path, fetch_schema_update,
+        ingest_cardinalities_only, load_cache, save_cache, validate_cache, CacheVerdict,
+        CatalogCache, CACHE_FORMAT_VERSION,
+    },
     cursor::{CursorStore, DEFAULT_CURSOR_TTL_SECS, DEFAULT_PAGE_SIZE},
     mcp::{discover_xmla_coords, DEFAULT_MAX_PROJECTION_CARDINALITY},
     run_health_check_sync, BackendCapabilities, EndpointConfig, LiveExecutor, OidcConfig, Server,
@@ -46,6 +51,7 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::process;
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_ROW_THRESHOLD: u64 = 50_000;
 
@@ -252,6 +258,27 @@ struct Args {
     /// `xmla_coords_not_found` error naming the missing model.
     #[arg(long, value_name = "PATH")]
     xmla_catalog_map: Option<PathBuf>,
+
+    /// Path for the enriched-catalog disk cache (PRD-mqo-catalog-disk-cache).
+    /// Defaults to `<catalog>.enriched-cache.json` when `--capture-live-domains`
+    /// is set. The cache persists the enriched catalog (domains, cardinalities,
+    /// value_types, semi-additive flags) and is validated cheaply on restart via
+    /// `LAST_SCHEMA_UPDATE` + per-level cardinality diff — no per-level member
+    /// fetches unless something actually changed.
+    #[arg(long, value_name = "PATH")]
+    catalog_cache_path: Option<PathBuf>,
+
+    /// Catalog cache TTL in seconds.  When the cache is older than this value a
+    /// full re-ingest is forced regardless of schema/cardinality signals.
+    /// Default: 86400 (24 hours).
+    #[arg(long, default_value_t = 86_400_u64)]
+    catalog_cache_ttl: u64,
+
+    /// Ignore the on-disk catalog cache and force a full live ingest.  The new
+    /// result overwrites the cache file.  Use after a data load that the
+    /// `LAST_SCHEMA_UPDATE` + cardinality signals cannot detect.
+    #[arg(long, default_value_t = false)]
+    refresh_catalog: bool,
 }
 
 fn main() {
@@ -348,6 +375,18 @@ fn main() {
     // PRD-mqo-live-catalog-ingestion: probe the cluster for level member
     // domains and layer them onto the catalog so the filter-level + member-
     // grounding guards run on live data instead of a hand-edited snapshot.
+    //
+    // PRD-mqo-catalog-disk-cache: wrap the unconditional ingest with a
+    // validity gate.  On startup:
+    //   1. Try to load the on-disk cache (unless --refresh-catalog).
+    //   2. If a cache is present, run the cheap validation Discovers
+    //      (MDSCHEMA_CUBES + MDSCHEMA_LEVELS — no per-level MEMBERS fetches).
+    //   3. Verdict:
+    //      Valid           → apply cached columns, skip ingest.
+    //      PartialInvalid  → apply cached columns, re-fetch only changed levels.
+    //      FullReingest    → run ingest_live_metadata as before.
+    //   4. After any ingest (full or partial): write the cache.
+    // Cluster unreachable during validation → serve cache with a warning log.
     if args.capture_live_domains {
         match &engine {
             ServerEngine::Live(ex) => {
@@ -372,21 +411,155 @@ fn main() {
                             max_levels: args.catalog_max_levels,
                             concurrency: args.catalog_ingest_concurrency,
                         };
-                        let sum = mqo_mcp_server::catalog_ingest::ingest_live_metadata(
-                            &mut catalog,
-                            ex,
-                            &xmla_catalog,
-                            &cube,
-                            &cfg,
-                        );
-                        eprintln!(
-                            "mqo-mcp-server: live catalog ingestion (MDSCHEMA): \
-                             {} measures ({} semi-additive), {} levels seen / {} mapped, \
-                             {} domains captured, {} over-cap, {} errored, {}ms",
-                            sum.measures_seen, sum.semi_additive_found, sum.levels_seen,
-                            sum.levels_mapped, sum.domains_captured, sum.over_cap,
-                            sum.errored, sum.wall_ms
-                        );
+
+                        // ── Resolve cache path ────────────────────────────
+                        let cache_path = args
+                            .catalog_cache_path
+                            .clone()
+                            .unwrap_or_else(|| default_cache_path(&args.catalog));
+
+                        // ── Current wall-clock (Unix seconds) ────────────
+                        let now_secs = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+
+                        // ── Try cache path ────────────────────────────────
+                        let existing_cache: Option<CatalogCache> = if args.refresh_catalog {
+                            eprintln!("mqo-mcp-server: catalog cache: --refresh-catalog set — ignoring cache");
+                            None
+                        } else {
+                            load_cache(&cache_path)
+                        };
+
+                        let mut did_full_ingest = false;
+
+                        if let Some(ref cached) = existing_cache {
+                            // ── Cheap validation: MDSCHEMA_CUBES + MDSCHEMA_LEVELS ──
+                            // If cluster is unreachable here, serve the cache with a warning.
+                            let validation_ok = ex.discover_mdschema("MDSCHEMA_CUBES", &xmla_catalog, &cube, None).is_ok();
+                            if !validation_ok {
+                                let age = now_secs.saturating_sub(cached.captured_at);
+                                eprintln!(
+                                    "mqo-mcp-server: WARN: cluster unreachable for cache \
+                                     validation — serving cached domains (age: {age}s)"
+                                );
+                                apply_cached_columns(&mut catalog, &cached.columns);
+                            } else {
+                                let fresh_schema_update =
+                                    fetch_schema_update(ex, &xmla_catalog, &cube);
+                                let fresh_cardinalities =
+                                    ingest_cardinalities_only(ex, &xmla_catalog, &cube);
+                                let cache_cardinalities = cardinality_map(&cached.columns);
+
+                                let verdict = validate_cache(
+                                    cached,
+                                    fresh_schema_update.as_deref(),
+                                    &fresh_cardinalities,
+                                    &cache_cardinalities,
+                                    args.catalog_cache_ttl,
+                                    now_secs,
+                                );
+
+                                match verdict {
+                                    CacheVerdict::Valid => {
+                                        eprintln!(
+                                            "mqo-mcp-server: catalog cache: serving cached \
+                                             domains (validated)"
+                                        );
+                                        apply_cached_columns(&mut catalog, &cached.columns);
+                                    }
+                                    CacheVerdict::PartialInvalid(ref changed_luns) => {
+                                        eprintln!(
+                                            "mqo-mcp-server: catalog cache: partial re-ingest \
+                                             ({} level(s) changed)",
+                                            changed_luns.len()
+                                        );
+                                        // Apply the cache first, then re-fetch only the changed levels.
+                                        apply_cached_columns(&mut catalog, &cached.columns);
+                                        let sum =
+                                            mqo_mcp_server::catalog_ingest::ingest_live_metadata(
+                                                &mut catalog,
+                                                ex,
+                                                &xmla_catalog,
+                                                &cube,
+                                                &cfg,
+                                            );
+                                        eprintln!(
+                                            "mqo-mcp-server: live catalog ingestion (partial, MDSCHEMA): \
+                                             {} measures ({} semi-additive), {} levels seen / {} mapped, \
+                                             {} domains captured, {} over-cap, {} errored, {}ms",
+                                            sum.measures_seen, sum.semi_additive_found,
+                                            sum.levels_seen, sum.levels_mapped,
+                                            sum.domains_captured, sum.over_cap,
+                                            sum.errored, sum.wall_ms
+                                        );
+                                        did_full_ingest = true;
+                                    }
+                                    CacheVerdict::FullReingest => {
+                                        let sum =
+                                            mqo_mcp_server::catalog_ingest::ingest_live_metadata(
+                                                &mut catalog,
+                                                ex,
+                                                &xmla_catalog,
+                                                &cube,
+                                                &cfg,
+                                            );
+                                        eprintln!(
+                                            "mqo-mcp-server: live catalog ingestion (full re-ingest, MDSCHEMA): \
+                                             {} measures ({} semi-additive), {} levels seen / {} mapped, \
+                                             {} domains captured, {} over-cap, {} errored, {}ms",
+                                            sum.measures_seen, sum.semi_additive_found,
+                                            sum.levels_seen, sum.levels_mapped,
+                                            sum.domains_captured, sum.over_cap,
+                                            sum.errored, sum.wall_ms
+                                        );
+                                        did_full_ingest = true;
+                                    }
+                                }
+                            }
+                        } else {
+                            // No cache (first run, corrupt, or --refresh-catalog): full ingest.
+                            let sum = mqo_mcp_server::catalog_ingest::ingest_live_metadata(
+                                &mut catalog,
+                                ex,
+                                &xmla_catalog,
+                                &cube,
+                                &cfg,
+                            );
+                            eprintln!(
+                                "mqo-mcp-server: live catalog ingestion (MDSCHEMA): \
+                                 {} measures ({} semi-additive), {} levels seen / {} mapped, \
+                                 {} domains captured, {} over-cap, {} errored, {}ms",
+                                sum.measures_seen, sum.semi_additive_found, sum.levels_seen,
+                                sum.levels_mapped, sum.domains_captured, sum.over_cap,
+                                sum.errored, sum.wall_ms
+                            );
+                            did_full_ingest = true;
+                        }
+
+                        // ── Write cache after any ingest ──────────────────
+                        // We only write after a full or partial ingest (not if
+                        // we served a Valid cache unchanged — the file is still current).
+                        if did_full_ingest || existing_cache.is_none() {
+                            if let Some(cols) = catalog.get("columns").cloned() {
+                                // Fetch fresh schema_update for the new cache.
+                                let schema_update =
+                                    fetch_schema_update(ex, &xmla_catalog, &cube);
+                                let new_cache = CatalogCache {
+                                    format_version: CACHE_FORMAT_VERSION,
+                                    cube: cube.clone(),
+                                    schema_update,
+                                    captured_at: now_secs,
+                                    columns: cols,
+                                };
+                                save_cache(&cache_path, &new_cache);
+                                eprintln!(
+                                    "mqo-mcp-server: catalog cache: written to {}",
+                                    cache_path.display()
+                                );
+                            }
+                        }
                     }
                     None => {
                         eprintln!(
