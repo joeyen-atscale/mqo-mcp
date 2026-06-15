@@ -25,6 +25,10 @@ use dh_store::{ColumnData, Dataset, Store};
 use dh_summary::{capabilities as dh_capabilities, summarize, SummaryCfg};
 use serde_json::{json, Map, Value};
 
+use mqo_param_validator::{
+    check_dataset_aggregate_attribute, CatalogHierarchy, CatalogMeasure, CatalogSnapshot,
+};
+
 /// Default maximum number of raw rows to inline in a handle-op or query
 /// response.  Overridable at launch via `--inline-threshold`.
 pub const INLINE_THRESHOLD: usize = 25;
@@ -1007,9 +1011,155 @@ where
 }
 
 /// `dataset_aggregate` — group-by + aggregation via the dh-ops kernel.
-pub fn handle_dataset_aggregate(store: &SharedStore, args: &Value, inline_threshold: usize) -> Value {
+///
+/// When `catalog` is `Some`, the attribute-aggregation guard (RULE 5,
+/// PRD-mqo-validator-attribute-aggregation-guard) runs before execution:
+/// if the `measure` argument resolves unambiguously to a dimension level
+/// (not an additive measure), the call is rejected with a `ParamRejection`
+/// before any I/O. Pass `None` to skip the guard (e.g. in tests that
+/// pre-date the guard or exercise the catalog-absent fail-open path).
+pub fn handle_dataset_aggregate(
+    store: &SharedStore,
+    args: &Value,
+    inline_threshold: usize,
+    catalog: Option<&Value>,
+) -> Value {
     let params = aggregate_args_to_params(args);
+
+    // ── RULE 5: attribute-aggregation guard ───────────────────────────────
+    if let Some(catalog_val) = catalog {
+        if let Some(rejection) = attr_agg_guard(&params, catalog_val) {
+            let payload = serde_json::json!({
+                "error": {
+                    "code": "param_rejected",
+                    "detail": rejection.reason,
+                    "rejection": serde_json::to_value(&rejection).unwrap_or(Value::Null)
+                }
+            });
+            return json!({
+                "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+                "structuredContent": payload,
+                "isError": true
+            });
+        }
+    }
+
     run_dh_op(store, &params, inline_threshold, dh_ops::aggregate)
+}
+
+/// Build a minimal `CatalogSnapshot` from the server's raw catalog JSON and
+/// invoke [`check_dataset_aggregate_attribute`].  Returns `Some(rejection)`
+/// when the guard fires, `None` to proceed.
+///
+/// The snapshot construction mirrors `pipeline.rs`'s `param_validate`:
+/// measures registered under both `unique_name` and `label`; levels indexed
+/// by hierarchy. Only `kind == "measure"` and `kind == "level"` columns are
+/// relevant; everything else is ignored.
+fn attr_agg_guard(
+    params: &Value,
+    catalog: &Value,
+) -> Option<mqo_param_validator::ParamRejection> {
+    // Extract `measure` argument (the column name to aggregate).
+    let measure_col = params.get("measure").and_then(Value::as_str)?;
+    // Extract `group_by` as a slice of string refs.
+    let group_by_val: Vec<&str> = params
+        .get("group_by")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+
+    // Build the minimal CatalogSnapshot from the catalog JSON.
+    let snapshot = build_attr_guard_snapshot(catalog);
+    check_dataset_aggregate_attribute(measure_col, &group_by_val, &snapshot)
+}
+
+/// Build a minimal `CatalogSnapshot` sufficient for the attribute-aggregation
+/// guard from the server's raw catalog JSON value.
+fn build_attr_guard_snapshot(catalog: &Value) -> CatalogSnapshot {
+    use std::collections::BTreeMap;
+
+    let cols = match catalog.get("columns").and_then(Value::as_array) {
+        Some(c) => c,
+        None => return CatalogSnapshot::default(),
+    };
+
+    let mut measures: Vec<CatalogMeasure> = Vec::new();
+    let mut hier_levels: BTreeMap<String, Vec<String>> = BTreeMap::new();
+
+    for c in cols {
+        let kind = c.get("kind").and_then(Value::as_str).unwrap_or("");
+        match kind {
+            "measure" => {
+                let un = match c.get("unique_name").and_then(Value::as_str) {
+                    Some(u) if !u.is_empty() => u,
+                    _ => continue,
+                };
+                let label = c.get("label").and_then(Value::as_str).map(str::to_string);
+                measures.push(CatalogMeasure {
+                    unique_name: un.to_string(),
+                    label: label.clone(),
+                    ..Default::default()
+                });
+                // Alias under label when it differs (callers often use label).
+                if let Some(ref l) = label {
+                    if l != un {
+                        measures.push(CatalogMeasure {
+                            unique_name: l.clone(),
+                            label: Some(l.clone()),
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+            "level" => {
+                let hier = c
+                    .get("hierarchy")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .or_else(|| {
+                        c.get("unique_name")
+                            .and_then(Value::as_str)
+                            .and_then(|un| un.split_once('.').map(|(h, _)| h.to_string()))
+                    });
+                let level_label = c
+                    .get("level")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                    .or_else(|| c.get("label").and_then(Value::as_str).map(str::to_string));
+                if let (Some(h), Some(lvl)) = (hier, level_label) {
+                    let entry = hier_levels.entry(h).or_default();
+                    if !entry.contains(&lvl) {
+                        entry.push(lvl);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let dimensions = hier_levels
+        .keys()
+        .map(|h| mqo_param_validator::CatalogDimension {
+            unique_name: h.clone(),
+            subject_areas: Vec::new(),
+        })
+        .collect();
+    let hierarchies: Vec<CatalogHierarchy> = hier_levels
+        .into_iter()
+        .map(|(h, levels)| CatalogHierarchy {
+            dimension_unique_name: h.clone(),
+            hierarchy_unique_name: h.clone(),
+            levels,
+            level_meta: vec![],
+        })
+        .collect();
+
+    CatalogSnapshot {
+        measures,
+        dimensions,
+        hierarchies,
+        date_roles: vec![],
+    }
 }
 
 /// Translate the legacy `{group_by, measures:[{col,agg}], filters}` arg shape
@@ -2658,6 +2808,7 @@ mod tests {
             &store,
             &json!({ "handle": handle.id, "group_by": ["Year"], "agg": "sum", "measure": "Revenue" }),
             25,
+            None, // no catalog in test fixture — guard is catalog-absent fail-open
         );
         assert!(!r["isError"].as_bool().unwrap_or(true), "round-trip: dataset_aggregate(Year,Revenue) failed: {r}");
 

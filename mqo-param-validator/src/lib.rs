@@ -280,6 +280,17 @@ pub enum RejectReason {
         /// The correct level or value format to use.
         suggested: String,
     },
+    /// RULE 5: `dataset_aggregate` asked to sum/aggregate a column that
+    /// resolves unambiguously to a dimension level (`kind=level`) and to no
+    /// measure. Aggregating a dimension attribute produces a silent wrong
+    /// number (e.g. `sum_Store Number of Employees`). The correct action is
+    /// to project or select the attribute, not aggregate it.
+    AttributeAggregation {
+        /// The column name passed as the `measure` argument.
+        column: String,
+        /// Human-readable note: why this is wrong and what to do instead.
+        reason: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1876,6 +1887,110 @@ fn check_filter_level(
 }
 
 // ---------------------------------------------------------------------------
+// RULE 5: attribute-aggregation guard (PRD-mqo-validator-attribute-aggregation-guard)
+// ---------------------------------------------------------------------------
+
+/// Check whether a `dataset_aggregate` call aggregates a column that is a
+/// **dimension level** (`kind=level`) rather than a measure.
+///
+/// # Conservative predicate (FR-2)
+///
+/// Fires only when ALL hold:
+///   * `group_by` is non-empty (per-entity-attribute shape — FR-4).
+///   * The `measure` column resolves unambiguously to a `kind=level` entry in
+///     the catalog hierarchies AND matches NO `kind=measure` entry.
+///   * Resolution is case-insensitive label match (same `normalize()` used
+///     everywhere in this crate).
+///
+/// Does NOT fire (fail-open) when:
+///   * `group_by` is empty (could be a global aggregate the user asked for).
+///   * The column is found among the catalog measures (even if it is ALSO a
+///     level label — ambiguous ⇒ conservative).
+///   * The column matches no catalog entity at all (unknown column ⇒ let
+///     the handle-op kernel surface the error).
+///   * The catalog's hierarchy levels are empty (no `kind` signal).
+///
+/// Returns `Some(ParamRejection)` on a confirmed attribute-aggregation
+/// attempt; `None` to proceed (fail-open).
+///
+/// # Example
+///
+/// ```
+/// use mqo_param_validator::{check_dataset_aggregate_attribute, CatalogSnapshot, CatalogHierarchy, CatalogMeasure};
+/// let catalog = CatalogSnapshot {
+///     measures: vec![CatalogMeasure { unique_name: "Store Sales".into(), label: Some("Store Sales".into()), ..Default::default() }],
+///     hierarchies: vec![CatalogHierarchy {
+///         dimension_unique_name: "Store".into(),
+///         hierarchy_unique_name: "Store".into(),
+///         levels: vec!["Store Name".into(), "Store Number of Employees".into()],
+///         level_meta: vec![],
+///     }],
+///     ..Default::default()
+/// };
+/// let r = check_dataset_aggregate_attribute("Store Number of Employees", &["Store Name"], &catalog);
+/// assert!(r.is_some(), "should reject attribute-aggregation");
+/// let r2 = check_dataset_aggregate_attribute("Store Sales", &["Store Name"], &catalog);
+/// assert!(r2.is_none(), "real measure should not be rejected");
+/// ```
+pub fn check_dataset_aggregate_attribute(
+    measure_col: &str,
+    group_by: &[&str],
+    catalog: &CatalogSnapshot,
+) -> Option<ParamRejection> {
+    // FR-4: only fire on the per-entity-attribute shape (non-empty group_by).
+    if group_by.is_empty() {
+        return None;
+    }
+
+    let col_norm = normalize(measure_col);
+
+    // FR-2 guard: if the column matches any catalog measure, fail-open.
+    // Check both unique_name and label (callers may use either).
+    let is_measure = catalog.measures.iter().any(|m| {
+        normalize(&m.unique_name) == col_norm
+            || m.label.as_deref().map(|l| normalize(l) == col_norm).unwrap_or(false)
+    });
+    if is_measure {
+        return None;
+    }
+
+    // Check if the column matches any level in any hierarchy.
+    let is_level = catalog.hierarchies.iter().any(|h| {
+        h.levels.iter().any(|l| normalize(l) == col_norm)
+    });
+
+    if !is_level {
+        // Not found in catalog at all → fail-open (FR-2 / AC-6).
+        return None;
+    }
+
+    // Column unambiguously resolves to a dimension level with no measure match.
+    let reason = format!(
+        "column [{measure_col}] is a dimension attribute (not an additive measure); \
+         aggregating it with sum/avg produces a meaningless rolled-up value. \
+         To get the per-entity attribute value, use projection or direct selection \
+         instead of dataset_aggregate."
+    );
+
+    Some(ParamRejection::new(
+        measure_col.to_string(),
+        FieldClass::HierarchyLevel,
+        RejectReason::AttributeAggregation {
+            column: measure_col.to_string(),
+            reason: reason.clone(),
+        },
+        vec![Suggestion {
+            name: "use projection / direct column selection".to_string(),
+            similarity: 1.0,
+            note: Some(format!(
+                "[{measure_col}] is a dimension level — project or select this attribute \
+                 instead of aggregating it"
+            )),
+        }],
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
@@ -2000,6 +2115,154 @@ mod tests {
         assert!(
             twin_rejections.is_empty(),
             "intent guard should suppress rejection when hierarchy has a filter, got {twin_rejections:?}"
+        );
+    }
+
+    // ── RULE 5: attribute-aggregation guard tests ─────────────────────────────
+
+    /// Build a catalog with a Store dimension that has a numeric level
+    /// "Store Number of Employees" (a dimension attribute, not a measure)
+    /// plus a genuine measure "Store Sales".
+    fn attr_agg_catalog() -> CatalogSnapshot {
+        CatalogSnapshot {
+            measures: vec![
+                CatalogMeasure {
+                    unique_name: "store.store_sales".into(),
+                    label: Some("Store Sales".into()),
+                    ..Default::default()
+                },
+                // Also register label alias (mirrors pipeline.rs aliasing)
+                CatalogMeasure {
+                    unique_name: "Store Sales".into(),
+                    label: Some("Store Sales".into()),
+                    ..Default::default()
+                },
+            ],
+            dimensions: vec![crate::CatalogDimension {
+                unique_name: "Store".into(),
+                subject_areas: vec![],
+            }],
+            hierarchies: vec![CatalogHierarchy {
+                dimension_unique_name: "Store".into(),
+                hierarchy_unique_name: "Store".into(),
+                levels: vec![
+                    "Store Name".into(),
+                    "Store Number of Employees".into(),
+                ],
+                level_meta: vec![],
+            }],
+            date_roles: vec![],
+        }
+    }
+
+    /// AC-1 / RULE 5: aggregating a dimension level is rejected.
+    #[test]
+    fn dataset_aggregate_attribute_level_rejected() {
+        let catalog = attr_agg_catalog();
+        let r = check_dataset_aggregate_attribute(
+            "Store Number of Employees",
+            &["Store Name"],
+            &catalog,
+        );
+        assert!(
+            r.is_some(),
+            "expected AttributeAggregation rejection for a dimension level"
+        );
+        let rejection = r.unwrap();
+        assert!(
+            matches!(rejection.reason, RejectReason::AttributeAggregation { .. }),
+            "expected AttributeAggregation reason, got {:?}",
+            rejection.reason
+        );
+        assert_eq!(rejection.class, FieldClass::HierarchyLevel);
+        if let RejectReason::AttributeAggregation { ref column, ref reason } = rejection.reason {
+            assert_eq!(column, "Store Number of Employees");
+            assert!(
+                reason.contains("dimension attribute"),
+                "rejection reason should mention 'dimension attribute'"
+            );
+            assert!(
+                reason.contains("projection"),
+                "rejection reason should mention 'projection'"
+            );
+        }
+    }
+
+    /// AC-3 / FR-2: a genuine measure is NOT rejected.
+    #[test]
+    fn dataset_aggregate_real_measure_not_rejected() {
+        let catalog = attr_agg_catalog();
+        // Test via unique_name
+        let r1 = check_dataset_aggregate_attribute("Store Sales", &["Store Name"], &catalog);
+        assert!(
+            r1.is_none(),
+            "real measure 'Store Sales' should not be rejected, got {:?}",
+            r1
+        );
+        // Test via unique_name with dot form
+        let r2 = check_dataset_aggregate_attribute("store.store_sales", &["Store Name"], &catalog);
+        assert!(
+            r2.is_none(),
+            "real measure 'store.store_sales' should not be rejected, got {:?}",
+            r2
+        );
+    }
+
+    /// AC-4 / FR-2: column not in catalog at all → fail-open (no rejection).
+    #[test]
+    fn dataset_aggregate_unknown_column_fail_open() {
+        let catalog = attr_agg_catalog();
+        let r = check_dataset_aggregate_attribute(
+            "Completely Unknown Column XYZ",
+            &["Store Name"],
+            &catalog,
+        );
+        assert!(
+            r.is_none(),
+            "unknown column should fail-open (no rejection), got {:?}",
+            r
+        );
+    }
+
+    /// FR-2 conservative: empty group_by → fail-open (no per-entity-attribute shape).
+    #[test]
+    fn dataset_aggregate_empty_group_by_fail_open() {
+        let catalog = attr_agg_catalog();
+        let r = check_dataset_aggregate_attribute(
+            "Store Number of Employees",
+            &[],
+            &catalog,
+        );
+        assert!(
+            r.is_none(),
+            "empty group_by should fail-open (could be intentional global aggregate), got {:?}",
+            r
+        );
+    }
+
+    /// FR-2 conservative: column that matches both a level and a measure → fail-open.
+    #[test]
+    fn dataset_aggregate_ambiguous_fail_open() {
+        // Build a catalog where "Dual Column" appears as both a measure and a level.
+        let ambiguous_catalog = CatalogSnapshot {
+            measures: vec![CatalogMeasure {
+                unique_name: "Dual Column".into(),
+                label: Some("Dual Column".into()),
+                ..Default::default()
+            }],
+            hierarchies: vec![CatalogHierarchy {
+                dimension_unique_name: "Dim".into(),
+                hierarchy_unique_name: "Dim".into(),
+                levels: vec!["Dual Column".into()],
+                level_meta: vec![],
+            }],
+            ..Default::default()
+        };
+        let r = check_dataset_aggregate_attribute("Dual Column", &["Some Group"], &ambiguous_catalog);
+        assert!(
+            r.is_none(),
+            "ambiguous (both measure and level) column should fail-open, got {:?}",
+            r
         );
     }
 }
