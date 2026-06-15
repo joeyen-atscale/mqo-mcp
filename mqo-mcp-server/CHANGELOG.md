@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.27.0 — 2026-06-14
+
+Projection cardinality guard now estimates a level's distinct cardinality from the true `LEVEL_CARDINALITY` persisted at ingest, not the truncated `domain.len()`. The cluster's level cardinality is read during MDSCHEMA ingestion and stored on each catalog column (`cardinality: Option<u64>`); the guard prefers it, falling back to `domain.len()` only when absent (back-compat with old snapshots). Fixes a real under-estimate: a level whose domain is capped at `domain_cap` (~50) but whose true cardinality is far larger (e.g. Sold Calendar Week, 10,436) was wrongly admitted; it now declines `projection_too_large` with the true estimate. Small known levels (e.g. Carrier, 20) still admit; `card == 0`/absent still maps to `cardinality_unknown`. (PRD-mqo-cardinality-from-level-count)
+
 ## v0.26.1 — 2026-06-14
 
 Projection cardinality guard now resolves a dimension level against the catalog the same way `describe_model`'s `has_domain` does — matching on the level's `unique_name` (the form describe_model advertises) in addition to the reconstructed `hierarchy.level` and bare/bracketed `level` field. Previously, a projection whose `level` was the full unique_name (e.g. `ship_mode.[Carrier]`, `customer_demographics.[Gender]`) missed the domain-bearing catalog column and was wrongly declined as `cardinality_unknown`, blocking ALL projections against the live catalog. The guard now reads the member count from `domain.len()` for every level-name form; high-cardinality and no-domain levels still fail-safe-decline. (fixes over-decline of has_domain levels)
