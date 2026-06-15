@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.13.0 — 2026-06-14
+
+Engine-validation gate (PRD-mqo-dax-engine-validation-gate): compile-time validation rejects DAX containing an `/* ungrounded */` marker or an unquoted space-bearing table identifier, naming the offending token, so a malformed-DAX regression fails the build instead of the customer's query. A CI corpus fixture (`tests/projection_gate.rs`) pins the pre-fix malformed DAX as a rejected regression case and confirms 0 false rejections on the measure-query suite. Opt-in `MQO_DAX_ENGINE_CHECK` engine-parse stub logs `engine-check-skipped` when unset.
+
+## v0.12.0 — 2026-06-14
+
+Projection DAX grounding fix (PRD-mqo-projection-dax-grounding): projection dimension levels and `member_level` filter levels now ground to the correct per-hierarchy physical table (`'ship_mode'[Carrier]`) instead of the catalog/database name (`'atscale_catalogs'[Carrier]`); the filter level lookup accepts both the `unique_name` and the bare label, and identifiers with spaces are single-quoted. A genuinely ungroundable level returns a typed `UngroundableLevel` decline rather than emitting `/* ungrounded */` to the engine. Live-verified: the EXPRESS-carriers projection now executes against XMLA and returns the 4 carriers matching the PGWire gold (previously engine 500 "not valid DAX").
+
 ## v0.11.0 — 2026-06-14
 
 Lifted the EmptyMeasures guard for projection MQOs (mqo.is_projection()). The SUMMARIZECOLUMNS path at codegen.rs now emits dimension columns + filters with no measure argument for projections. SQL router emits SELECT DISTINCT. (PRD-mqo-attribute-projection)
