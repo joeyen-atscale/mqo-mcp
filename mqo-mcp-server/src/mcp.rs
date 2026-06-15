@@ -2274,6 +2274,21 @@ fn structured_err(e: &PipelineError) -> Value {
                 )
             }),
         ),
+        PipelineError::DimensionNotMaterialized { missing, requested, report } => (
+            "dimension_not_materialized",
+            json!({
+                "missing": missing,
+                "requested": requested,
+                "detail": format!(
+                    "The engine returned rows missing {missing} of {requested} requested \
+                     dimension column(s). This typically indicates a near-twin level \
+                     (a label shared across ≥2 hierarchies) whose column was silently \
+                     dropped. Retry with an explicit hierarchy-qualified level or a \
+                     different dimension."
+                ),
+                "report": report,
+            }),
+        ),
     };
     let payload = json!({
         "error": {
