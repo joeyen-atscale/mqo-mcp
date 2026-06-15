@@ -183,18 +183,14 @@ fn normalize_label(label: &str) -> String {
 
 /// The "core label" of an attribute: the trailing concept words shared by
 /// near-twins across hierarchies (e.g. "Product Brand Name",
-/// "Store Item Product Brand Name" → "brand name"). Returns `None` for labels
-/// shorter than the core-token window (nothing meaningful to disambiguate).
+/// "Store Item Product Brand Name" → "brand name"; "Customer State Name",
+/// "Store State Name", "Warehouse State Name" → "state name"). "name" is
+/// retained in the bucket key so cross-hierarchy State Name / Brand Name twins
+/// land in the same group. Returns `None` for labels shorter than the
+/// core-token window (nothing meaningful to disambiguate).
 fn core_label(label: &str) -> Option<String> {
     let norm = normalize_label(label);
-    let mut toks: Vec<&str> = norm.split(' ').filter(|t| !t.is_empty()).collect();
-    // FIX 2: drop a trailing "name" token so a human-readable display attribute
-    // (e.g. "Customer State Name") shares a bucket with its code-like sibling
-    // ("Customer State") — that bucket's `canonical_for` then prefers the
-    // *Name* member (see `label_is_name`). Keep a single bare "name" as-is.
-    if toks.len() > 1 && toks.last() == Some(&"name") {
-        toks.pop();
-    }
+    let toks: Vec<&str> = norm.split(' ').filter(|t| !t.is_empty()).collect();
     if toks.len() < NEAR_TWIN_CORE_TOKENS {
         // Too short to carry a hierarchy-role prefix; group on the whole label.
         if toks.is_empty() {
@@ -2761,18 +2757,17 @@ mod disambiguation_tests {
         assert!(!m["triggers"].as_array().unwrap().is_empty());
     }
 
-    // ── FIX 2: *Name* preference for canonical_for ───────────────────────────
+    // ── Name preference for canonical_for ────────────────────────────────────
 
-    /// FIX 2: a `*Name*` display attribute and its code-like sibling co-bucket
-    /// (the trailing "name" token is dropped from the core key), and the
-    /// `*Name*` member wins `canonical_for` even though its hierarchy name is
-    /// LONGER — the Name-preference beats the shortest-hierarchy tiebreak.
+    /// When multiple `*Name*` twins span two hierarchies (same trailing concept),
+    /// the member on the SHORTER hierarchy name wins `canonical_for` via the
+    /// shortest-hierarchy tiebreak (both end in "Name" so label_is_name is equal).
     #[test]
     fn name_member_preferred_over_shorter_hierarchy() {
         let cols = vec![
-            // Code-like sibling on the SHORTER hierarchy name → core "store state".
-            lvl("h.[Store State]", "Store State", "h"),
-            // *Name* display sibling on a LONGER hierarchy name → core "store state".
+            // *Name* on the SHORTER hierarchy → should be canonical.
+            lvl("h.[Store State Name]", "Store State Name", "h"),
+            // *Name* on a LONGER hierarchy name → shorter-hierarchy tiebreak loses.
             lvl(
                 "store_geography_dim.[Store State Name]",
                 "Store State Name",
@@ -2789,14 +2784,15 @@ mod disambiguation_tests {
             .collect();
         assert_eq!(
             canonical,
-            vec!["store_geography_dim.[Store State Name]"],
-            "the *Name* display attribute is canonical, not the code-like sibling on the shorter hierarchy"
+            vec!["h.[Store State Name]"],
+            "the *Name* attribute on the shorter hierarchy is canonical"
         );
     }
 
-    /// FIX 2: the fixture's cross-hierarchy "Customer State" family — code-like
-    /// `Customer State` plus display `Customer State Name` across the customer
-    /// address hierarchies — resolves canonical_for to the `*Name*` member.
+    /// The fixture's cross-hierarchy "Customer State" family produces two groups
+    /// with the concept-grouping fix: a `"customer state"` group (code-like
+    /// siblings) and a `"state name"` group (Name display siblings). Within the
+    /// Name group, the canonical prefers customer_address (shortest hierarchy).
     #[test]
     fn customer_state_name_is_canonical() {
         let cols = vec![
@@ -2822,8 +2818,13 @@ mod disambiguation_tests {
             ),
         ];
         let groups = build_near_twins(&cols);
-        assert_eq!(groups.len(), 1, "one 'customer state' group: {groups:?}");
-        let twins = groups[0]["near_twins"].as_array().unwrap();
+        // Two groups: "customer state" (code-like) and "state name" (Name display).
+        assert_eq!(groups.len(), 2, "two groups after concept-grouping fix: {groups:?}");
+        let state_name_group = groups
+            .iter()
+            .find(|g| g.get("core_label").and_then(|v| v.as_str()) == Some("state name"))
+            .expect("'state name' group present");
+        let twins = state_name_group["near_twins"].as_array().unwrap();
         let canonical: Vec<&str> = twins
             .iter()
             .filter(|t| t.get("canonical_for").is_some())

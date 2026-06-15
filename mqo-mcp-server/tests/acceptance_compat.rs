@@ -668,17 +668,23 @@ fn wire_grounding_model_filtered_describe_yields_level_and_measure_twins() {
         "brand name level twin spans multiple hierarchies"
     );
 
-    // A concrete measure twin: each member carries a `measure_group` prefix and
-    // the group spans ≥2 distinct prefixes.
-    let mt = &measure_groups[0];
-    let members = mt["near_twins"].as_array().unwrap();
-    let prefixes: std::collections::BTreeSet<&str> = members
-        .iter()
-        .filter_map(|m| m.get("measure_group").and_then(Value::as_str))
-        .collect();
+    // At least one measure twin group must carry `measure_group` prefixes and
+    // span ≥2 distinct prefixes (e.g. catalog/store/web variants of one concept).
+    // The footprint guard may trim smaller groups first, so we search across all
+    // surviving groups rather than assuming the first one is multi-prefix.
+    let empty_vec: Vec<Value> = vec![];
+    let multi_prefix_group = measure_groups.iter().find(|g| {
+        let prefixes: std::collections::BTreeSet<&str> = g["near_twins"]
+            .as_array()
+            .unwrap_or(&empty_vec)
+            .iter()
+            .filter_map(|m| m.get("measure_group").and_then(Value::as_str))
+            .collect();
+        prefixes.len() >= 2
+    });
     assert!(
-        prefixes.len() >= 2,
-        "measure twin group must span ≥2 fact-group prefixes: {prefixes:?}"
+        multi_prefix_group.is_some(),
+        "at least one measure twin group must span ≥2 fact-group prefixes; groups: {measure_groups:?}"
     );
 }
 
