@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <ExecuteResponse xmlns="urn:schemas-microsoft-com:xml-analysis">
+      <return>
+        <root xmlns="urn:schemas-microsoft-com:xml-analysis:rowset"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+          <row>
+            <Store_x0020_Name>able</Store_x0020_Name>
+            <Net_x0020_Profit_x0020_Tier>  0- 50</Net_x0020_Profit_x0020_Tier>
+            <Gender>M</Gender>
+          </row>
+          <row>
+            <Store_x0020_Name>bar</Store_x0020_Name>
+            <Net_x0020_Profit_x0020_Tier> 50-100</Net_x0020_Profit_x0020_Tier>
+            <Gender>F</Gender>
+          </row>
+          <row>
+            <Store_x0020_Name>ese</Store_x0020_Name>
+            <Net_x0020_Profit_x0020_Tier> 50 or Less</Net_x0020_Profit_x0020_Tier>
+            <Gender>M</Gender>
+          </row>
+          <row>
+            <Store_x0020_Name>pri</Store_x0020_Name>
+            <Net_x0020_Profit_x0020_Tier>100-150</Net_x0020_Profit_x0020_Tier>
+            <Gender>F</Gender>
+          </row>
+        </root>
+      </return>
+    </ExecuteResponse>
+  </soap:Body>
+</soap:Envelope>
