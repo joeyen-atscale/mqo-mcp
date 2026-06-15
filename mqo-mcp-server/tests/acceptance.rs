@@ -340,9 +340,14 @@ fn ac4_large_extract_mqo_routes_to_sql() {
     }
     let srv = server();
     // Account: cardinality 100000 > 50000 threshold → SQL extract.
+    // The limit must NOT cap the estimate below the threshold, or the router
+    // (correctly) keeps it on DAX — a bounded query returns at most `limit`
+    // rows, so `effective_est = min(est, limit)` drives routing (see
+    // mqo-backend-router/src/lib.rs `effective_est`). Use a limit ≥ the raw
+    // cardinality so the large-extract path is actually exercised.
     let mqo = valid_mqo(
         vec![json!({ "hierarchy": "customer.account", "level": "Account" })],
-        100,
+        100_000,
     );
     let result = call_tool(&srv, "query_multidimensional", json!({ "mqo": mqo }));
     let sc = &result["structuredContent"];
@@ -355,6 +360,36 @@ fn ac4_large_extract_mqo_routes_to_sql() {
     assert!(
         q.contains("\"Account\""),
         "projection has the dim: {q}"
+    );
+}
+
+#[test]
+fn ac4_small_limit_caps_estimate_and_routes_to_dax() {
+    // Sibling guard for the limit-aware routing the test above relies on:
+    // the SAME high-cardinality dimension (Account, 100000) with a SMALL limit
+    // (100) must route to DAX, because the engine returns at most `limit` rows.
+    // This locks in `effective_est = min(est, limit)`; without it, a future
+    // regression that ignores the limit would silently flip ac4 back to SQL.
+    if !fleet_present() {
+        eprintln!("ac4_dax SKIPPED (mock-gated): fleet binaries not found");
+        return;
+    }
+    let srv = server();
+    let mqo = valid_mqo(
+        vec![json!({ "hierarchy": "customer.account", "level": "Account" })],
+        100,
+    );
+    let result = call_tool(&srv, "query_multidimensional", json!({ "mqo": mqo }));
+    let sc = &result["structuredContent"];
+    assert_eq!(
+        sc["backend"],
+        json!("dax"),
+        "limit (100) caps the 100000-row estimate below threshold → DAX: {result}"
+    );
+    let q = sc["compiled_query"].as_str().unwrap();
+    assert!(
+        q.to_uppercase().starts_with("EVALUATE"),
+        "DAX query emitted: {q}"
     );
 }
 
