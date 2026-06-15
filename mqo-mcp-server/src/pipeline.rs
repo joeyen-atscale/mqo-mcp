@@ -155,6 +155,23 @@ pub enum PipelineError {
         /// The queryable cube(s) that contain this dimension.
         candidate_cubes: Vec<String>,
     },
+
+    /// The engine returned rows where one or more requested dimension columns
+    /// are absent — a near-twin level (shared across hierarchies) or a DAX
+    /// result that silently dropped a grouping column. Carrying a report with
+    /// the requested dimensions and the columns that were actually returned.
+    ///
+    /// Classified as `model_path` so the LLM can act on it rather than treating
+    /// it as an opaque infrastructure failure.
+    #[error("dimension_not_materialized: engine result is missing {missing} of {requested} requested dimension column(s)")]
+    DimensionNotMaterialized {
+        /// Number of dimension columns that were dropped.
+        missing: usize,
+        /// Total number of requested dimensions.
+        requested: usize,
+        /// The structured report payload.
+        report: Value,
+    },
 }
 
 // ── Error classification ──────────────────────────────────────────────────────
@@ -199,6 +216,7 @@ pub fn error_class(e: &PipelineError) -> &'static str {
         | PipelineError::ParamRejected { .. }
         | PipelineError::ProjectionTooLarge { .. }
         | PipelineError::NonQueryableDimension { .. }
+        | PipelineError::DimensionNotMaterialized { .. }
         | PipelineError::Invalid(_)
         | PipelineError::NotAnMqo(_)
         | PipelineError::Subprocess { .. } => MODEL_PATH,
@@ -503,6 +521,50 @@ pub fn run<S: std::hash::BuildHasher>(
                     }
                 });
                 return Err(PipelineError::CrossFactIncompatible { report });
+            }
+        }
+    }
+
+    // ── Dimension-completeness guard (PRD-mqo-near-twin-dimension-drop) ──
+    // A dimension column can be silently DROPPED by the DAX engine when the
+    // requested level is a "near-twin" — a label shared across ≥2 hierarchies
+    // (e.g. `Product Category` exists on both `product_dimension` and
+    // `promotion_product_item_product_dimension`). The engine returns
+    // measure-only rows; without this guard the server would pass those rows
+    // through and the model would mislabel the result.
+    //
+    // Detect it by counting NON-measure columns in the first result row.
+    // Measure columns start with `_x005b_` (XMLA-mangled `[Measure Name]`);
+    // every other column is a table-qualified dimension key
+    // (`<table>_x005b_<Level>_x005d_`). If fewer non-measure columns are
+    // returned than requested dimensions, at least one dimension was dropped.
+    //
+    // Live DAX only — mirrors the measure guard's `is_live && backend == "dax"`
+    // gate (fixture engine emits plain keys and never drops columns).
+    if is_live && backend == "dax" && !mqo.dimensions.is_empty() {
+        if let Some(first) = rows.first().and_then(Value::as_object) {
+            let dim_cols = dax_dim_column_count(first);
+            if dim_cols < mqo.dimensions.len() {
+                let missing = mqo.dimensions.len() - dim_cols;
+                let dimension_columns_returned: Vec<&String> =
+                    first.keys().filter(|k| !k.starts_with("_x005b_")).collect();
+                let report = serde_json::json!({
+                    "dimension_not_materialized": {
+                        "reason": "the engine returned rows without all requested dimension \
+                                   columns — a near-twin level (shared across hierarchies) or \
+                                   other catalog-ingest-state-dependent column drop",
+                        "requested_dimensions": mqo.dimensions.iter()
+                            .map(|d| format!("{}.[{}]", d.hierarchy, d.level))
+                            .collect::<Vec<_>>(),
+                        "dimension_columns_returned": dimension_columns_returned,
+                        "compiled_query": compiled_query,
+                    }
+                });
+                return Err(PipelineError::DimensionNotMaterialized {
+                    missing,
+                    requested: mqo.dimensions.len(),
+                    report,
+                });
             }
         }
     }
@@ -1147,9 +1209,17 @@ fn dax_measure_column_count(row: &serde_json::Map<String, Value>) -> usize {
     row.keys().filter(|k| k.starts_with("_x005b_")).count()
 }
 
+/// Count DAX dimension columns in a result row. In a live DAX result, dimension
+/// columns are table-qualified keys that do NOT start with `_x005b_` (the
+/// measure prefix). A silently-dropped dimension (near-twin column drop) is
+/// detected when this count falls below the number of requested dimensions.
+fn dax_dim_column_count(row: &serde_json::Map<String, Value>) -> usize {
+    row.keys().filter(|k| !k.starts_with("_x005b_")).count()
+}
+
 #[cfg(test)]
 mod result_guard_tests {
-    use super::dax_measure_column_count;
+    use super::{dax_measure_column_count, dax_dim_column_count, PipelineError};
     use serde_json::json;
 
     #[test]
@@ -1169,6 +1239,103 @@ mod result_guard_tests {
             "atscale_catalogs_x005b_Net_x0020_Profit_x0020_Tier_x005d_": "300-2000"
         });
         assert_eq!(dax_measure_column_count(row.as_object().unwrap()), 0);
+    }
+
+    // ── Dimension-completeness guard tests (PRD-mqo-near-twin-dimension-drop) ──
+
+    #[test]
+    fn counts_dim_columns_not_measures() {
+        // Healthy row: one measure + one dimension. Only the dimension key should be counted.
+        let row = json!({
+            "_x005b_Total_x0020_Product_x0020_Count_x005d_": 482.0,
+            "product_dimension_x005b_Product_x0020_Category_x005d_": "Books"
+        });
+        assert_eq!(dax_dim_column_count(row.as_object().unwrap()), 1);
+    }
+
+    #[test]
+    fn near_twin_drop_yields_zero_dim_cols() {
+        // Near-twin drop shape (live repro v0.33.0): only the measure column was returned;
+        // Product Category was dropped — the dimension-completeness guard fires on this.
+        let row = json!({
+            "_x005b_Total_x0020_Product_x0020_Count_x005d_": 482.0
+        });
+        assert_eq!(dax_dim_column_count(row.as_object().unwrap()), 0);
+    }
+
+    #[test]
+    fn dim_guard_all_dims_present_passes() {
+        // Simulate DimensionNotMaterialized check: enough dim columns → guard does NOT fire.
+        // Two requested dimensions, two non-measure columns in result.
+        let row = json!({
+            "_x005b_Total_x0020_Product_x0020_Count_x005d_": 100.0,
+            "product_dimension_x005b_Product_x0020_Category_x005d_": "Books",
+            "product_dimension_x005b_Brand_x0020_Name_x005d_": "Acme"
+        });
+        let obj = row.as_object().unwrap();
+        let dim_cols = dax_dim_column_count(obj);
+        let requested = 2usize;
+        // Guard condition: dim_cols < requested → error. Here they are equal → no error.
+        assert!(dim_cols >= requested, "all dims present, guard should not fire");
+    }
+
+    #[test]
+    fn dim_guard_missing_dim_returns_dimension_not_materialized() {
+        // Simulate the guard logic inline: one dimension requested but zero dim columns
+        // returned → the guard should yield DimensionNotMaterialized.
+        use mqo_spec::{Mqo, MeasureRef, LevelSelection};
+        let mqo = Mqo {
+            model: "tpcds".to_string(),
+            measures: vec![MeasureRef { unique_name: "tpcds.total_product_count".to_string() }],
+            dimensions: vec![LevelSelection {
+                hierarchy: "product_dimension".to_string(),
+                level: "Product Category".to_string(),
+            }],
+            filters: vec![],
+            time_intelligence: vec![],
+            order: None,
+            limit: None,
+            non_empty: false,
+            projection: false,
+        };
+        // Only the measure column is present — dimension was dropped (near-twin drop shape).
+        let row = json!({
+            "_x005b_Total_x0020_Product_x0020_Count_x005d_": 482.0
+        });
+        let first = row.as_object().unwrap();
+        let dim_cols = dax_dim_column_count(first);
+        assert!(
+            dim_cols < mqo.dimensions.len(),
+            "dim_cols={dim_cols} should be less than requested={}",
+            mqo.dimensions.len()
+        );
+        // Verify the error variant construction is well-formed.
+        let missing = mqo.dimensions.len() - dim_cols;
+        let dimension_columns_returned: Vec<&String> =
+            first.keys().filter(|k| !k.starts_with("_x005b_")).collect();
+        let report = serde_json::json!({
+            "dimension_not_materialized": {
+                "reason": "the engine returned rows without all requested dimension columns",
+                "requested_dimensions": mqo.dimensions.iter()
+                    .map(|d| format!("{}.[{}]", d.hierarchy, d.level))
+                    .collect::<Vec<_>>(),
+                "dimension_columns_returned": dimension_columns_returned,
+                "compiled_query": "SUMMARIZECOLUMNS('product_dimension'[Product Category], \"Total Product Count\", [Total Product Count])",
+            }
+        });
+        let err = PipelineError::DimensionNotMaterialized {
+            missing,
+            requested: mqo.dimensions.len(),
+            report,
+        };
+        // Verify the error message renders correctly and the fields are populated.
+        let msg = err.to_string();
+        assert!(msg.contains("dimension_not_materialized"), "error message: {msg}");
+        assert!(msg.contains("1 of 1"), "error message should contain counts: {msg}");
+        if let PipelineError::DimensionNotMaterialized { missing, requested, .. } = err {
+            assert_eq!(missing, 1);
+            assert_eq!(requested, 1);
+        }
     }
 }
 
