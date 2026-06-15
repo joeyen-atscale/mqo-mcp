@@ -1821,24 +1821,30 @@ impl Server {
 
         match result {
             Ok(out) => {
-                // Store the result in the typed handle store (size-gating: the
-                // LLM gets a handle + bounded summary, raw rows only when small).
-                // The LIVE execution path above is unchanged — only what happens
-                // to the result changes.
-                // The handle store receives the original (possibly mangled) rows
-                // so that existing dataset_* operations are unaffected (FR-6).
+                // PRD-mqo-handle-canonical-labels (v0.32.0): persist the result
+                // under canonical clean column labels — the same names the response
+                // uses — so handle schema == response == dataset_export (G1/FR-1/FR-3).
+                //
+                // `put_rows_with_canonical_labels` applies `clean_result_rows`
+                // (the shared single function, FR-3) before persisting, so:
+                //   - handle stores "Year", "Revenue" (not raw mangled keys)
+                //   - collision disambiguation is identical to the response (FR-5)
+                //   - already-clean names are a no-op (FR-7/idempotent)
+                //
+                // Back-compat (FR-6): the resolver in `clean_result_rows` remains
+                // available for ops that pass a raw key; however, since the handle
+                // now stores canonical names, well-behaved `dataset_*` callers using
+                // the names from the response need no resolution at all.
                 let handle = self
                     .handle_store
                     .as_ref()
-                    .and_then(|hs| hs.put_rows_with_bound(&out.rows, &out.bound).ok());
+                    .and_then(|hs| hs.put_rows_with_canonical_labels(&out.rows, &out.bound).ok());
 
-                // PRD-mqo-clean-result-labels: clean column keys in the response
-                // rows at the response boundary (FR-1).  Reuses `clean_label`
-                // from handle_ops (FR-2).  The handle store above already received
-                // the original rows, so the dataset_* path is unchanged (FR-6).
+                // Build the clean-row PipelineOutput for the response.  The response
+                // and the handle now share the same canonical column names (FR-3).
                 let clean_rows =
                     crate::handle_ops::clean_result_rows(&out.rows, &out.bound);
-                // Build a response-only PipelineOutput with clean column labels.
+                // Build a response PipelineOutput with canonical clean column labels.
                 let out_clean = crate::pipeline::PipelineOutput {
                     rows: clean_rows,
                     backend: out.backend.clone(),
