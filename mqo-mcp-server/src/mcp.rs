@@ -816,7 +816,7 @@ fn core_tool_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "query_multidimensional",
-            "description": "Run a Multidimensional Query Object (NEVER raw SQL) through bind→route→compile→execute and return bounded result rows plus the compiled query. Read-only by construction: the input is a selection-only object, so no write path exists.\n\n**Large results:** when row_count exceeds the inline threshold the response is handle-first: {handle, row_count, columns, sample, notes}. Work with the handle via dataset_* ops (dataset_aggregate, dataset_filter, dataset_top_n, etc.) or call dataset_export to materialize. Do NOT loop next_page to assemble all rows — next_page is for incremental paging by non-LLM clients.\n\n**Measureless projection (list / which / each member questions):** set `projection: true` with an empty `measures` array to return the DISTINCT members of the projected dimension levels — no measure aggregation. Use this shape for questions like \"list each customer who...\", \"which products are...\", \"each store that...\".\n\n**Cross-dimension / fact-resident filters on projections:** the `filters` array in a projection MAY contain filters on levels that are NOT in the `dimensions` list — including levels reachable via a fact table (e.g. Store Name, Sold Calendar Year). The engine compiles this as a SUMMARIZECOLUMNS auto-exist (semijoin): the result is the set of projected members that have at least one qualifying fact row matching the filter. No anchor measure is needed — and adding a fabricated count measure is WRONG for this shape (it changes grain and adds an unwanted column).\n\nExample — first name and gender of each customer who shopped at store 'ese' in year 2001:\n{\"projection\": true, \"measures\": [], \"dimensions\": [{\"hierarchy\": \"customer_dimension\", \"level\": \"Customer First Name\"}, {\"hierarchy\": \"customer_demographics\", \"level\": \"Gender\"}], \"filters\": [{\"type\": \"member_level\", \"hierarchy\": \"store_dimension\", \"level\": \"store_dimension.[Store Name]\", \"members\": [\"ese\"]}, {\"type\": \"member_level\", \"hierarchy\": \"sold_date_dimensions\", \"level\": \"sold_date_dimensions.[Sold Calendar Year]\", \"members\": [\"2001\"]}]}\n\n**When to use measures instead:** if the question asks \"how much / how many / total / average\" of a measure (sum, avg, count), use the `measures` array with dimension grouping — do NOT use `projection: true` for aggregation questions.\n\nSupported filter types:\n- MemberLevel: {type:\"MemberLevel\", level_unique_name, members:[...], exclude:true|false} — filter a level to explicit members; exclude:true inverts to NOT-IN.\n- Member: {type:\"Member\", level_unique_name, members:[...]} — domain-scan grounded member filter (equivalent to MemberLevel without the exclude flag).\n- Group: {type:\"Group\", op:\"and\"|\"or\", filters:[...]} — combine two or more filters; up to two levels of nesting supported.\n- Range: {type:\"Range\", level_unique_name, lo, hi} — inclusive bounds filter; ISO-date strings accepted for date levels (full timezone support coming).",
+            "description": "Run a Multidimensional Query Object (NEVER raw SQL) through bind→route→compile→execute and return bounded result rows plus the compiled query. Read-only by construction: the input is a selection-only object, so no write path exists.\n\n**Large results:** when row_count exceeds the inline threshold the response is handle-first: {handle, row_count, columns, sample, notes}. Work with the handle via dataset_* ops (dataset_aggregate, dataset_filter, dataset_top_n, etc.) or call dataset_export to materialize. Do NOT loop next_page to assemble all rows — next_page is for incremental paging by non-LLM clients.\n\n**Measureless projection (list / which / each member questions):** set `projection: true` with an empty `measures` array to return the DISTINCT members of the projected dimension levels — no measure aggregation. Use this shape for questions like \"list each customer who...\", \"which products are...\", \"each store that...\".\n\n**Cross-dimension / fact-resident filters on projections:** the `filters` array in a projection MAY contain filters on levels that are NOT in the `dimensions` list — including levels reachable via a fact table (e.g. Store Name, Sold Calendar Year). The engine compiles this as a SUMMARIZECOLUMNS auto-exist (semijoin): the result is the set of projected members that have at least one qualifying fact row matching the filter. No anchor measure is needed — and adding a fabricated count measure is WRONG for this shape (it changes grain and adds an unwanted column).\n\nExample — first name and gender of each customer who shopped at store 'ese' in year 2001:\n{\"projection\": true, \"measures\": [], \"dimensions\": [{\"hierarchy\": \"customer_dimension\", \"level\": \"Customer First Name\"}, {\"hierarchy\": \"customer_demographics\", \"level\": \"Gender\"}], \"filters\": [{\"type\": \"member_level\", \"hierarchy\": \"store_dimension\", \"level\": \"store_dimension.[Store Name]\", \"members\": [\"ese\"]}, {\"type\": \"member_level\", \"hierarchy\": \"sold_date_dimensions\", \"level\": \"sold_date_dimensions.[Sold Calendar Year]\", \"members\": [\"2001\"]}]}\n\n**When to use measures instead:** if the question asks \"how much / how many / total / average\" of a measure (sum, avg, count), use the `measures` array with dimension grouping — do NOT use `projection: true` for aggregation questions.\n\nSupported filter types:\n- MemberLevel: {type:\"MemberLevel\", level_unique_name, members:[...], exclude:true|false} — filter a level to explicit members; exclude:true inverts to NOT-IN.\n- Member: {type:\"Member\", level_unique_name, members:[...]} — domain-scan grounded member filter (equivalent to MemberLevel without the exclude flag).\n- Group: {type:\"Group\", op:\"and\"|\"or\", filters:[...]} — combine two or more filters; up to two levels of nesting supported.\n- Range: {type:\"Range\", level_unique_name, lo, hi} — inclusive bounds filter; ISO-date strings accepted for date levels (full timezone support coming).\n\n**Per-entity numeric attributes (projectable quantities):** when `describe_model` shows a level entry with `projectable_per_member_quantity: true`, that level holds the per-member value already stored in the semantic layer (e.g. employee count per store, floor space per warehouse). To answer \"how many employees work at each store\", project that attribute — `projection: true, measures: [], dimensions: [Store Name, Store Number of Employees]`. Do NOT count rows or sum the level; the answer is the stored attribute value, not an aggregation. Example: {\"projection\": true, \"measures\": [], \"dimensions\": [{\"hierarchy\": \"store_dimension\", \"level\": \"Store Name\"}, {\"hierarchy\": \"store_dimension\", \"level\": \"Store Number of Employees\"}]}. Contrast: a member-count question (\"how many products are in each category\") uses a count measure like `total_product_count` in the `measures` array — because that count is computed by aggregating fact rows, not stored as a level attribute.",
             "inputSchema": mqo_schema,
             "annotations": { "readOnlyHint": true }
         }),
@@ -1381,6 +1381,14 @@ impl Server {
                     .get("value_type")
                     .and_then(Value::as_str)
                     .map(str::to_string);
+                // FR-1 (PRD-mqo-project-not-count-grounding): numeric attribute levels
+                // (kind=level + numeric value_type) are projectable per-member quantities —
+                // the value is already stored as an attribute of the entity; aggregating it
+                // (sum or count) is wrong. Mark them explicitly so the LLM projects instead.
+                let is_numeric_vt = value_type
+                    .as_deref()
+                    .map(|vt| matches!(vt, "integer" | "decimal" | "float" | "number"))
+                    .unwrap_or(false);
                 let mut entry = json!({
                     "unique_name": un,
                     "label": label,
@@ -1389,6 +1397,9 @@ impl Server {
                     "related_attributes": related_attributes,
                     "filterable_cross_dimension": true
                 });
+                if is_numeric_vt {
+                    entry["projectable_per_member_quantity"] = json!(true);
+                }
                 if let Some(vt) = value_type {
                     entry["value_type"] = json!(vt);
                 }
@@ -3676,5 +3687,74 @@ mod hierarchy_levels_value_type_tests {
                 );
             }
         }
+    }
+
+    // ── FR-1 (PRD-mqo-project-not-count-grounding) ────────────────────────────
+
+    /// FR-1: numeric attribute levels (value_type=integer/decimal/float/number) must
+    /// carry `projectable_per_member_quantity: true` in hierarchy_levels entries.
+    /// String levels must NOT carry this flag.
+    #[test]
+    fn numeric_level_carries_projectable_per_member_quantity() {
+        let srv = test_server_with_integer_level();
+        let resp = srv.describe_model(&json!({"model": "test_model"}));
+        let hl = resp
+            .get("hierarchy_levels")
+            .and_then(Value::as_object)
+            .expect("hierarchy_levels must be an object");
+        let store_levels = hl
+            .get("store_dimension")
+            .and_then(Value::as_array)
+            .expect("store_dimension must be in hierarchy_levels");
+
+        // Numeric level "Store Number of Employees" (value_type:integer) MUST have the flag.
+        let emp_entry = store_levels
+            .iter()
+            .find(|l| l.get("label").and_then(Value::as_str) == Some("Store Number of Employees"))
+            .expect("Store Number of Employees must appear in hierarchy_levels");
+        assert_eq!(
+            emp_entry.get("projectable_per_member_quantity").and_then(Value::as_bool),
+            Some(true),
+            "integer-valued level must carry projectable_per_member_quantity:true: {emp_entry}"
+        );
+
+        // String level "Store Name" (value_type:string) must NOT have the flag.
+        let name_entry = store_levels
+            .iter()
+            .find(|l| l.get("label").and_then(Value::as_str) == Some("Store Name"))
+            .expect("Store Name must appear in hierarchy_levels");
+        assert!(
+            name_entry.get("projectable_per_member_quantity").is_none(),
+            "string-valued level must NOT carry projectable_per_member_quantity: {name_entry}"
+        );
+    }
+
+    /// FR-2: the query_multidimensional tool description must mention the
+    /// per-entity numeric attribute grounding terms.
+    #[test]
+    fn query_multidimensional_describes_per_entity_numeric_attribute_projection() {
+        let tools = tool_descriptors();
+        let tools_arr = tools.as_array().expect("tool_descriptors must be an array");
+        let qmd = tools_arr
+            .iter()
+            .find(|t| t.get("name").and_then(Value::as_str) == Some("query_multidimensional"))
+            .expect("query_multidimensional tool must be present");
+        let desc = qmd
+            .get("description")
+            .and_then(Value::as_str)
+            .expect("query_multidimensional must have a description string");
+
+        assert!(
+            desc.contains("projectable_per_member_quantity"),
+            "tool description must mention projectable_per_member_quantity: {desc}"
+        );
+        assert!(
+            desc.contains("count rows"),
+            "tool description must warn against counting rows: {desc}"
+        );
+        assert!(
+            desc.contains("count measure"),
+            "tool description must contrast genuine count measures: {desc}"
+        );
     }
 }

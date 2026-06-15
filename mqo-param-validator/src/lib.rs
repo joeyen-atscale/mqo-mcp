@@ -1893,7 +1893,7 @@ fn check_filter_level(
 /// Check whether a `dataset_aggregate` call aggregates a column that is a
 /// **dimension level** (`kind=level`) rather than a measure.
 ///
-/// # Conservative predicate (FR-2)
+/// # Conservative predicate (FR-2 / FR-3 — PRD-mqo-project-not-count-grounding)
 ///
 /// Fires only when ALL hold:
 ///   * `group_by` is non-empty (per-entity-attribute shape — FR-4).
@@ -1901,6 +1901,13 @@ fn check_filter_level(
 ///     the catalog hierarchies AND matches NO `kind=measure` entry.
 ///   * Resolution is case-insensitive label match (same `normalize()` used
 ///     everywhere in this crate).
+///
+/// Covers ALL aggregation types including `sum`, `avg`, `count`, and
+/// `count_distinct` — a numeric attribute level (e.g. "Store Number of
+/// Employees") must never be counted or summed; the correct shape is a
+/// measureless projection of the attribute.  A genuine member-count measure
+/// (e.g. `total_product_count`, `Catalog Customer Count`) is a `kind=measure`
+/// and is therefore NOT rejected by this guard (FR-4 guardrail).
 ///
 /// Does NOT fire (fail-open) when:
 ///   * `group_by` is empty (could be a global aggregate the user asked for).
@@ -1965,11 +1972,15 @@ pub fn check_dataset_aggregate_attribute(
     }
 
     // Column unambiguously resolves to a dimension level with no measure match.
+    // Covers sum, avg, count, count_distinct — all are wrong for a stored per-entity
+    // attribute.  The correct shape is a measureless projection (projection:true,
+    // measures:[], dimensions:[entity, numeric-attribute]).
     let reason = format!(
         "column [{measure_col}] is a dimension attribute (not an additive measure); \
-         aggregating it with sum/avg produces a meaningless rolled-up value. \
-         To get the per-entity attribute value, use projection or direct selection \
-         instead of dataset_aggregate."
+         aggregating it (sum/avg/count/count_distinct) produces a meaningless value. \
+         For a numeric attribute level, the per-entity value is already stored — \
+         project this attribute instead: projection:true, measures:[], \
+         dimensions:[entity-level, {measure_col}]."
     );
 
     Some(ParamRejection::new(
@@ -2263,6 +2274,94 @@ mod tests {
             r.is_none(),
             "ambiguous (both measure and level) column should fail-open, got {:?}",
             r
+        );
+    }
+
+    // ── FR-3 (PRD-mqo-project-not-count-grounding): count-evasion nudge tests ──
+
+    /// FR-3 / AC-3: `count` applied to a numeric attribute level must be rejected —
+    /// the correct shape is a measureless projection of the level, not a count.
+    /// Guards against the model evading RULE 5's sum-block by switching to count.
+    #[test]
+    fn count_on_numeric_level_rejected() {
+        // Catalog: "Store Number of Employees" is a dimension level (kind=level),
+        // NOT a measure.  Applying count to it should be rejected.
+        let catalog = attr_agg_catalog();
+        let r = check_dataset_aggregate_attribute(
+            "Store Number of Employees",
+            &["Store Name"],
+            &catalog,
+        );
+        assert!(
+            r.is_some(),
+            "count on a numeric kind=level column must be rejected (same predicate as sum/avg), got None"
+        );
+        let rejection = r.unwrap();
+        assert!(
+            matches!(rejection.reason, RejectReason::AttributeAggregation { .. }),
+            "expected AttributeAggregation reason for count on level: {:?}",
+            rejection.reason
+        );
+        if let RejectReason::AttributeAggregation { ref reason, .. } = rejection.reason {
+            assert!(
+                reason.contains("project"),
+                "rejection reason must suggest projection: {reason}"
+            );
+        }
+    }
+
+    /// FR-4 guardrail: a genuine count measure (`total_product_count`) must NOT be
+    /// rejected — it is a `kind=measure`, not a `kind=level`.  Member-count questions
+    /// ("how many products per category") remain measure-shaped; this nudge does not
+    /// mis-steer them.
+    #[test]
+    fn count_measure_query_not_rejected() {
+        // Catalog with a genuine count measure and a product level.
+        let catalog = CatalogSnapshot {
+            measures: vec![
+                CatalogMeasure {
+                    unique_name: "total_product_count".into(),
+                    label: Some("Total Product Count".into()),
+                    ..Default::default()
+                },
+                CatalogMeasure {
+                    unique_name: "Total Product Count".into(),
+                    label: Some("Total Product Count".into()),
+                    ..Default::default()
+                },
+            ],
+            hierarchies: vec![CatalogHierarchy {
+                dimension_unique_name: "product_dimension".into(),
+                hierarchy_unique_name: "product_dimension".into(),
+                levels: vec!["Product Category".into(), "Product Name".into()],
+                level_meta: vec![],
+            }],
+            ..Default::default()
+        };
+
+        // Applying count via the measure column "total_product_count" (kind=measure) must
+        // NOT be rejected — it's a legitimate member-count measure.
+        let r1 = check_dataset_aggregate_attribute(
+            "total_product_count",
+            &["Product Category"],
+            &catalog,
+        );
+        assert!(
+            r1.is_none(),
+            "genuine count measure 'total_product_count' must not be rejected, got {:?}",
+            r1
+        );
+
+        // Same via label form.
+        let r2 = check_dataset_aggregate_attribute(
+            "Total Product Count",
+            &["Product Category"],
+            &catalog,
+        );
+        assert!(
+            r2.is_none(),
+            "genuine count measure 'Total Product Count' (label) must not be rejected, got {:?}",
+            r2
         );
     }
 }
