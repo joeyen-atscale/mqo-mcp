@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.28.0 — 2026-06-14
+
+`query_multidimensional` now returns clean semantic column labels instead of raw DAX-mangled keys. Previously, columns like `product_dimension_x005b_Product_x0020_Category_x005d_` and `_x005b_Total_x0020_Product_x0020_Count_x005d_` were returned verbatim, causing 5/20 tpcds_sql_derived eval cases to fail on label matching alone despite correct row values. Fix: reuse the existing `clean_label` decoder (handle_ops.rs) at the `query_multidimensional` response boundary (FR-2: one decoder, not two). Prefer the catalog `label` from the bound when available (OQ-3), fall back to decoded key. Disambiguate collisions deterministically with the hierarchy-qualified prefix (FR-4). Dataset handle path (`dataset_*`) is unchanged — the handle store still receives raw rows so existing handle-op behavior is unaffected (FR-6). (PRD-mqo-clean-result-labels)
+
 ## v0.27.0 — 2026-06-14
 
 Projection cardinality guard now estimates a level's distinct cardinality from the true `LEVEL_CARDINALITY` persisted at ingest, not the truncated `domain.len()`. The cluster's level cardinality is read during MDSCHEMA ingestion and stored on each catalog column (`cardinality: Option<u64>`); the guard prefers it, falling back to `domain.len()` only when absent (back-compat with old snapshots). Fixes a real under-estimate: a level whose domain is capped at `domain_cap` (~50) but whose true cardinality is far larger (e.g. Sold Calendar Week, 10,436) was wrongly admitted; it now declines `projection_too_large` with the true estimate. Small known levels (e.g. Carrier, 20) still admit; `card == 0`/absent still maps to `cardinality_unknown`. (PRD-mqo-cardinality-from-level-count)
