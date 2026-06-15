@@ -9,8 +9,10 @@
 //!   3  — one or more references are ambiguous, or a Member filter member matches
 //!         multiple levels; stdout is `{"ambiguous":[...]}` or `{"member_ambiguous":[...]}`
 //!   4  — one or more references were not found, or a Member filter member is not
-//!         in the domain of any enumerated level; stdout is `{"not_found":[...]}` or
-//!         `{"member_unbound":[...]}`
+//!         in the domain of any enumerated level, or a MemberLevel filter is on a
+//!         near-twin hierarchy that cannot co-resolve with the projected dimension;
+//!         stdout is `{"not_found":[...]}`, `{"member_unbound":[...]}`, or
+//!         `{"member_unbound_cross_hierarchy":[...]}`
 //!   5  — one or more measure×dimension pairs are cross-fact incompatible; stdout is `{"incompatible":[...]}`
 //!   6  — a multi-fact MQO requests a date level not conformed across the referenced facts; stdout is `{"date_role_incompatible":[...]}`
 //!   2  — I/O error, bad arguments, or malformed --enriched-catalog file
@@ -122,6 +124,11 @@ fn main() {
             let out = serde_json::json!({ "member_ambiguous": errors });
             println!("{}", serde_json::to_string_pretty(&out).expect("serialize"));
             process::exit(3);
+        }
+        binder::BindResult::MemberUnboundCrossHierarchy(errors) => {
+            let out = serde_json::json!({ "member_unbound_cross_hierarchy": errors });
+            println!("{}", serde_json::to_string_pretty(&out).expect("serialize"));
+            process::exit(4);
         }
     }
 }
