@@ -80,6 +80,21 @@ struct Args {
     #[arg(long, default_value_t = DEFAULT_ROW_THRESHOLD)]
     row_threshold: u64,
 
+    /// Per-handle **materialization budget**: the maximum number of rows the
+    /// server fetches and persists into a handle (PRD-mqo-handle-full-
+    /// materialization). The persisted handle — and every `dataset_*` op /
+    /// `dataset_export` over it — holds the full result up to this budget,
+    /// instead of the old hard-coded 1000-row clamp.
+    ///
+    /// This is decoupled from the inline-sample bound (`--inline-threshold`):
+    /// raising it does NOT enlarge what `query_multidimensional` puts in the
+    /// LLM context. When the real result exceeds the budget, the response
+    /// carries a typed `result_too_large` over-budget signal (never a silent
+    /// clamp presented as complete). Clamped to 1..=200000 (the upstream PGWire
+    /// ceiling). Set to 1000 to reproduce the pre-fix behavior exactly.
+    #[arg(long, default_value_t = mqo_mcp_server::DEFAULT_MAX_RESULT_ROWS)]
+    max_result_rows: usize,
+
     /// Live-mode only: at startup, probe the cluster for each dimension level's
     /// enumerated member domain (one bounded query per level) and layer
     /// value_type/domain onto the in-memory catalog — the live source for the
@@ -684,6 +699,23 @@ fn build_engine(args: &Args) -> ServerEngine {
         eprintln!("mqo-mcp-server: xmla: {xmla_url}");
     }
 
+    // Clamp the materialization budget to a sane, engine-deliverable range:
+    // never 0 (would persist empty handles), never above the upstream PGWire
+    // ceiling (NFR-1 — the bridge must not promise more than the engine can
+    // deliver). A clamp (not a hard error) keeps startup robust; the effective
+    // value is logged so the operator sees any adjustment.
+    let max_result_rows = args
+        .max_result_rows
+        .clamp(1, mqo_mcp_server::MAX_RESULT_ROWS_CEILING);
+    if max_result_rows != args.max_result_rows {
+        eprintln!(
+            "mqo-mcp-server: --max-result-rows {} out of range; clamped to {} \
+             (1..={})",
+            args.max_result_rows, max_result_rows, mqo_mcp_server::MAX_RESULT_ROWS_CEILING
+        );
+    }
+    eprintln!("mqo-mcp-server: materialization budget: max_result_rows={max_result_rows}");
+
     let config = EndpointConfig {
         pgwire_host,
         pgwire_port,
@@ -691,6 +723,7 @@ fn build_engine(args: &Args) -> ServerEngine {
         oidc,
         pg_user,
         pg_pass,
+        max_result_rows,
     };
 
     let executor = LiveExecutor::new(config);

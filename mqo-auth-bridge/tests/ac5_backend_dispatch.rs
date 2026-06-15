@@ -82,6 +82,7 @@ async fn make_executor_with_token_stub(token_uri: String) -> (LiveExecutor, Arc<
         },
         pg_user: None,
         pg_pass: None,
+        max_result_rows: mqo_auth_bridge::DEFAULT_MAX_RESULT_ROWS,
     };
     let fake = Arc::new(FakeRowSource {
         calls: Mutex::new(vec![]),

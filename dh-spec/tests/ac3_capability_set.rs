@@ -1,15 +1,16 @@
-//! AC3: Capability enumerates exactly the nine ops named in the PRD;
-//! a test asserts the set.
+//! AC3: Capability enumerates exactly the advertised ops; a test asserts the
+//! set. The original PRD named nine ops; later PRDs added `Chart` and `BiAsset`
+//! (11 total). The set is asserted by name below so additions are explicit.
 
 use dh_spec::{Capability, ALL_CAPABILITIES};
 use std::collections::HashSet;
 
 #[test]
-fn ac3_exactly_nine_capabilities() {
+fn ac3_exactly_eleven_capabilities() {
     assert_eq!(
         ALL_CAPABILITIES.len(),
-        9,
-        "Capability must have exactly 9 variants"
+        11,
+        "Capability must have exactly 11 variants (9 original + Chart + BiAsset)"
     );
 }
 
@@ -27,18 +28,20 @@ fn ac3_all_named_ops_present() {
             Capability::Drill => "Drill",
             Capability::Describe => "Describe",
             Capability::Export => "Export",
+            Capability::Chart => "Chart",
+            Capability::BiAsset => "BiAsset",
         })
         .collect();
 
     let expected: HashSet<&str> = [
         "Aggregate", "Filter", "Sort", "TopN", "Pivot",
-        "Compare", "Drill", "Describe", "Export",
+        "Compare", "Drill", "Describe", "Export", "Chart", "BiAsset",
     ]
     .iter()
     .copied()
     .collect();
 
-    assert_eq!(caps, expected, "ALL_CAPABILITIES must match the PRD-specified nine ops exactly");
+    assert_eq!(caps, expected, "ALL_CAPABILITIES must match the full advertised capability set");
 }
 
 #[test]

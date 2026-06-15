@@ -40,7 +40,7 @@ pub mod routing;
 // Re-export bridge types used by tests and callers.
 pub use mqo_auth_bridge::{
     Backend, EndpointConfig, Engine, EngineError, EngineResult, FixtureEngine, LiveExecutor,
-    OidcConfig, RowSource,
+    OidcConfig, RowSource, DEFAULT_MAX_RESULT_ROWS, MAX_RESULT_ROWS_CEILING,
 };
 
 pub use handle_ops::{

@@ -630,6 +630,17 @@ fn pipeline_err(e: &PipelineError) -> Value {
         PipelineError::XmlaCoordsNotFound { model } => {
             ("xmla_coords_not_found", json!(model))
         }
+        PipelineError::ProjectionTooLarge { level, estimate, cap } => (
+            "projection_too_large",
+            json!({ "level": level, "estimate": estimate, "cap": cap }),
+        ),
+        PipelineError::NonQueryableDimension { model, candidate_cubes } => (
+            "non_queryable_dimension",
+            json!({ "model": model, "candidate_cubes": candidate_cubes }),
+        ),
+        PipelineError::DimensionNotMaterialized { report, .. } => {
+            ("dimension_not_materialized", report.clone())
+        }
     };
     structured_err(code, detail)
 }

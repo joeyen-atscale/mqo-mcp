@@ -265,6 +265,12 @@ pub struct PipelineOutput {
     /// Filters from the MQO that were absent from the compiled query.
     /// Always present (empty when the MQO had no filters or all applied).
     pub filters_dropped: Vec<Value>,
+    /// `true` when the engine's real result EXCEEDED the materialization budget
+    /// and `rows` was therefore truncated to it. The response layer turns this
+    /// into a typed `result_too_large` over-budget signal — the persisted handle
+    /// and inline rows are an incomplete prefix, never the full answer
+    /// (PRD-mqo-handle-full-materialization, FR-3).
+    pub row_cap_tripped: bool,
 }
 
 /// A scratch directory whose temp files are cleaned up on drop.
@@ -482,7 +488,7 @@ pub fn run<S: std::hash::BuildHasher>(
     };
 
     // ── Execute ──────────────────────────────────────────────────────────
-    let EngineResult { rows, .. } = match server_engine {
+    let EngineResult { rows, row_cap_tripped } = match server_engine {
         crate::mcp::ServerEngine::Fixture => mqo_auth_bridge::Engine::execute(
             &FixtureEngine::with_bound(bound_value.clone()),
             &compiled_query,
@@ -590,6 +596,7 @@ pub fn run<S: std::hash::BuildHasher>(
         bound: bound_value,
         filters_applied,
         filters_dropped,
+        row_cap_tripped,
     })
 }
 

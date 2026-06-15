@@ -634,6 +634,7 @@ fn new_ac2_live_mode_routes_through_live_executor() {
         oidc,
         pg_user: None,
         pg_pass: None,
+        max_result_rows: mqo_mcp_server::DEFAULT_MAX_RESULT_ROWS,
     };
     let executor = LiveExecutor::with_row_source(config, Arc::new(FakeRowSource));
     let srv = Server {
@@ -760,6 +761,7 @@ fn new_ac4_engine_error_surfaces_as_structured_engine_error() {
         oidc,
         pg_user: None,
         pg_pass: None,
+        max_result_rows: mqo_mcp_server::DEFAULT_MAX_RESULT_ROWS,
     };
     let executor = LiveExecutor::with_row_source(config, Arc::new(AlwaysFailRowSource));
     let srv = Server {
@@ -1871,6 +1873,7 @@ fn live_dax_parity_total_store_sales() {
         oidc,
         pg_user: None,
         pg_pass: None,
+        max_result_rows: mqo_mcp_server::DEFAULT_MAX_RESULT_ROWS,
     };
 
     // Real wire executor (no fake): this is the live path.
