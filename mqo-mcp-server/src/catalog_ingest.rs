@@ -20,7 +20,7 @@
 //! We map `snake(DIMENSION caption) == catalog hierarchy` and
 //! `LEVEL_NAME == catalog level label`; levels that don't map are counted + skipped.
 
-use mqo_auth_bridge::LiveExecutor;
+use mqo_auth_bridge::{EngineError, LiveExecutor};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::time::Instant;
@@ -32,6 +32,9 @@ pub struct IngestConfig {
     pub domain_cap: usize,
     /// Max number of `MDSCHEMA_MEMBERS` fetches (bounds startup wall-time).
     pub max_levels: usize,
+    /// Max number of `MDSCHEMA_MEMBERS` Discover requests in flight simultaneously.
+    /// Default 16. Setting to 1 reproduces the old serial path exactly (FR-5).
+    pub concurrency: usize,
 }
 
 /// Outcome counts for the startup summary (FR-4).
@@ -179,6 +182,46 @@ fn is_semi_additive_aggregator(agg: i64) -> bool {
     matches!(agg, 10 | 11 | 12 | 13)
 }
 
+/// Reduce a batch of per-level Discover results into the `domains` map.
+///
+/// Called from `ingest_live_metadata` after `discover_members_batch`. Extracted
+/// so unit tests can exercise the reduction logic without a live executor.
+/// Per-level errors increment `errored` and are skipped (FR-4, fail-open).
+fn reduce_batch_results(
+    results: Vec<((String, String), Result<Vec<BTreeMap<String, String>>, EngineError>)>,
+    level_meta: &BTreeMap<(String, String), (&'static str, String, usize)>,
+    domains: &mut BTreeMap<(String, String), Vec<String>>,
+    summary: &mut IngestSummary,
+) {
+    for (key, result) in results {
+        let level_vt = level_meta
+            .get(&key)
+            .map(|(vt, _, _)| *vt)
+            .unwrap_or("string");
+        match result {
+            Ok(rows) => {
+                let dom: Vec<String> = rows
+                    .iter()
+                    .filter_map(|r| {
+                        let caption = r.get("MEMBER_CAPTION")?.as_str();
+                        if caption == "__NULL__" || caption == "(All)" {
+                            return None;
+                        }
+                        let key_val = r.get("MEMBER_KEY").map(String::as_str);
+                        Some(select_member_value(caption, key_val, level_vt))
+                    })
+                    .filter(|m| m != "__NULL__" && m != "(All)")
+                    .collect();
+                if !dom.is_empty() {
+                    domains.insert(key, dom);
+                    summary.domains_captured += 1;
+                }
+            }
+            Err(_) => summary.errored += 1,
+        }
+    }
+}
+
 /// Probe the live cluster via MDSCHEMA and layer `semi_additive` / `value_type` /
 /// `domain` onto `catalog`'s columns in place. Fail-open: a failed Discover is
 /// counted and skipped, never propagated.
@@ -280,7 +323,9 @@ pub fn ingest_live_metadata(
         })
         .unwrap_or_default();
 
-    let mut fetches = 0usize;
+    // Collect levels to fetch (applying over-cap filter and max_levels cap).
+    // Each entry: (catalog key, level_unique_name).
+    let mut to_fetch: Vec<((String, String), String)> = Vec::new();
     for key in &catalog_levels {
         let Some((_, lun, card)) = level_meta.get(key) else { continue };
         if *card == 0 || *card > cfg.domain_cap {
@@ -289,37 +334,20 @@ pub fn ingest_live_metadata(
             }
             continue;
         }
-        if fetches >= cfg.max_levels {
+        if to_fetch.len() >= cfg.max_levels {
             break;
         }
-        fetches += 1;
-        // value_type from level_meta drives normalization (FR-4: must not use
-        // regex on the value itself — look up by the level's LEVEL_DBTYPE).
-        let level_vt = level_meta.get(key).map(|(vt, _, _)| *vt).unwrap_or("string");
-        match ex.discover_mdschema("MDSCHEMA_MEMBERS", xmla_catalog, cube, Some(lun)) {
-            Ok(rows) => {
-                // FR-1/FR-4: for decimal levels, prefer MEMBER_KEY (the engine-
-                // comparable form) over MEMBER_CAPTION (the display form).
-                // For all other value_types the caption is used unchanged (FR-3).
-                let dom: Vec<String> = rows
-                    .iter()
-                    .filter_map(|r| {
-                        let caption = r.get("MEMBER_CAPTION")?.as_str();
-                        if caption == "__NULL__" || caption == "(All)" {
-                            return None;
-                        }
-                        let key_val = r.get("MEMBER_KEY").map(String::as_str);
-                        Some(select_member_value(caption, key_val, level_vt))
-                    })
-                    .filter(|m| m != "__NULL__" && m != "(All)")
-                    .collect();
-                if !dom.is_empty() {
-                    domains.insert(key.clone(), dom);
-                    summary.domains_captured += 1;
-                }
-            }
-            Err(_) => summary.errored += 1,
+        to_fetch.push((key.clone(), lun.clone()));
+    }
+
+    // Parallel fetch: one token, bounded concurrency (FR-1/FR-2).
+    // Token is fetched once inside discover_members_batch (NFR-1).
+    match ex.discover_members_batch(&to_fetch, xmla_catalog, cube, cfg.concurrency) {
+        Ok(results) => {
+            reduce_batch_results(results, &level_meta, &mut domains, &mut summary);
         }
+        // Token fetch failed (the only error that aborts the whole batch).
+        Err(_) => summary.errored += 1,
     }
 
     // ── 4. Merge onto catalog columns ─────────────────────────────────────
@@ -493,5 +521,96 @@ mod tests {
         assert!(!is_semi_additive_aggregator(9)); // AverageOfChildren (AtScale artifact)
         assert!(!is_semi_additive_aggregator(1)); // SUM
         assert!(!is_semi_additive_aggregator(5)); // AVG
+    }
+
+    // ── AC-4: one failing level → error counted, others captured ─────────────
+
+    fn make_row(caption: &str, key: Option<&str>) -> std::collections::BTreeMap<String, String> {
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("MEMBER_CAPTION".into(), caption.into());
+        if let Some(k) = key {
+            m.insert("MEMBER_KEY".into(), k.into());
+        }
+        m
+    }
+
+    fn make_level_meta(key: (&str, &str), card: usize) -> BTreeMap<(String, String), (&'static str, String, usize)> {
+        let mut m = BTreeMap::new();
+        m.insert(
+            (key.0.into(), key.1.into()),
+            ("string", format!("[{}].[{}].[{}]", key.0, key.0, key.1), card),
+        );
+        m
+    }
+
+    /// AC-4: one level errors → errored count is 1, other levels still captured.
+    #[test]
+    fn ac4_one_failing_level_counted_others_captured() {
+        use super::EngineError;
+
+        let key_ok = (("store_dimension".to_string(), "Store State".to_string()));
+        let key_fail = (("ship_mode".to_string(), "Mode".to_string()));
+
+        let mut level_meta: BTreeMap<(String, String), (&'static str, String, usize)> = BTreeMap::new();
+        level_meta.insert(key_ok.clone(), ("string", "[Store].[Store State]".into(), 50));
+        level_meta.insert(key_fail.clone(), ("string", "[Ship].[Mode]".into(), 10));
+
+        let results: Vec<((String, String), Result<_, EngineError>)> = vec![
+            (key_ok.clone(), Ok(vec![make_row("CA", None), make_row("WA", None)])),
+            (key_fail.clone(), Err(EngineError::QueryError { reason: "simulated failure".into() })),
+        ];
+
+        let mut domains: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+        let mut summary = IngestSummary::default();
+
+        reduce_batch_results(results, &level_meta, &mut domains, &mut summary);
+
+        assert_eq!(summary.errored, 1, "one error should be counted");
+        assert_eq!(summary.domains_captured, 1, "successful level should be captured");
+        assert!(domains.contains_key(&key_ok), "ok level domain should be present");
+        assert!(!domains.contains_key(&key_fail), "failed level should be absent");
+        assert_eq!(domains[&key_ok], vec!["CA", "WA"]);
+    }
+
+    /// AC-5: concurrency=1 vs concurrency=N produce same result (same BTreeMap
+    /// key structure). Tested here by verifying reduce_batch_results is
+    /// order-independent — same inputs in different order yield same domains.
+    #[test]
+    fn ac5_reduce_is_order_independent() {
+        use super::EngineError;
+
+        let key_a = ("dim_a".to_string(), "Level A".to_string());
+        let key_b = ("dim_b".to_string(), "Level B".to_string());
+        let key_c = ("dim_c".to_string(), "Level C".to_string());
+
+        let mut level_meta: BTreeMap<(String, String), (&'static str, String, usize)> = BTreeMap::new();
+        level_meta.insert(key_a.clone(), ("string", "[A].[A]".into(), 5));
+        level_meta.insert(key_b.clone(), ("string", "[B].[B]".into(), 5));
+        level_meta.insert(key_c.clone(), ("string", "[C].[C]".into(), 5));
+
+        // Order 1: A, B, C
+        let results1: Vec<((String, String), Result<_, EngineError>)> = vec![
+            (key_a.clone(), Ok(vec![make_row("a1", None), make_row("a2", None)])),
+            (key_b.clone(), Ok(vec![make_row("b1", None)])),
+            (key_c.clone(), Ok(vec![make_row("c1", None), make_row("c2", None), make_row("c3", None)])),
+        ];
+        // Order 2: C, A, B (simulates different completion order under concurrency)
+        let results2: Vec<((String, String), Result<_, EngineError>)> = vec![
+            (key_c.clone(), Ok(vec![make_row("c1", None), make_row("c2", None), make_row("c3", None)])),
+            (key_a.clone(), Ok(vec![make_row("a1", None), make_row("a2", None)])),
+            (key_b.clone(), Ok(vec![make_row("b1", None)])),
+        ];
+
+        let mut domains1: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+        let mut summary1 = IngestSummary::default();
+        reduce_batch_results(results1, &level_meta, &mut domains1, &mut summary1);
+
+        let mut domains2: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
+        let mut summary2 = IngestSummary::default();
+        reduce_batch_results(results2, &level_meta, &mut domains2, &mut summary2);
+
+        assert_eq!(domains1, domains2, "BTreeMap result must be order-independent (FR-3/AC-5)");
+        assert_eq!(summary1.domains_captured, summary2.domains_captured);
+        assert_eq!(summary1.errored, summary2.errored);
     }
 }

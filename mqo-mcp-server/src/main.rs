@@ -93,6 +93,13 @@ struct Args {
     #[arg(long, default_value_t = 200)]
     catalog_max_levels: usize,
 
+    /// Max number of MDSCHEMA_MEMBERS Discover requests in flight simultaneously
+    /// during live domain ingestion. Default 16 gives ~6× speedup on typical
+    /// models (157 levels × ~1.1 s serial → target < 30 s). Set to 1 to
+    /// reproduce the old serial path exactly (regression floor / rate-limit mode).
+    #[arg(long, default_value_t = 16)]
+    catalog_ingest_concurrency: usize,
+
     /// Model (cube) name the domain probe queries against. Defaults to the sole
     /// discovered XMLA model when there is exactly one; required when the cluster
     /// exposes multiple cubes (otherwise probe queries bind to an arbitrary model
@@ -363,6 +370,7 @@ fn main() {
                         let cfg = mqo_mcp_server::catalog_ingest::IngestConfig {
                             domain_cap: args.catalog_domain_cap,
                             max_levels: args.catalog_max_levels,
+                            concurrency: args.catalog_ingest_concurrency,
                         };
                         let sum = mqo_mcp_server::catalog_ingest::ingest_live_metadata(
                             &mut catalog,
