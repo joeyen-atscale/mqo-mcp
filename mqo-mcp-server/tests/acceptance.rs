@@ -217,9 +217,18 @@ fn ac2_query_multidimensional_returns_bounded_rows() {
     assert!(!rows.is_empty(), "returns rows");
     assert!(rows.len() <= 4, "rows bounded by limit");
     assert_eq!(sc["row_count"], json!(rows.len()));
-    // Each row carries the projected dim + measure columns.
-    assert!(rows[0].get("time.calendar.[Year]").is_some());
-    assert!(rows[0].get("sales.revenue").is_some());
+    // PRD-mqo-clean-result-labels: columns are now clean semantic labels.
+    // "time.calendar.[Year]" → "Year"; "sales.revenue" → "revenue".
+    assert!(
+        rows[0].get("Year").is_some(),
+        "expected clean label 'Year', got: {:?}",
+        rows[0].as_object().map(|o| o.keys().collect::<Vec<_>>())
+    );
+    assert!(
+        rows[0].get("revenue").is_some(),
+        "expected clean label 'revenue', got: {:?}",
+        rows[0].as_object().map(|o| o.keys().collect::<Vec<_>>())
+    );
 }
 
 // ── AC3 ─────────────────────────────────────────────────────────────────────
@@ -535,9 +544,18 @@ fn new_ac1_fixture_mode_is_default_and_returns_fixture_rows() {
     let rows = sc["rows"].as_array().expect("rows array");
     assert!(!rows.is_empty(), "fixture rows present");
     assert!(rows.len() <= 3, "bounded by limit");
-    // AC2 shape preserved: columns are bound dim/measure unique_names.
-    assert!(rows[0].get("time.calendar.[Year]").is_some());
-    assert!(rows[0].get("sales.revenue").is_some());
+    // PRD-mqo-clean-result-labels: columns are now clean semantic labels.
+    // "time.calendar.[Year]" → "Year"; "sales.revenue" → "revenue".
+    assert!(
+        rows[0].get("Year").is_some(),
+        "expected clean label 'Year', got: {:?}",
+        rows[0].as_object().map(|o| o.keys().collect::<Vec<_>>())
+    );
+    assert!(
+        rows[0].get("revenue").is_some(),
+        "expected clean label 'revenue', got: {:?}",
+        rows[0].as_object().map(|o| o.keys().collect::<Vec<_>>())
+    );
 }
 
 /// New-AC2: with --endpoint + OIDC, server constructs Live mode and routes through

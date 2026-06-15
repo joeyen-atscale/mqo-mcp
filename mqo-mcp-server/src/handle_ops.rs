@@ -238,7 +238,10 @@ fn last_bracket_contents(s: &str) -> Option<String> {
 /// Friendly label for a (possibly XML-mangled) **row column key**.  Prefers the
 /// contents of the last `[...]` segment (the level/measure name); else the
 /// decoded string trimmed of `._ `.  Mirrors the bridge's `_clean_label`.
-fn clean_label(raw_key: &str) -> String {
+///
+/// Exposed as `pub(crate)` so `pipeline.rs` and the response layer can reuse
+/// the same decoder (FR-2: one implementation, not two).
+pub(crate) fn clean_label(raw_key: &str) -> String {
     let decoded = decode_xml_name(raw_key);
     if let Some(b) = last_bracket_contents(&decoded) {
         return b;
@@ -248,12 +251,193 @@ fn clean_label(raw_key: &str) -> String {
 
 /// Friendly label for a bound `unique_name` (`hier.[Level]` or `model.measure`).
 /// Mirrors the bridge's `_label_from_unique_name`.
-fn label_from_unique_name(unique_name: &str) -> String {
+pub(crate) fn label_from_unique_name(unique_name: &str) -> String {
     if let Some(b) = last_bracket_contents(unique_name) {
         return b;
     }
     let tail = unique_name.rsplit('.').next().unwrap_or(unique_name);
     tail.replace('_', " ").trim().to_string()
+}
+
+/// Remap the column keys of every row in `rows` from raw DAX-mangled keys to
+/// clean semantic labels, using the MQO `bound` to prefer catalog labels when
+/// available (OQ-3).
+///
+/// ## Strategy
+///
+/// 1. Collect all column keys from the first row (preserves order).
+/// 2. Build a per-key label assignment using a two-pass approach:
+///    a. First pass: try to match each key to a specific bound entry using
+///       table-prefix alignment (the part before the first `_x005b_` or `.`
+///       in the raw key identifies its dimension table / hierarchy).
+///    b. If no prefix match, fall back to `clean_label(key)`.
+///    c. Prefer the bound entry's `label` field when present (OQ-3 lean).
+/// 3. Disambiguate collisions (FR-4): if two keys still map to the same label,
+///    qualify each with the hierarchy prefix from its bound entry.
+/// 4. Return new rows with keys replaced by their clean labels; values and
+///    order are byte-identical (FR-3).
+///
+/// **`dataset_*` handle path is NOT affected** — this function is only called
+/// on the direct `query_multidimensional` response, not on the stored dataset
+/// that handle-ops read (FR-6).
+pub(crate) fn clean_result_rows(rows: &[Value], bound: &Value) -> Vec<Value> {
+    if rows.is_empty() {
+        return Vec::new();
+    }
+
+    // Collect column keys from first row (insertion order).
+    let col_keys: Vec<String> = rows
+        .first()
+        .and_then(Value::as_object)
+        .map(|obj| obj.keys().cloned().collect())
+        .unwrap_or_default();
+
+    if col_keys.is_empty() {
+        return rows.to_vec();
+    }
+
+    // Flatten all bound entries into a list: (unique_name, catalog_label, hierarchy_prefix).
+    // hierarchy_prefix = the part before the first `.` in unique_name (the table/dim name).
+    let bound_entries: Vec<(String, String, String)> = {
+        let mut entries = Vec::new();
+        for section in &["dimensions", "measures"] {
+            if let Some(arr) = bound.get(section).and_then(Value::as_array) {
+                for entry in arr {
+                    let un = entry
+                        .get("unique_name")
+                        .and_then(Value::as_str)
+                        .or_else(|| entry.as_str());
+                    if let Some(un) = un {
+                        let catalog_lbl = entry
+                            .get("label")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                            .unwrap_or_else(|| label_from_unique_name(un));
+                        let prefix = un
+                            .split('.')
+                            .next()
+                            .unwrap_or("")
+                            .to_string();
+                        entries.push((un.to_string(), catalog_lbl, prefix));
+                    }
+                }
+            }
+        }
+        entries
+    };
+
+    /// Extract the table-qualifier prefix from a raw DAX row key.
+    ///
+    /// - `product_dimension_x005b_Product_x0020_Category_x005d_` → `product_dimension`
+    ///   (everything before the first `_x005b_` or `_x00`).
+    /// - `_x005b_Total_x0020_Store_x0020_Sales_x005d_` → `""` (starts with escape).
+    /// - `some.dotted.key` → `some` (for fixture-path rows where key = unique_name).
+    fn table_prefix(key: &str) -> &str {
+        // For mangled keys: prefix is everything before the first `_x` escape.
+        if let Some(pos) = key.find("_x") {
+            if pos > 0 {
+                // Strip trailing `_` from the prefix (the separator before `_x005b_`).
+                return key[..pos].trim_end_matches('_');
+            }
+            return "";
+        }
+        // For clean/fixture keys: use the part before the first `.`.
+        if let Some(pos) = key.find('.') {
+            return &key[..pos];
+        }
+        // No qualifier: the whole key (bare column name).
+        key
+    }
+
+    // For each raw column key, find the best-matching bound entry and assign a label.
+    // Match priority:
+    //   1. Exact unique_name match (fixture path).
+    //   2. Table-prefix of the raw key matches hierarchy_prefix of bound entry
+    //      AND clean_label(key) == label_from_unique_name(un).
+    //   3. clean_label(key) matches label_from_unique_name of any bound entry.
+    //   4. clean_label(key) directly.
+    let mut key_to_label: Vec<(String, String, String)> = col_keys
+        .iter()
+        .map(|key| {
+            let key_prefix = table_prefix(key);
+            let key_decoded = clean_label(key);
+
+            // Priority 1: exact unique_name match (fixture path).
+            if let Some((_, lbl, prefix)) = bound_entries.iter().find(|(un, _, _)| un == key) {
+                return (key.clone(), lbl.clone(), prefix.clone());
+            }
+
+            // Priority 2: prefix + label match.
+            if let Some((_, lbl, prefix)) = bound_entries.iter().find(|(un, _, p)| {
+                !key_prefix.is_empty()
+                    && !p.is_empty()
+                    && key_prefix == p.as_str()
+                    && key_decoded == label_from_unique_name(un)
+            }) {
+                return (key.clone(), lbl.clone(), prefix.clone());
+            }
+
+            // Priority 3: label-only match (no prefix or prefix doesn't align).
+            if let Some((_, lbl, prefix)) = bound_entries
+                .iter()
+                .find(|(un, _, _)| key_decoded == label_from_unique_name(un))
+            {
+                return (key.clone(), lbl.clone(), prefix.clone());
+            }
+
+            // Priority 4: use decoded label directly (no bound match).
+            // Extract the raw-key prefix as the qualifier for potential disambiguation.
+            (key.clone(), key_decoded, key_prefix.to_string())
+        })
+        .collect();
+
+    // Disambiguate collisions (FR-4): if two keys map to the same label,
+    // qualify each with its hierarchy prefix.
+    let mut seen_labels: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (_, lbl, _) in &key_to_label {
+        *seen_labels.entry(lbl.clone()).or_insert(0) += 1;
+    }
+    let colliding: std::collections::HashSet<String> = seen_labels
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .map(|(lbl, _)| lbl)
+        .collect();
+
+    if !colliding.is_empty() {
+        for (_, label, prefix) in &mut key_to_label {
+            if colliding.contains(label.as_str()) {
+                let human_prefix = prefix.replace('_', " ").trim().to_string();
+                if !human_prefix.is_empty()
+                    && human_prefix.to_lowercase() != label.to_lowercase()
+                {
+                    *label = format!("{human_prefix} {label}");
+                }
+                // If still can't qualify (no prefix or prefix == label), leave as-is.
+            }
+        }
+    }
+
+    // Build the final key→label map.
+    let rename: std::collections::HashMap<&str, &str> = key_to_label
+        .iter()
+        .map(|(k, l, _)| (k.as_str(), l.as_str()))
+        .collect();
+
+    // Remap every row.
+    rows.iter()
+        .map(|row| {
+            if let Some(obj) = row.as_object() {
+                let mut new_obj = serde_json::Map::with_capacity(obj.len());
+                for (k, v) in obj {
+                    let new_key = rename.get(k.as_str()).copied().unwrap_or(k.as_str());
+                    new_obj.insert(new_key.to_string(), v.clone());
+                }
+                Value::Object(new_obj)
+            } else {
+                row.clone()
+            }
+        })
+        .collect()
 }
 
 /// Build a `row-column-key → ColumnRole` map from the MQO `bound`.
@@ -1213,5 +1397,134 @@ mod tests {
         let role = |n: &str| cols.iter().find(|c| c.name == n).unwrap().role;
         assert_eq!(role("year"), ColumnRole::Dimension);
         assert_eq!(role("revenue"), ColumnRole::Measure);
+    }
+
+    // ── clean_result_rows tests (PRD-mqo-clean-result-labels ACs) ────────────
+
+    /// AC-1: DAX-mangled column keys are cleaned to human-readable semantic labels.
+    /// Real keys from the `product-count-per-category` failure case.
+    #[test]
+    fn ac1_mangled_keys_become_semantic_labels() {
+        let cat_key = "product_dimension_x005b_Product_x0020_Category_x005d_";
+        let cnt_key = "_x005b_Total_x0020_Product_x0020_Count_x005d_";
+        let rows = vec![
+            json!({ cat_key: "Books", cnt_key: 42 }),
+            json!({ cat_key: "Electronics", cnt_key: 17 }),
+        ];
+        let bound = json!({
+            "dimensions": [{ "unique_name": "product_dimension.[Product Category]" }],
+            "measures": [{ "unique_name": "catalog.total_product_count" }],
+        });
+        let cleaned = clean_result_rows(&rows, &bound);
+        assert_eq!(cleaned.len(), 2);
+        let first = cleaned[0].as_object().unwrap();
+        assert!(
+            first.contains_key("Product Category"),
+            "Expected 'Product Category', got: {:?}",
+            first.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            first.contains_key("Total Product Count"),
+            "Expected 'Total Product Count', got: {:?}",
+            first.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// AC-2: Values and column order are unchanged; only names change.
+    #[test]
+    fn ac2_values_and_order_unchanged() {
+        let cat_key = "product_dimension_x005b_Product_x0020_Category_x005d_";
+        let cnt_key = "_x005b_Total_x0020_Product_x0020_Count_x005d_";
+        let rows = vec![
+            json!({ cat_key: "Books", cnt_key: 42 }),
+            json!({ cat_key: "Electronics", cnt_key: 17 }),
+        ];
+        let bound = json!({
+            "dimensions": [{ "unique_name": "product_dimension.[Product Category]" }],
+            "measures": [{ "unique_name": "catalog.total_product_count" }],
+        });
+        let cleaned = clean_result_rows(&rows, &bound);
+        assert_eq!(cleaned.len(), 2);
+        let r0 = cleaned[0].as_object().unwrap();
+        let r1 = cleaned[1].as_object().unwrap();
+        // Values are preserved.
+        assert_eq!(r0.get("Product Category").and_then(|v| v.as_str()), Some("Books"));
+        assert_eq!(r0.get("Total Product Count").and_then(|v| v.as_i64()), Some(42));
+        assert_eq!(r1.get("Product Category").and_then(|v| v.as_str()), Some("Electronics"));
+        assert_eq!(r1.get("Total Product Count").and_then(|v| v.as_i64()), Some(17));
+        // Column order: Product Category before Total Product Count.
+        let keys0: Vec<&str> = r0.keys().map(String::as_str).collect();
+        assert_eq!(keys0.first().copied(), Some("Product Category"));
+        assert_eq!(keys0.get(1).copied(), Some("Total Product Count"));
+    }
+
+    /// AC-3: Two columns that clean to the same label get distinct names.
+    #[test]
+    fn ac3_collision_gets_distinct_names() {
+        // Both columns decode to "City" without qualification.
+        let cust_city_key = "customer_dimension_x005b_City_x005d_";
+        let store_city_key = "store_dimension_x005b_City_x005d_";
+        let rows = vec![json!({ cust_city_key: "New York", store_city_key: "Boston" })];
+        let bound = json!({
+            "dimensions": [
+                { "unique_name": "customer_dimension.[City]" },
+                { "unique_name": "store_dimension.[City]" }
+            ],
+            "measures": [],
+        });
+        let cleaned = clean_result_rows(&rows, &bound);
+        assert_eq!(cleaned.len(), 1);
+        let row = cleaned[0].as_object().unwrap();
+        // Must have 2 distinct keys (no collision).
+        assert_eq!(row.len(), 2, "Expected 2 distinct columns, got: {:?}", row.keys().collect::<Vec<_>>());
+        let keys: Vec<&str> = row.keys().map(String::as_str).collect();
+        assert!(
+            keys[0] != keys[1],
+            "Collision: both columns got the same name '{}'", keys[0]
+        );
+    }
+
+    /// AC-4: Already-clean column names pass through unchanged.
+    #[test]
+    fn ac4_already_clean_passthrough() {
+        let rows = vec![
+            json!({ "Product Category": "Books", "Revenue": 100.0 }),
+        ];
+        let bound = json!({
+            "dimensions": [{ "unique_name": "product_dimension.[Product Category]" }],
+            "measures": [{ "unique_name": "sales.Revenue" }],
+        });
+        let cleaned = clean_result_rows(&rows, &bound);
+        let row = cleaned[0].as_object().unwrap();
+        assert!(
+            row.contains_key("Product Category"),
+            "Expected 'Product Category' to pass through, got: {:?}", row.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            row.contains_key("Revenue"),
+            "Expected 'Revenue' to pass through, got: {:?}", row.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// AC-5: The dataset_* handle path (json_rows_to_dataset_with_bound) is
+    /// unaffected — it still stores raw mangled keys in the dataset column names.
+    /// Verify by calling it with mangled keys and checking the column name.
+    #[test]
+    fn ac5_dataset_handle_path_unchanged() {
+        let cat_key = "product_dimension_x005b_Product_x0020_Category_x005d_";
+        let rows = vec![json!({ cat_key: "Books" })];
+        let bound = json!({
+            "dimensions": [{ "unique_name": "product_dimension.[Product Category]" }],
+            "measures": [],
+        });
+        // The handle store path does NOT clean column names.
+        let ds = json_rows_to_dataset_with_bound(&rows, &bound);
+        let has_raw_key = ds.columns.iter().any(|c| c.name == cat_key);
+        assert!(
+            has_raw_key,
+            "Handle store should preserve raw mangled key '{}', got: {:?}",
+            cat_key,
+            ds.columns.iter().map(|c| &c.name).collect::<Vec<_>>()
+        );
     }
 }

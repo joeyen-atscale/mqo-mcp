@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.29.0 — 2026-06-15
+
+`query_multidimensional` now returns clean semantic column labels instead of raw DAX-mangled keys. Previously, columns like `product_dimension_x005b_Product_x0020_Category_x005d_` and `_x005b_Total_x0020_Product_x0020_Count_x005d_` were returned verbatim, causing 5/20 tpcds_sql_derived eval cases to fail on label matching alone despite correct row values. Fix: reuse the existing `clean_label` decoder (handle_ops.rs) at the `query_multidimensional` response boundary (FR-2: one decoder, not two). Prefer the catalog `label` from the bound when available (OQ-3), fall back to decoded key. Disambiguate collisions deterministically with the hierarchy-qualified prefix (FR-4). Dataset handle path (`dataset_*`) is unchanged — the handle store still receives raw rows so existing handle-op behavior is unaffected (FR-6). (PRD-mqo-clean-result-labels)
+
 ## v0.28.0 — 2026-06-15
 
 Queryable-model grounding: `list_models` now returns a `model_details` array annotating each model with `queryable: true|false|null` derived from the live XMLA discovery map (true = mapped cube, false = dimension-only table, null = discovery not run). `describe_model` carries the same flag plus `candidate_cubes` for non-queryable dimensions. `query_multidimensional` intercepts requests against a non-queryable model before execution and returns a typed `model_path/non_queryable_dimension` error naming the cube(s) to use — replacing the opaque `infrastructure/xmla_coords_not_found` that forced the LLM to guess. Fail-safe: when discovery mapped 0 cubes, queryability is `unknown` and no real cube is ever tagged false. Fixes 6/20 `max_steps` convergence failures in `tpcds_sql_derived` run `20260615T011847Z` where the agent burned its step budget probing dimension-named models. (PRD-mqo-queryable-model-grounding)

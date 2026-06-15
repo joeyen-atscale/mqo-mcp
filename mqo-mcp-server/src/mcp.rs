@@ -1687,18 +1687,38 @@ impl Server {
                 // LLM gets a handle + bounded summary, raw rows only when small).
                 // The LIVE execution path above is unchanged — only what happens
                 // to the result changes.
+                // The handle store receives the original (possibly mangled) rows
+                // so that existing dataset_* operations are unaffected (FR-6).
                 let handle = self
                     .handle_store
                     .as_ref()
                     .and_then(|hs| hs.put_rows_with_bound(&out.rows, &out.bound).ok());
 
+                // PRD-mqo-clean-result-labels: clean column keys in the response
+                // rows at the response boundary (FR-1).  Reuses `clean_label`
+                // from handle_ops (FR-2).  The handle store above already received
+                // the original rows, so the dataset_* path is unchanged (FR-6).
+                let clean_rows =
+                    crate::handle_ops::clean_result_rows(&out.rows, &out.bound);
+                // Build a response-only PipelineOutput with clean column labels.
+                let out_clean = crate::pipeline::PipelineOutput {
+                    rows: clean_rows,
+                    backend: out.backend.clone(),
+                    estimated_rows: out.estimated_rows,
+                    routing_reason: out.routing_reason.clone(),
+                    compiled_query: out.compiled_query.clone(),
+                    bound: out.bound.clone(),
+                    filters_applied: out.filters_applied.clone(),
+                    filters_dropped: out.filters_dropped.clone(),
+                };
+
                 // Cursor mode: persist and return first page when rows > page_size.
-                if out.rows.len() > self.page_size {
+                if out_clean.rows.len() > self.page_size {
                     if let Some(ref store) = self.cursor_store {
-                        match store.put_and_first_page(out.rows.clone(), self.page_size) {
+                        match store.put_and_first_page(out_clean.rows.clone(), self.page_size) {
                             Ok(first_page) => {
                                 return structured_cursor_ok(
-                                    &out,
+                                    &out_clean,
                                     &first_page,
                                     cluster_used.as_deref(),
                                     latency_ms,
@@ -1719,7 +1739,7 @@ impl Server {
                 let calc_null_warning = detect_calc_context_null(&out);
 
                 let mut resp = structured_ok(
-                    &out,
+                    &out_clean,
                     cluster_used.as_deref(),
                     latency_ms,
                     handle.as_ref(),
