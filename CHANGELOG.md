@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.43.0] - 2026-06-15
+
+### Fixed
+- **Cross-hierarchy member-filter co-resolution** (`mqo-catalog-binder`):
+  `MemberLevel` filters pinned to a near-twin hierarchy (e.g.
+  `promotion_product_item_product_dimension.[…Product Brand Name]`) while
+  projecting from a different near-twin hierarchy (e.g. `product_dimension`)
+  now produce a typed `MemberUnboundCrossHierarchy` decline (exit 4,
+  `member_unbound_cross_hierarchy` JSON) instead of binding silently and
+  returning 0 rows — eliminating the `corpcorp-brand-products` max_steps
+  thrash. The decline names the co-resolving candidate hierarchies so the
+  LLM agent can retry with a consistent hierarchy in one call.
+  - **FR-1**: At bind time, detects that the filter and projection hierarchies
+    share ≥1 canonical attribute family (near-twin) but are different → decline.
+  - **FR-2**: Preferred co-resolving hierarchy is the projection's own hierarchy
+    when it also carries the filter attribute's canonical family.
+  - **FR-3**: Typed `CrossHierarchyFilterError` with `candidate_hierarchies` —
+    never a silent 0-row result, never a max_steps timeout.
+  - **OQ-1 resolved**: `corpcorp #1` has no domain in any captured brand level
+    (all `None`); correct outcome is an honest decline, not rows.
+  - **Guardrail**: single-hierarchy queries (filter and projection on the same
+    hierarchy) bind identically to before.
+
 ## [0.42.0] - 2026-06-15
 
 ### Added
