@@ -812,7 +812,7 @@ fn core_tool_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "query_multidimensional",
-            "description": "Run a Multidimensional Query Object (NEVER raw SQL) through bind→route→compile→execute and return bounded result rows plus the compiled query. Read-only by construction: the input is a selection-only object, so no write path exists.\n\n**Large results:** when row_count exceeds the inline threshold the response is handle-first: {handle, row_count, columns, sample, notes}. Work with the handle via dataset_* ops (dataset_aggregate, dataset_filter, dataset_top_n, etc.) or call dataset_export to materialize. Do NOT loop next_page to assemble all rows — next_page is for incremental paging by non-LLM clients.\n\nSupported filter types:\n- MemberLevel: {type:\"MemberLevel\", level_unique_name, members:[...], exclude:true|false} — filter a level to explicit members; exclude:true inverts to NOT-IN.\n- Member: {type:\"Member\", level_unique_name, members:[...]} — domain-scan grounded member filter (equivalent to MemberLevel without the exclude flag).\n- Group: {type:\"Group\", op:\"and\"|\"or\", filters:[...]} — combine two or more filters; up to two levels of nesting supported.\n- Range: {type:\"Range\", level_unique_name, lo, hi} — inclusive bounds filter; ISO-date strings accepted for date levels (full timezone support coming).",
+            "description": "Run a Multidimensional Query Object (NEVER raw SQL) through bind→route→compile→execute and return bounded result rows plus the compiled query. Read-only by construction: the input is a selection-only object, so no write path exists.\n\n**Large results:** when row_count exceeds the inline threshold the response is handle-first: {handle, row_count, columns, sample, notes}. Work with the handle via dataset_* ops (dataset_aggregate, dataset_filter, dataset_top_n, etc.) or call dataset_export to materialize. Do NOT loop next_page to assemble all rows — next_page is for incremental paging by non-LLM clients.\n\n**Measureless projection (list / which / each member questions):** set `projection: true` with an empty `measures` array to return the DISTINCT members of the projected dimension levels — no measure aggregation. Use this shape for questions like \"list each customer who...\", \"which products are...\", \"each store that...\".\n\n**Cross-dimension / fact-resident filters on projections:** the `filters` array in a projection MAY contain filters on levels that are NOT in the `dimensions` list — including levels reachable via a fact table (e.g. Store Name, Sold Calendar Year). The engine compiles this as a SUMMARIZECOLUMNS auto-exist (semijoin): the result is the set of projected members that have at least one qualifying fact row matching the filter. No anchor measure is needed — and adding a fabricated count measure is WRONG for this shape (it changes grain and adds an unwanted column).\n\nExample — first name and gender of each customer who shopped at store 'ese' in year 2001:\n{\"projection\": true, \"measures\": [], \"dimensions\": [{\"hierarchy\": \"customer_dimension\", \"level\": \"Customer First Name\"}, {\"hierarchy\": \"customer_demographics\", \"level\": \"Gender\"}], \"filters\": [{\"type\": \"member_level\", \"hierarchy\": \"store_dimension\", \"level\": \"store_dimension.[Store Name]\", \"members\": [\"ese\"]}, {\"type\": \"member_level\", \"hierarchy\": \"sold_date_dimensions\", \"level\": \"sold_date_dimensions.[Sold Calendar Year]\", \"members\": [\"2001\"]}]}\n\n**When to use measures instead:** if the question asks \"how much / how many / total / average\" of a measure (sum, avg, count), use the `measures` array with dimension grouping — do NOT use `projection: true` for aggregation questions.\n\nSupported filter types:\n- MemberLevel: {type:\"MemberLevel\", level_unique_name, members:[...], exclude:true|false} — filter a level to explicit members; exclude:true inverts to NOT-IN.\n- Member: {type:\"Member\", level_unique_name, members:[...]} — domain-scan grounded member filter (equivalent to MemberLevel without the exclude flag).\n- Group: {type:\"Group\", op:\"and\"|\"or\", filters:[...]} — combine two or more filters; up to two levels of nesting supported.\n- Range: {type:\"Range\", level_unique_name, lo, hi} — inclusive bounds filter; ISO-date strings accepted for date levels (full timezone support coming).",
             "inputSchema": mqo_schema,
             "annotations": { "readOnlyHint": true }
         }),
@@ -1382,7 +1382,8 @@ impl Server {
                     "label": label,
                     "has_domain": has_domain,
                     "projectable": true,
-                    "related_attributes": related_attributes
+                    "related_attributes": related_attributes,
+                    "filterable_cross_dimension": true
                 });
                 if let Some(vt) = value_type {
                     entry["value_type"] = json!(vt);
@@ -1429,7 +1430,8 @@ impl Server {
             "columns": columns,
             "near_twins": near_twins,
             "hierarchy_levels": hierarchy_levels_val,
-            "describe_model": self.catalog.get("describe_model").cloned().unwrap_or(Value::Null)
+            "describe_model": self.catalog.get("describe_model").cloned().unwrap_or(Value::Null),
+            "projection_note": "A measureless projection (projection:true, measures:[]) may be filtered by ANY level in this model — including levels from other dimensions or fact-resident levels not in the dimensions list. The engine resolves such filters via SUMMARIZECOLUMNS auto-exist (semijoin): the result is the distinct attribute set for members that have at least one qualifying fact row. Use this shape for list/which/each questions. Use measures[] for aggregation (sum/avg/count) questions."
         });
         // Only include `candidate_cubes` when the model is non-queryable.
         if !candidate_cubes_field.is_null() {
@@ -3578,5 +3580,97 @@ mod hierarchy_levels_value_type_tests {
             entry.get("value_type").is_none(),
             "level without catalog value_type must not emit value_type key: {entry}"
         );
+    }
+
+    // ── Semijoin-projection grounding content regression ─────────────────
+    // PRD-mqo-semijoin-projection-grounding: verify the tool description and
+    // describe_model response contain the grounding terms that steer the model
+    // toward measureless projections with cross-dimension fact-resident filters.
+    #[test]
+    fn test_semijoin_projection_grounding_content() {
+        // 1. query_multidimensional tool description must contain key terms.
+        let tools = tool_descriptors();
+        let tools_arr = tools.as_array().expect("tool_descriptors must be an array");
+        let qmd = tools_arr
+            .iter()
+            .find(|t| t.get("name").and_then(Value::as_str) == Some("query_multidimensional"))
+            .expect("query_multidimensional tool must be present");
+        let desc = qmd
+            .get("description")
+            .and_then(Value::as_str)
+            .expect("query_multidimensional must have a description string");
+        assert!(
+            desc.contains("filter"),
+            "query_multidimensional description must mention 'filter': {desc}"
+        );
+        assert!(
+            desc.contains("projection"),
+            "query_multidimensional description must mention 'projection': {desc}"
+        );
+        assert!(
+            desc.contains("fact"),
+            "query_multidimensional description must mention 'fact': {desc}"
+        );
+
+        // 2. describe_model response must carry projection_note and
+        //    filterable_cross_dimension on level entries.
+        let catalog = json!({
+            "columns": [
+                {
+                    "unique_name": "dim.[Level A]",
+                    "label": "Level A",
+                    "kind": "level",
+                    "hierarchy": "dim"
+                }
+            ]
+        });
+        let srv = Server {
+            catalog,
+            stats: json!({}),
+            tools: crate::pipeline::ToolPaths::resolve(None),
+            row_threshold: 1000,
+            engine: ServerEngine::Fixture,
+            backend_override: None,
+            capabilities: crate::probe::BackendCapabilities::all_live(),
+            registry: None,
+            health_cache: None,
+            handle_store: Some(HandleStore::new()),
+            cursor_store: Some(Arc::new(CursorStore::new(600))),
+            page_size: crate::cursor::DEFAULT_PAGE_SIZE,
+            inline_threshold: crate::handle_ops::INLINE_THRESHOLD,
+            enriched: None,
+            xmla_model_coords: std::collections::HashMap::new(),
+            max_projection_cardinality: DEFAULT_MAX_PROJECTION_CARDINALITY,
+        };
+        let resp = srv.describe_model(&json!({}));
+
+        // projection_note must be present and mention semijoin capability.
+        let proj_note = resp
+            .get("projection_note")
+            .and_then(Value::as_str)
+            .expect("describe_model must include projection_note");
+        assert!(
+            proj_note.contains("fact"),
+            "projection_note must mention 'fact': {proj_note}"
+        );
+        assert!(
+            proj_note.contains("projection"),
+            "projection_note must mention 'projection': {proj_note}"
+        );
+
+        // hierarchy_levels entries must carry filterable_cross_dimension:true.
+        let hl = resp
+            .get("hierarchy_levels")
+            .and_then(Value::as_object)
+            .expect("hierarchy_levels must be an object");
+        for (_hier, levels) in hl.iter() {
+            for level in levels.as_array().expect("levels must be an array") {
+                assert_eq!(
+                    level.get("filterable_cross_dimension"),
+                    Some(&json!(true)),
+                    "every level in hierarchy_levels must carry filterable_cross_dimension:true, got: {level}"
+                );
+            }
+        }
     }
 }
