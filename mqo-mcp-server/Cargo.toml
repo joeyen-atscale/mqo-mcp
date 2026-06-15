@@ -49,3 +49,4 @@ mqo-bi-asset-bundle = { path = "../mqo-bi-asset-bundle" }
 mqo-dashboard-composer = { path = "../mqo-dashboard-composer" }
 
 [dev-dependencies]
+tempfile = "3"
