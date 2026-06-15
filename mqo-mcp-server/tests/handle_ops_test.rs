@@ -56,6 +56,7 @@ fn ac1_aggregate_returns_new_handle_and_input_survives() {
         &store.store,
         &json!({ "handle": input, "group_by": ["region"], "agg": "sum", "measure": "col_b" }),
         INLINE_THRESHOLD,
+        None, // test fixture: no catalog → guard fails-open
     );
     assert_eq!(result["isError"], json!(false), "aggregate must not error: {result}");
     let new_handle = sc(&result)["new_handle"].as_str().expect("new_handle present");
@@ -78,6 +79,7 @@ fn ac1_legacy_aggregate_measures_shape_still_works() {
             "measures": [{ "col": "col_b", "agg": "sum" }]
         }),
         INLINE_THRESHOLD,
+        None, // test fixture: no catalog → guard fails-open
     );
     assert_eq!(result["isError"], json!(false), "legacy measures shape: {result}");
     assert_eq!(sc(&result)["row_count"], json!(2));
@@ -206,6 +208,7 @@ fn drill_expands_grouped_row() {
         &store.store,
         &json!({ "handle": input, "group_by": ["region"], "agg": "sum", "measure": "col_b" }),
         INLINE_THRESHOLD,
+        None, // test fixture: no catalog → guard fails-open
     );
     let agg_handle = sc(&agg)["new_handle"].as_str().unwrap().to_string();
     let result = handle_dataset_drill(

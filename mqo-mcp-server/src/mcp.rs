@@ -1057,7 +1057,7 @@ impl Server {
                 })
             }
             Some(hs) => match tool {
-                "dataset_aggregate" => handle_ops::handle_dataset_aggregate(&hs.store, args, self.inline_threshold),
+                "dataset_aggregate" => handle_ops::handle_dataset_aggregate(&hs.store, args, self.inline_threshold, Some(&self.catalog)),
                 "dataset_filter" => handle_ops::handle_dataset_filter(&hs.store, args, self.inline_threshold),
                 "dataset_sort" => handle_ops::handle_dataset_sort(&hs.store, args, self.inline_threshold),
                 "dataset_top_n" => handle_ops::handle_dataset_top_n(&hs.store, args, self.inline_threshold),
