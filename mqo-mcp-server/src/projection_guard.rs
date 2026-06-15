@@ -30,7 +30,16 @@
 #![forbid(unsafe_code)]
 
 use mqo_catalog_binder::catalog::CatalogSnapshot;
-use mqo_spec::{Filter, Mqo, RangeBound};
+use mqo_spec::{Filter, FilterGroupOp, Mqo, RangeBound};
+
+/// A projected level resolved against the catalog: its hierarchy, canonical
+/// `unique_name`, and known total member count (`None` when the catalog has no
+/// cardinality/domain for it).
+struct ResolvedLevel {
+    hierarchy: String,
+    level_un: String,
+    total_members: Option<u64>,
+}
 
 // ── Public types ──────────────────────────────────────────────────────────────
 
@@ -77,57 +86,92 @@ pub fn check_projection_cardinality(
     }
 
     // Build an estimate for each dimension level.
-    let mut total_estimate: u64 = 1;
-
-    for dim in &mqo.dimensions {
-        // Look up the catalog entry for this level.  A client may supply the
-        // level in several forms (see `level_matches`); resolve against all of
-        // them so we hit the SAME catalog column that `describe_model`'s
-        // `has_domain` keys off (its `unique_name`).
-        let maybe_entry = catalog
-            .columns
-            .iter()
-            .find(|col| col.kind == "level" && level_matches(col, &dim.hierarchy, &dim.level));
-
-        // Canonical unique_name for diagnostics + filter matching: prefer the
-        // resolved catalog column's unique_name (what describe_model advertises);
-        // otherwise reconstruct `hierarchy.level`.
-        let level_un = maybe_entry
-            .map(|e| e.unique_name.clone())
-            .unwrap_or_else(|| format!("{}.{}", dim.hierarchy, dim.level));
-
-        // Total member count for this level.
-        // Prefer the persisted `cardinality` field (true LEVEL_CARDINALITY from
-        // MDSCHEMA_LEVELS, not capped) over `domain.len()` (truncated at
-        // domain_cap). Falls back to domain.len() when cardinality is absent
-        // (old snapshot back-compat, or levels the cluster has no metadata for).
-        let total_members: Option<u64> = maybe_entry.and_then(|e| {
-            // 1. Prefer true cardinality if present and non-zero.
-            if let Some(card) = e.cardinality {
-                if card > 0 {
-                    return Some(card);
+    // Resolve each projected level to (hierarchy, canonical unique_name,
+    // total member count). The member count prefers the persisted true
+    // `cardinality` (LEVEL_CARDINALITY from MDSCHEMA_LEVELS, uncapped) and falls
+    // back to `domain.len()` (back-compat with old snapshots / levels lacking
+    // cluster metadata).
+    let resolved: Vec<ResolvedLevel> = mqo
+        .dimensions
+        .iter()
+        .map(|dim| {
+            let maybe_entry = catalog
+                .columns
+                .iter()
+                .find(|col| col.kind == "level" && level_matches(col, &dim.hierarchy, &dim.level));
+            let level_un = maybe_entry
+                .map(|e| e.unique_name.clone())
+                .unwrap_or_else(|| format!("{}.{}", dim.hierarchy, dim.level));
+            let total_members: Option<u64> = maybe_entry.and_then(|e| {
+                if let Some(card) = e.cardinality {
+                    if card > 0 {
+                        return Some(card);
+                    }
                 }
+                e.domain.as_ref().map(|d| d.len() as u64).filter(|&n| n > 0)
+            });
+            ResolvedLevel {
+                hierarchy: dim.hierarchy.clone(),
+                level_un,
+                total_members,
             }
-            // 2. Fall back to domain.len() if we have a domain.
-            e.domain.as_ref().map(|d| d.len() as u64).filter(|&n| n > 0)
-        });
+        })
+        .collect();
 
-        // Apply filter selectivity if a filter targets this level's hierarchy.
-        let level_estimate = estimate_level_cardinality(
-            &level_un,
-            &dim.hierarchy,
-            total_members,
-            &mqo.filters,
-            cap,
-        );
+    // Group projected levels by hierarchy, preserving first-seen order.
+    //
+    // KEY CORRECTNESS POINT (cardinality-estimate-fix): attributes within ONE
+    // hierarchy are functionally dependent — each member of the finest level
+    // determines the coarser levels' values (a store has exactly one manager,
+    // one floor space). Projecting k levels of the SAME hierarchy therefore
+    // yields at most (finest-level cardinality) distinct rows, NOT the product
+    // of the per-level cardinalities. The prior implementation multiplied every
+    // level unconditionally, over-estimating same-hierarchy attribute
+    // projections by orders of magnitude (e.g. Store Name × Store Manager ×
+    // Store Floor Space ≈ 9e5 for ~1e3 stores). Only INDEPENDENT hierarchies
+    // legitimately cross-multiply. A filter on ANY level of a hierarchy
+    // constrains the WHOLE group (the levels co-vary).
+    let mut order: Vec<&str> = Vec::new();
+    let mut groups: std::collections::HashMap<&str, Vec<&ResolvedLevel>> =
+        std::collections::HashMap::new();
+    for rl in &resolved {
+        groups
+            .entry(rl.hierarchy.as_str())
+            .or_insert_with(|| {
+                order.push(rl.hierarchy.as_str());
+                Vec::new()
+            })
+            .push(rl);
+    }
 
-        match level_estimate {
+    let mut total_estimate: u64 = 1;
+    for hier in &order {
+        let levels = &groups[hier];
+
+        // Base: the finest projected level bounds the row count → MAX of the
+        // known member counts across this hierarchy's projected levels.
+        let base: Option<u64> = levels.iter().filter_map(|l| l.total_members).max();
+
+        // A filter on any level of this hierarchy constrains the whole group.
+        let filter_est = hierarchy_filter_estimate(hier, levels, &mqo.filters, cap);
+
+        // A filter can only reduce the base. Combine accordingly.
+        let group_estimate = match (base, filter_est) {
+            (Some(b), Some(f)) => LevelEstimate::Known(b.min(f)),
+            (Some(b), None) => LevelEstimate::Known(b),
+            (None, Some(f)) => LevelEstimate::Known(f),
+            (None, None) => LevelEstimate::Unknown,
+        };
+
+        match group_estimate {
             LevelEstimate::Known(n) => {
-                // Multiply into total; saturate at u64::MAX.
                 total_estimate = total_estimate.saturating_mul(n.max(1));
                 if cap > 0 && total_estimate > cap as u64 {
                     return Err(ProjectionTooLarge {
-                        level: level_un,
+                        level: levels
+                            .last()
+                            .map(|l| l.level_un.clone())
+                            .unwrap_or_else(|| (*hier).to_string()),
                         estimate: total_estimate,
                         cap,
                     });
@@ -204,7 +248,7 @@ fn level_matches(col: &mqo_catalog_binder::catalog::ColumnEntry, dim_hierarchy: 
     false
 }
 
-/// The result of estimating cardinality for a single level.
+/// The result of estimating cardinality for a hierarchy group.
 enum LevelEstimate {
     /// A concrete (possibly filter-adjusted) member count.
     Known(u64),
@@ -212,115 +256,92 @@ enum LevelEstimate {
     Unknown,
 }
 
-/// Estimate the distinct count for one dimension level, applying any filter
-/// that targets it.
-fn estimate_level_cardinality(
-    level_un: &str,
+/// Estimate the row count contributed by the filters that target one
+/// hierarchy group, or `None` when no filter constrains it (caller falls back
+/// to the group's base cardinality).
+///
+/// A filter on ANY level of the hierarchy constrains the whole group, because
+/// the projected levels co-vary. When several filters match, take the most
+/// selective (intersection ≤ the smallest). `Range` filters are matched against
+/// the specific projected level's `unique_name` and total member count.
+fn hierarchy_filter_estimate(
     hierarchy: &str,
-    total_members: Option<u64>,
+    levels: &[&ResolvedLevel],
     filters: &[Filter],
     cap: usize,
-) -> LevelEstimate {
-    // Find the first filter targeting this hierarchy (or level).
+) -> Option<u64> {
+    let mut best: Option<u64> = None;
     for f in filters {
-        match f {
-            Filter::Member { hierarchy: fh, members } if fh == hierarchy => {
-                // IN-list selectivity: the listed members are the result set.
-                return LevelEstimate::Known(members.len() as u64);
-            }
-            Filter::MemberLevel {
-                hierarchy: fh,
-                level: fl,
-                members,
-                ..
-            } if fh == hierarchy && (fl == level_un || fl == &format_level_un(hierarchy, fl)) => {
-                return LevelEstimate::Known(members.len() as u64);
-            }
-            Filter::Range { level: fl, lo, hi } if fl == level_un => {
-                // Range selectivity: (hi - lo) / domain_width when numeric.
-                let selectivity = estimate_range_selectivity(lo, hi, total_members);
-                return match (total_members, selectivity) {
-                    (Some(total), Some(sel)) => {
-                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                        let est = ((total as f64) * sel).ceil() as u64;
-                        LevelEstimate::Known(est.max(1))
-                    }
-                    // Range with unknown total → we only know the filter is
-                    // selective; use cap as the conservative upper bound so it
-                    // may pass (not fail safe; range implies bounded intent).
-                    (None, _) => LevelEstimate::Known(cap as u64),
-                    (Some(_), None) => LevelEstimate::Unknown,
-                };
-            }
-            Filter::Group { op: _, filters: inner } => {
-                // Recurse into group filters.
-                for inner_f in inner {
-                    let sub = estimate_from_single_filter(
-                        level_un,
-                        hierarchy,
-                        total_members,
-                        inner_f,
-                        cap,
-                    );
-                    if let Some(est) = sub {
-                        return est;
-                    }
+        let est = match f {
+            Filter::Group { op, filters: inner } => {
+                // One level of nesting. Collect inner leaf estimates targeting
+                // this hierarchy and combine: AND ⇒ intersection (≤ min),
+                // OR ⇒ union (≤ sum).
+                let inner_ests: Vec<u64> = inner
+                    .iter()
+                    .filter_map(|inf| single_filter_estimate(hierarchy, levels, inf, cap))
+                    .collect();
+                if inner_ests.is_empty() {
+                    None
+                } else {
+                    Some(match op {
+                        FilterGroupOp::And => *inner_ests.iter().min().unwrap_or(&0),
+                        FilterGroupOp::Or => inner_ests.iter().copied().sum(),
+                    })
                 }
             }
-            _ => {}
+            leaf => single_filter_estimate(hierarchy, levels, leaf, cap),
+        };
+        if let Some(e) = est {
+            best = Some(best.map_or(e, |b| b.min(e)));
         }
     }
-
-    // No filter for this level — use raw level cardinality.
-    match total_members {
-        Some(n) => LevelEstimate::Known(n),
-        None => LevelEstimate::Unknown,
-    }
+    best
 }
 
-/// Try to estimate cardinality from a single (possibly inner) filter.
-/// Returns `Some(LevelEstimate)` when the filter matches, `None` otherwise.
-fn estimate_from_single_filter(
-    level_un: &str,
+/// Estimate the row count from a single leaf filter, if it targets this
+/// hierarchy (or one of its projected levels). `None` when the filter does not
+/// apply here.
+fn single_filter_estimate(
     hierarchy: &str,
-    total_members: Option<u64>,
+    levels: &[&ResolvedLevel],
     filter: &Filter,
     cap: usize,
-) -> Option<LevelEstimate> {
+) -> Option<u64> {
     match filter {
-        Filter::Member { hierarchy: fh, members } if fh == hierarchy => {
-            Some(LevelEstimate::Known(members.len() as u64))
-        }
+        // An IN-list on the hierarchy: the listed members are the result set.
+        Filter::Member { hierarchy: fh, members } if fh == hierarchy => Some(members.len() as u64),
+        // An explicit-level IN-list on this hierarchy. `exclude` (NOT-IN) does
+        // not reduce to a small set, so leave the group bounded by its base.
         Filter::MemberLevel {
             hierarchy: fh,
-            level: fl,
             members,
+            exclude,
             ..
-        } if fh == hierarchy && (fl == level_un || true) => {
-            // If the level field is the fully-qualified unique_name or the bare level name.
-            let _ = fl; // suppress unused-variable; condition already checked above
-            Some(LevelEstimate::Known(members.len() as u64))
+        } if fh == hierarchy => {
+            if *exclude {
+                None
+            } else {
+                Some(members.len() as u64)
+            }
         }
-        Filter::Range { level: fl, lo, hi } if fl == level_un => {
-            let selectivity = estimate_range_selectivity(lo, hi, total_members);
-            Some(match (total_members, selectivity) {
-                (Some(total), Some(sel)) => {
+        // A range on one of this hierarchy's projected levels.
+        Filter::Range { level: fl, lo, hi } => {
+            let target = levels.iter().find(|l| l.level_un == *fl)?;
+            match estimate_range_selectivity(lo, hi, target.total_members) {
+                Some(sel) => target.total_members.map(|t| {
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    let est = ((total as f64) * sel).ceil() as u64;
-                    LevelEstimate::Known(est.max(1))
-                }
-                (None, _) => LevelEstimate::Known(cap as u64),
-                (Some(_), None) => LevelEstimate::Unknown,
-            })
+                    let est = ((t as f64) * sel).ceil() as u64;
+                    est.max(1)
+                }),
+                // Range with unknown total → bounded intent; cap is the
+                // conservative upper bound so it may pass.
+                None if target.total_members.is_none() => Some(cap as u64),
+                None => None,
+            }
         }
         _ => None,
     }
-}
-
-/// Format a fully-qualified level unique_name from hierarchy + bare level name.
-/// Only used for comparison, not canonical lookup.
-fn format_level_un(hierarchy: &str, level: &str) -> String {
-    format!("{hierarchy}.{level}")
 }
 
 /// Estimate range selectivity as a fraction `[0, 1]` when both bounds are
@@ -713,6 +734,135 @@ mod tests {
         assert!(
             result.is_ok(),
             "tight range on large-cardinality level should pass within cap; got: {result:?}"
+        );
+    }
+
+    // ── cardinality-estimate-fix regression tests ───────────────────────────
+
+    /// Build a catalog column for one level (realistic unique_name + bare level,
+    /// true cardinality set).
+    fn level_col(hierarchy: &str, level: &str, cardinality: u64) -> ColumnEntry {
+        ColumnEntry {
+            unique_name: format!("{hierarchy}.[{level}]"),
+            label: level.to_string(),
+            kind: "level".to_string(),
+            hierarchy: Some(hierarchy.to_string()),
+            level: Some(level.to_string()),
+            cardinality: Some(cardinality),
+            ..Default::default()
+        }
+    }
+
+    fn projection_with_levels(model: &str, dims: &[(&str, &str)]) -> Mqo {
+        Mqo {
+            model: model.to_string(),
+            measures: vec![],
+            dimensions: dims
+                .iter()
+                .map(|(h, l)| LevelSelection {
+                    hierarchy: (*h).to_string(),
+                    level: (*l).to_string(),
+                })
+                .collect(),
+            filters: vec![],
+            time_intelligence: vec![],
+            order: None,
+            limit: None,
+            non_empty: false,
+            projection: true,
+        }
+    }
+
+    // THE BUG: projecting several attributes of the SAME hierarchy must NOT
+    // cross-multiply their cardinalities. `midway-stores` projects Store Name,
+    // Store Manager, Store Floor Space — all store_dimension levels (~1000 each).
+    // Old code: 1000 × 1000 × 1000 = 1e9 → wrongly declined. Fixed: the finest
+    // level bounds the rows (max = 1000) → well under a 10k cap → passes.
+    #[test]
+    fn same_hierarchy_attributes_do_not_cross_multiply() {
+        let catalog = CatalogSnapshot {
+            columns: vec![
+                level_col("store_dimension", "Store Name", 1002),
+                level_col("store_dimension", "Store Manager", 900),
+                level_col("store_dimension", "Store Floor Space", 1000),
+            ],
+            ..Default::default()
+        };
+        let mqo = projection_with_levels(
+            "store_dimension",
+            &[
+                ("store_dimension", "Store Name"),
+                ("store_dimension", "Store Manager"),
+                ("store_dimension", "Store Floor Space"),
+            ],
+        );
+        let result = check_projection_cardinality(&mqo, &catalog, 10_000);
+        assert!(
+            result.is_ok(),
+            "same-hierarchy attribute projection must be bounded by the finest level (~1002), \
+             not the product (~9e8); got: {result:?}"
+        );
+    }
+
+    // A member filter on ANY level of the hierarchy constrains the whole group:
+    // `midway-stores` filters Store City='Midway', so all co-varying store
+    // attributes collapse to that city's stores. Even with a tiny cap it passes.
+    #[test]
+    fn member_filter_constrains_whole_hierarchy_group() {
+        let catalog = CatalogSnapshot {
+            columns: vec![
+                level_col("store_dimension", "Store Name", 1002),
+                level_col("store_dimension", "Store Manager", 900),
+                level_col("store_dimension", "Store Floor Space", 1000),
+                level_col("store_dimension", "Store City", 250),
+            ],
+            ..Default::default()
+        };
+        let mut mqo = projection_with_levels(
+            "store_dimension",
+            &[
+                ("store_dimension", "Store Name"),
+                ("store_dimension", "Store Manager"),
+                ("store_dimension", "Store Floor Space"),
+            ],
+        );
+        // Filter Store City to a single city (the midway-stores shape).
+        mqo.filters.push(Filter::MemberLevel {
+            hierarchy: "store_dimension".to_string(),
+            level: "store_dimension.[Store City]".to_string(),
+            members: vec!["Midway".to_string()],
+            exclude: false,
+        });
+        let result = check_projection_cardinality(&mqo, &catalog, 50);
+        assert!(
+            result.is_ok(),
+            "a single-member filter on one level must constrain the whole co-varying group; got: {result:?}"
+        );
+    }
+
+    // INDEPENDENT hierarchies DO legitimately cross-multiply. Two 200-member
+    // levels on different hierarchies → 40,000 distinct combinations → exceeds a
+    // 10k cap → correctly declines (guards the genuine blow-up case).
+    #[test]
+    fn independent_hierarchies_cross_multiply() {
+        let catalog = CatalogSnapshot {
+            columns: vec![
+                level_col("store_dimension", "Store City", 200),
+                level_col("product_dimension", "Product Brand Name", 200),
+            ],
+            ..Default::default()
+        };
+        let mqo = projection_with_levels(
+            "tpcds_benchmark_model",
+            &[
+                ("store_dimension", "Store City"),
+                ("product_dimension", "Product Brand Name"),
+            ],
+        );
+        let result = check_projection_cardinality(&mqo, &catalog, 10_000);
+        assert!(
+            result.is_err(),
+            "independent hierarchies must cross-multiply (200×200=40k > 10k cap); got: {result:?}"
         );
     }
 }
