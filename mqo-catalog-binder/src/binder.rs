@@ -102,6 +102,28 @@ pub struct MemberBindError {
     pub note: String,
 }
 
+/// A cross-hierarchy filter+projection mismatch: the filter level and the projected
+/// level belong to different hierarchies but share the same canonical attribute family
+/// (near-twin) and no hierarchy co-resolves both (FR-3).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossHierarchyFilterError {
+    /// Stable error code for clients and scorers.
+    pub code: String,
+    /// The filter level as given in the MQO (from `MemberLevel::level`).
+    pub filter_level: String,
+    /// The hierarchy the filter level belongs to.
+    pub filter_hierarchy: String,
+    /// The projected level's hierarchy.
+    pub projection_hierarchy: String,
+    /// The canonical attribute family that groups these near-twin levels.
+    pub canonical_family: String,
+    /// All hierarchies in the catalog that carry a level with this canonical family.
+    /// Operator hint: one of these likely co-resolves both the projection and the filter.
+    pub candidate_hierarchies: Vec<String>,
+    /// Human-readable explanation. Stable for log lines.
+    pub detail: String,
+}
+
 /// The result of `bind()` / `bind_with_compat()` / `bind_with_date_roles()`.
 #[derive(Debug)]
 pub enum BindResult {
@@ -122,6 +144,10 @@ pub enum BindResult {
     /// One or more `Member` filter values match the domains of multiple levels
     /// in the hierarchy — caller must disambiguate.
     MemberAmbiguous(Vec<MemberBindError>),
+    /// A `MemberLevel` filter is on a near-twin hierarchy that does not co-resolve
+    /// with the projected dimension hierarchy. Typed decline: never a silent 0-row
+    /// result, never an unbounded thrash (FR-3, NFR-2).
+    MemberUnboundCrossHierarchy(Vec<CrossHierarchyFilterError>),
 }
 
 // ── Resolution helpers ────────────────────────────────────────────────────────
@@ -292,6 +318,248 @@ fn check_member_filters(
     (unbound, ambiguous)
 }
 
+// ── Canonical near-twin label helpers ────────────────────────────────────────
+
+/// Build the set of all level captions from the catalog snapshot.
+/// Used as the registry for `canonical_level_label` suffix-matching.
+fn all_level_captions(snapshot: &CatalogSnapshot) -> std::collections::HashSet<String> {
+    snapshot
+        .columns
+        .iter()
+        .filter(|c| c.kind == "level")
+        .filter_map(|c| c.level.as_deref().or_else(|| if c.label.is_empty() { None } else { Some(c.label.as_str()) }))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Collapse a near-twin level caption to its canonical attribute family name.
+///
+/// E.g. `"Promotion Product Item Product Brand Name"` → `"Product Brand Name"`.
+/// Conservative: unique captions (no proper suffix is a level caption) are unchanged.
+///
+/// This is intentionally duplicated from `mqo-mcp-server/src/handle_ops.rs` so the
+/// binder crate has no dependency on the server crate. Both must stay in sync.
+fn canonical_level_label(caption: &str, all_captions: &std::collections::HashSet<String>) -> String {
+    let tokens: Vec<&str> = caption.split_whitespace().collect();
+    if tokens.len() < 2 {
+        return caption.to_string();
+    }
+    for i in 1..tokens.len() {
+        let suffix = tokens[i..].join(" ");
+        if all_captions.contains(&suffix) {
+            return suffix;
+        }
+    }
+    caption.to_string()
+}
+
+// ── Cross-hierarchy MemberLevel filter check (FR-1/FR-2/FR-3) ────────────────
+
+/// Compute the set of canonical attribute families (canonical level labels)
+/// present in a given hierarchy's levels.
+fn hierarchy_canonical_families(
+    hierarchy: &str,
+    snapshot: &CatalogSnapshot,
+    captions: &std::collections::HashSet<String>,
+) -> std::collections::HashSet<String> {
+    let hier_lc = hierarchy.to_lowercase();
+    snapshot
+        .columns
+        .iter()
+        .filter(|c| {
+            c.kind == "level"
+                && c.hierarchy
+                    .as_deref()
+                    .is_some_and(|h| h.to_lowercase() == hier_lc)
+        })
+        .filter_map(|c| c.level.as_deref())
+        .map(|cap| canonical_level_label(cap, captions))
+        .collect()
+}
+
+/// Check whether any `MemberLevel` filter pins a level to a near-twin hierarchy
+/// that is different from the projected dimension's hierarchy, causing a
+/// cross-hierarchy mismatch where the filter cannot apply to the projected rows.
+///
+/// **Near-twin detection:** two hierarchies are near-twins of each other when
+/// they share at least one canonical attribute family (i.e. they both carry
+/// some version of the same logical attribute — one with a role prefix, one
+/// as the base form). In the TPC-DS product schema, `product_dimension`,
+/// `promotion_product_item_product_dimension`, and `store_item_product_dimension`
+/// are near-twins because they all carry "Product Brand Name" and "Item Product
+/// Name" (under different role-prefixed level names that collapse to the same
+/// canonical family via `canonical_level_label`).
+///
+/// When the `MemberLevel` filter hierarchy and the projection hierarchy are
+/// near-twins (shared canonical families), a filter on one and a projection
+/// on the other will return 0 rows in the engine. The binder declines with a
+/// typed `CrossHierarchyFilterError` naming:
+/// - The co-resolving hierarchy (preferred: the projection's hierarchy, if it
+///   also carries the filter attribute's canonical family).
+/// - All candidate hierarchies (operator hint).
+///
+/// Conservative / fail-open: only fires for `MemberLevel` filters (which
+/// carry an explicit hierarchy). `Member` filters (no level pin) are unaffected.
+///
+/// Returns a list of `CrossHierarchyFilterError`; empty means no issue.
+fn check_cross_hierarchy_member_level_filters(
+    mqo: &Mqo,
+    snapshot: &CatalogSnapshot,
+) -> Vec<CrossHierarchyFilterError> {
+    // No projection levels → nothing to co-resolve with.
+    if mqo.dimensions.is_empty() {
+        return Vec::new();
+    }
+
+    let captions = all_level_captions(snapshot);
+
+    // Collect all distinct projection hierarchies (case-preserved).
+    let proj_hierarchies: Vec<String> = mqo
+        .dimensions
+        .iter()
+        .map(|sel| sel.hierarchy.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let mut errors: Vec<CrossHierarchyFilterError> = Vec::new();
+
+    for filter in &mqo.filters {
+        let Filter::MemberLevel { hierarchy: filter_hier, level: filter_level_un, .. } = filter else {
+            continue;
+        };
+
+        let filter_hier_lc = filter_hier.to_lowercase();
+
+        // For each projection hierarchy that differs from the filter's hierarchy...
+        for proj_hier in &proj_hierarchies {
+            let proj_hier_lc = proj_hier.to_lowercase();
+            if filter_hier_lc == proj_hier_lc {
+                // Same hierarchy → no cross-hierarchy issue.
+                continue;
+            }
+
+            // Compute canonical attribute families for each hierarchy.
+            let filter_families = hierarchy_canonical_families(filter_hier, snapshot, &captions);
+            let proj_families = hierarchy_canonical_families(proj_hier, snapshot, &captions);
+
+            // Near-twin check: do the two hierarchies share any canonical attribute family?
+            // If not, they are completely unrelated dimensions → no cross-hierarchy issue
+            // (e.g. filtering by date while projecting products is fine).
+            let shared_families: std::collections::HashSet<String> = filter_families
+                .intersection(&proj_families)
+                .cloned()
+                .collect();
+
+            if shared_families.is_empty() {
+                // Unrelated hierarchies — not a near-twin mismatch.
+                continue;
+            }
+
+            // These hierarchies ARE near-twins (shared canonical families).
+            // A filter on filter_hier + projection on proj_hier will produce 0 rows.
+            // Decline with a typed error.
+
+            // Extract the canonical family of the filter level itself (for the report).
+            let filter_caption = filter_level_un
+                .rsplit_once(".[")
+                .map(|(_, rest)| rest.trim_end_matches(']').to_string())
+                .or_else(|| {
+                    filter_level_un
+                        .rsplit_once('.')
+                        .map(|(_, rest)| rest.to_string())
+                })
+                .unwrap_or_else(|| filter_level_un.clone());
+            let filter_level_family = canonical_level_label(&filter_caption, &captions);
+
+            // Collect all near-twin hierarchies (those that share ANY family with the
+            // filter hierarchy). These are the operator's candidate co-resolving choices.
+            let mut candidate_hierarchies: Vec<String> = snapshot
+                .columns
+                .iter()
+                .filter(|c| c.kind == "level")
+                .filter_map(|c| c.hierarchy.as_deref())
+                .map(str::to_string)
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .filter(|hier| {
+                    if hier.to_lowercase() == filter_hier_lc {
+                        return false; // exclude the filter hierarchy itself
+                    }
+                    let h_fams = hierarchy_canonical_families(hier, snapshot, &captions);
+                    !h_fams.intersection(&filter_families).collect::<std::collections::HashSet<_>>().is_empty()
+                })
+                .collect();
+            candidate_hierarchies.sort();
+
+            // Preferred co-resolving hierarchy: the projection's own hierarchy, if it
+            // carries the filter level's specific attribute family.
+            let co_resolving_hier = if proj_families.contains(&filter_level_family) {
+                Some(proj_hier.clone())
+            } else {
+                // Fallback: the unique non-filter candidate from the list.
+                let alternatives: Vec<String> = candidate_hierarchies
+                    .iter()
+                    .filter(|h| h.to_lowercase() != filter_hier_lc)
+                    .cloned()
+                    .collect();
+                if alternatives.len() == 1 {
+                    Some(alternatives[0].clone())
+                } else {
+                    None
+                }
+            };
+
+            // Use a stable, representative family label for the error report.
+            // Prefer the filter level's own family; fall back to any shared family.
+            let report_family = if shared_families.contains(&filter_level_family) {
+                filter_level_family.clone()
+            } else {
+                let mut v: Vec<String> = shared_families.into_iter().collect();
+                v.sort();
+                v.into_iter().next().unwrap_or_else(|| filter_level_family.clone())
+            };
+
+            let detail = if let Some(ref co) = co_resolving_hier {
+                format!(
+                    "filter level `{}` is on near-twin hierarchy `{}` but the projected level \
+                     is on `{}`; these hierarchies share attribute family `{}` and cannot \
+                     co-resolve across hierarchy boundaries — use hierarchy `{}` for both \
+                     the filter and the projection",
+                    filter_level_un, filter_hier, proj_hier, report_family, co
+                )
+            } else {
+                format!(
+                    "filter level `{}` is on near-twin hierarchy `{}` but the projected level \
+                     is on `{}`; these hierarchies share attribute family `{}` and cannot \
+                     co-resolve across hierarchy boundaries — candidate co-resolving \
+                     hierarchies: {}",
+                    filter_level_un,
+                    filter_hier,
+                    proj_hier,
+                    report_family,
+                    candidate_hierarchies.join(", ")
+                )
+            };
+
+            errors.push(CrossHierarchyFilterError {
+                code: "member_unbound_cross_hierarchy".to_string(),
+                filter_level: filter_level_un.clone(),
+                filter_hierarchy: filter_hier.clone(),
+                projection_hierarchy: proj_hier.clone(),
+                canonical_family: report_family,
+                candidate_hierarchies,
+                detail,
+            });
+
+            // One error per filter (first mismatched projection hierarchy wins).
+            break;
+        }
+    }
+
+    errors
+}
+
 // ── Main bind function ────────────────────────────────────────────────────────
 
 /// Bind an MQO against a catalog snapshot.
@@ -416,10 +684,14 @@ pub fn bind(mqo: &Mqo, snapshot: &CatalogSnapshot) -> BindResult {
     // ── Member-filter domain check ────────────────────────────────────────
     let (member_unbound, member_ambiguous) = check_member_filters(mqo, snapshot);
 
+    // ── Cross-hierarchy MemberLevel filter check (FR-1/FR-2/FR-3) ────────
+    let cross_hierarchy_errors = check_cross_hierarchy_member_level_filters(mqo, snapshot);
+
     // ── Collate results ───────────────────────────────────────────────────
     // Precedence: ref-resolution errors (ambiguous/not_found) > member filter
-    // errors > bound. Ref errors are authoritative; member errors only surface
-    // when all refs resolved successfully.
+    // errors > cross-hierarchy filter errors > bound. Ref errors are
+    // authoritative; member and cross-hierarchy errors only surface when all
+    // refs resolved successfully.
     if !ambiguous.is_empty() {
         return BindResult::Ambiguous(ambiguous);
     }
@@ -431,6 +703,9 @@ pub fn bind(mqo: &Mqo, snapshot: &CatalogSnapshot) -> BindResult {
     }
     if !member_ambiguous.is_empty() {
         return BindResult::MemberAmbiguous(member_ambiguous);
+    }
+    if !cross_hierarchy_errors.is_empty() {
+        return BindResult::MemberUnboundCrossHierarchy(cross_hierarchy_errors);
     }
 
     BindResult::Bound(Box::new(BoundMqoOutput {
@@ -1288,5 +1563,200 @@ mod binder_unit_tests {
         assert!(is_date_hierarchy("sold_date_week_hierarchy"));
         assert!(!is_date_hierarchy("store_dimension"));
         assert!(!is_date_hierarchy("customer_dimension"));
+    }
+
+    // ── Cross-hierarchy member-filter binding tests (FR-1/FR-2/FR-3) ────────────
+
+    /// Helper: build a minimal near-twin product catalog, mirroring the TPC-DS
+    /// `product_dimension` / `promotion_product_item_product_dimension` /
+    /// `store_item_product_dimension` structure. All three hierarchies carry
+    /// brand-name and item-product-name levels.
+    fn near_twin_product_snapshot() -> CatalogSnapshot {
+        CatalogSnapshot {
+            columns: vec![
+                // Base hierarchy: product_dimension
+                make_level(
+                    "product_dimension.[Item Product Name]",
+                    "Item Product Name",
+                    "product_dimension",
+                    "Item Product Name",
+                ),
+                make_level(
+                    "product_dimension.[Product Brand Name]",
+                    "Product Brand Name",
+                    "product_dimension",
+                    "Product Brand Name",
+                ),
+                // Near-twin 1: promotion_product_item_product_dimension
+                make_level(
+                    "promotion_product_item_product_dimension.[Promotion Product Item Item Product Name]",
+                    "Promotion Product Item Item Product Name",
+                    "promotion_product_item_product_dimension",
+                    "Promotion Product Item Item Product Name",
+                ),
+                make_level(
+                    "promotion_product_item_product_dimension.[Promotion Product Item Product Brand Name]",
+                    "Promotion Product Item Product Brand Name",
+                    "promotion_product_item_product_dimension",
+                    "Promotion Product Item Product Brand Name",
+                ),
+                // Near-twin 2: store_item_product_dimension
+                make_level(
+                    "store_item_product_dimension.[Store Item Item Product Name]",
+                    "Store Item Item Product Name",
+                    "store_item_product_dimension",
+                    "Store Item Item Product Name",
+                ),
+                make_level(
+                    "store_item_product_dimension.[Store Item Product Brand Name]",
+                    "Store Item Product Brand Name",
+                    "store_item_product_dimension",
+                    "Store Item Product Brand Name",
+                ),
+                // A measure (needed for a valid MQO)
+                make_measure("tpcds.total_store_sales", "Total Store Sales"),
+            ],
+            ..CatalogSnapshot::default()
+        }
+    }
+
+    /// **FR-1 / AC-1**: project `product_dimension.[Item Product Name]` and filter
+    /// with `MemberLevel` on the near-twin brand level from a *different* hierarchy
+    /// (`promotion_product_item_product_dimension.[…Product Brand Name]`).
+    ///
+    /// Expected: `MemberUnboundCrossHierarchy` decline naming `product_dimension` as
+    /// a co-resolving candidate (it also carries "Product Brand Name").
+    #[test]
+    fn cross_hierarchy_filter_binding_co_resolves() {
+        let snapshot = near_twin_product_snapshot();
+        let mqo = Mqo {
+            model: "tpcds".to_string(),
+            measures: vec![],
+            dimensions: vec![LevelSelection {
+                hierarchy: "product_dimension".to_string(),
+                level: "Item Product Name".to_string(),
+            }],
+            filters: vec![Filter::MemberLevel {
+                hierarchy: "promotion_product_item_product_dimension".to_string(),
+                level: "promotion_product_item_product_dimension.[Promotion Product Item Product Brand Name]".to_string(),
+                members: vec!["corpcorp #1".to_string()],
+                exclude: false,
+            }],
+            time_intelligence: vec![],
+            order: None,
+            limit: None,
+            non_empty: false,
+            projection: true,
+        };
+        match bind(&mqo, &snapshot) {
+            BindResult::MemberUnboundCrossHierarchy(errs) => {
+                assert_eq!(errs.len(), 1, "exactly one cross-hierarchy error");
+                let e = &errs[0];
+                assert_eq!(e.code, "member_unbound_cross_hierarchy");
+                assert_eq!(e.canonical_family, "Product Brand Name",
+                    "canonical family should be the base brand attribute");
+                assert_eq!(e.filter_hierarchy, "promotion_product_item_product_dimension");
+                assert_eq!(e.projection_hierarchy, "product_dimension");
+                // The co-resolving candidate must name product_dimension (it carries the filter attribute).
+                assert!(
+                    e.candidate_hierarchies.contains(&"product_dimension".to_string()),
+                    "product_dimension must be a candidate (carries Product Brand Name): {:?}",
+                    e.candidate_hierarchies
+                );
+                // The detail should name product_dimension as the preferred co-resolving hierarchy.
+                assert!(
+                    e.detail.contains("product_dimension"),
+                    "detail must mention the co-resolving hierarchy: {}",
+                    e.detail
+                );
+            }
+            other => panic!("expected MemberUnboundCrossHierarchy, got {other:?}"),
+        }
+    }
+
+    /// **FR-3 / AC-3**: filter level on hierarchy incompatible with projected level
+    /// (both hierarchies carry some near-twin levels, but NOT the same canonical
+    /// family as each other's projected/filter level). Use a fabricated scenario
+    /// where the filter attribute's canonical family does NOT match any level in the
+    /// projection hierarchy → decline with all candidate hierarchies.
+    ///
+    /// Here: project "Item Product Name" from `product_dimension`; filter on
+    /// "Product Brand Name" from `store_item_product_dimension` (a near-twin brand).
+    /// `product_dimension` ALSO carries "Product Brand Name" (same canonical family)
+    /// → the projection's hierarchy IS a co-resolving candidate, so the decline
+    /// correctly names it.
+    #[test]
+    fn cross_hierarchy_filter_no_co_resolve_declines() {
+        let snapshot = near_twin_product_snapshot();
+        // Use a brand filter from store_item hierarchy (cross-hierarchy vs product_dimension projection).
+        let mqo = Mqo {
+            model: "tpcds".to_string(),
+            measures: vec![],
+            dimensions: vec![LevelSelection {
+                hierarchy: "product_dimension".to_string(),
+                level: "Item Product Name".to_string(),
+            }],
+            filters: vec![Filter::MemberLevel {
+                hierarchy: "store_item_product_dimension".to_string(),
+                level: "store_item_product_dimension.[Store Item Product Brand Name]".to_string(),
+                members: vec!["somebrand".to_string()],
+                exclude: false,
+            }],
+            time_intelligence: vec![],
+            order: None,
+            limit: None,
+            non_empty: false,
+            projection: true,
+        };
+        match bind(&mqo, &snapshot) {
+            BindResult::MemberUnboundCrossHierarchy(errs) => {
+                assert_eq!(errs.len(), 1);
+                let e = &errs[0];
+                assert_eq!(e.code, "member_unbound_cross_hierarchy");
+                // Must name at least one candidate hierarchy (never empty).
+                assert!(
+                    !e.candidate_hierarchies.is_empty(),
+                    "candidate_hierarchies must be non-empty"
+                );
+                // detail must be non-empty (operator guidance).
+                assert!(!e.detail.is_empty());
+            }
+            other => panic!("expected MemberUnboundCrossHierarchy, got {other:?}"),
+        }
+    }
+
+    /// **Guardrail / AC-5**: a query with no near-twin attribute ambiguity — filter
+    /// and projection on the *same* hierarchy — must bind identically to before
+    /// (no cross-hierarchy decline introduced).
+    #[test]
+    fn single_hierarchy_query_unchanged() {
+        let snapshot = near_twin_product_snapshot();
+        // Both the dimension and the filter are on product_dimension → no cross-hierarchy issue.
+        let mqo = Mqo {
+            model: "tpcds".to_string(),
+            measures: vec![MeasureRef {
+                unique_name: "Total Store Sales".to_string(),
+            }],
+            dimensions: vec![LevelSelection {
+                hierarchy: "product_dimension".to_string(),
+                level: "Item Product Name".to_string(),
+            }],
+            filters: vec![Filter::MemberLevel {
+                hierarchy: "product_dimension".to_string(),
+                level: "product_dimension.[Product Brand Name]".to_string(),
+                members: vec!["somebrand".to_string()],
+                exclude: false,
+            }],
+            time_intelligence: vec![],
+            order: None,
+            limit: None,
+            non_empty: false,
+            projection: false,
+        };
+        // Must bind (same hierarchy for both filter and projection).
+        assert!(
+            matches!(bind(&mqo, &snapshot), BindResult::Bound(_)),
+            "same-hierarchy filter+projection must bind without cross-hierarchy decline"
+        );
     }
 }
