@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.28.0 — 2026-06-15
+
+Queryable-model grounding: `list_models` now returns a `model_details` array annotating each model with `queryable: true|false|null` derived from the live XMLA discovery map (true = mapped cube, false = dimension-only table, null = discovery not run). `describe_model` carries the same flag plus `candidate_cubes` for non-queryable dimensions. `query_multidimensional` intercepts requests against a non-queryable model before execution and returns a typed `model_path/non_queryable_dimension` error naming the cube(s) to use — replacing the opaque `infrastructure/xmla_coords_not_found` that forced the LLM to guess. Fail-safe: when discovery mapped 0 cubes, queryability is `unknown` and no real cube is ever tagged false. Fixes 6/20 `max_steps` convergence failures in `tpcds_sql_derived` run `20260615T011847Z` where the agent burned its step budget probing dimension-named models. (PRD-mqo-queryable-model-grounding)
+
 ## v0.27.0 — 2026-06-14
 
 Projection cardinality guard now estimates a level's distinct cardinality from the true `LEVEL_CARDINALITY` persisted at ingest, not the truncated `domain.len()`. The cluster's level cardinality is read during MDSCHEMA ingestion and stored on each catalog column (`cardinality: Option<u64>`); the guard prefers it, falling back to `domain.len()` only when absent (back-compat with old snapshots). Fixes a real under-estimate: a level whose domain is capped at `domain_cap` (~50) but whose true cardinality is far larger (e.g. Sold Calendar Week, 10,436) was wrongly admitted; it now declines `projection_too_large` with the true estimate. Small known levels (e.g. Carrier, 20) still admit; `card == 0`/absent still maps to `cardinality_unknown`. (PRD-mqo-cardinality-from-level-count)
