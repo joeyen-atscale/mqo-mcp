@@ -85,7 +85,12 @@ pub fn parse_xmla_cellset(xml: &str, limit: usize) -> Result<Vec<Value>, EngineE
 /// ```
 fn parse_tabular_rowset(xml: &str, limit: usize) -> Result<Vec<Value>, EngineError> {
     let mut reader = Reader::from_str(xml);
-    reader.config_mut().trim_text(true);
+    // Do NOT trim_text: banded level values such as "  0- 50" and " 50-100"
+    // carry meaningful leading spaces that distinguish tier buckets.  Trimming
+    // would collapse them to "0- 50" / "50-100", mismatching the gold SQL output.
+    // Whitespace-only text nodes that appear between XML tags (outside <row> or
+    // outside column elements) are harmlessly ignored by the `in_row` / `current_col`
+    // guards below.
 
     let mut rows: Vec<Value> = Vec::new();
     let mut in_row = false;
@@ -125,7 +130,11 @@ fn parse_tabular_rowset(xml: &str, limit: usize) -> Result<Vec<Value>, EngineErr
                         let raw = e.unescape().map_err(|err| EngineError::QueryError {
                             reason: format!("XML unescape error: {err}"),
                         })?;
-                        let v = coerce_cell(raw.trim());
+                        // Pass the raw value without trimming so that
+                        // leading/trailing spaces in banded level members
+                        // (e.g. "  0- 50", " 50-100") are preserved exactly
+                        // as the semantic model emits them.
+                        let v = coerce_cell(&raw);
                         current_obj.insert(col, v);
                     }
                 }
@@ -234,7 +243,9 @@ fn parse_mddataset(xml: &str, limit: usize) -> Result<Vec<Value>, EngineError> {
 /// First pass: scan the XML and populate `AxesState` + `CellState`.
 fn scan_mddataset_xml(xml: &str) -> Result<(AxesState, CellState), EngineError> {
     let mut reader = Reader::from_str(xml);
-    reader.config_mut().trim_text(true);
+    // Do NOT trim_text: cell values in banded levels ("  0- 50", " 50-100") carry
+    // semantically significant leading spaces.  Column captions are trimmed
+    // explicitly in the Text handler below.
 
     let mut axes = AxesState::new();
     let mut cells = CellState::new();
@@ -254,11 +265,15 @@ fn scan_mddataset_xml(xml: &str) -> Result<(AxesState, CellState), EngineError> 
                 let raw = e.unescape().map_err(|err| EngineError::QueryError {
                     reason: format!("XML unescape error: {err}"),
                 })?;
-                let text = raw.trim().to_string();
                 if axes.in_caption && in_axes {
-                    axes.current_tuple_members.push(text);
-                } else if cells.in_value && in_celldata && !text.is_empty() {
-                    cells.set_at_ordinal(coerce_cell(&text));
+                    // Captions are column/hierarchy names — trim is appropriate.
+                    axes.current_tuple_members.push(raw.trim().to_string());
+                } else if cells.in_value && in_celldata {
+                    // Cell values: preserve leading/trailing spaces (banded tiers).
+                    // Only skip purely-whitespace nodes that represent XML indentation.
+                    if !raw.trim().is_empty() {
+                        cells.set_at_ordinal(coerce_cell(&raw));
+                    }
                 }
             }
             Ok(Event::Empty(ref e)) => {
@@ -435,15 +450,21 @@ fn extract_fault_string(xml: &str) -> String {
 
 /// Convert a cell text value to a `serde_json::Value`.
 ///
-/// - Empty / whitespace-only → `Value::Null`  (never `0`)
+/// - Empty or whitespace-only → `Value::Null`  (never `0`)
 /// - Parses as `f64` → `json!(n)`
-/// - Otherwise → `Value::String`
+/// - Otherwise → `Value::String` (value preserved verbatim, including any
+///   leading/trailing spaces that are part of a banded level member such as
+///   `"  0- 50"` or `" 50-100"`).
+///
+/// Callers must **not** pre-trim the text; trimming is intentionally left to
+/// this function so that whitespace-only XML indentation nodes become `Null`
+/// while meaningful leading spaces in tier labels are preserved.
 #[inline]
 fn coerce_cell(text: &str) -> Value {
-    if text.is_empty() {
+    if text.trim().is_empty() {
         return Value::Null;
     }
-    if let Ok(n) = text.parse::<f64>() {
+    if let Ok(n) = text.trim().parse::<f64>() {
         serde_json::json!(n)
     } else {
         Value::String(text.to_string())
@@ -581,4 +602,81 @@ mod tests {
     // ── AC6: No synthetic fallback in xmla_execute ───────────────────────────
     // (Verified structurally: executor.rs calls parse_xmla_cellset whose only
     //  non-Err return is the parsed Vec — no synthetic branches exist.)
+
+    // ── AC7: Banded-tier leading spaces are preserved (net-profit-tier fix) ───
+
+    const BANDED_TIERS_FIXTURE: &str =
+        include_str!("../tests/fixtures/xmla_tabular_banded_tiers.xml");
+
+    /// Tabular rowset: cell values with leading spaces (banded tier labels such
+    /// as `"  0- 50"` and `" 50-100"`) must be returned verbatim — trimming
+    /// would produce `"0- 50"` / `"50-100"` which mismatches the gold SQL output.
+    #[test]
+    fn tabular_banded_tier_leading_spaces_preserved() {
+        let rows = parse_xmla_cellset(BANDED_TIERS_FIXTURE, 100).expect("parse ok");
+        assert_eq!(rows.len(), 4, "4 tier rows");
+
+        // Row 0: "  0- 50" — two leading spaces
+        assert_eq!(
+            rows[0]["Net_x0020_Profit_x0020_Tier"],
+            json!("  0- 50"),
+            "two leading spaces preserved"
+        );
+
+        // Row 1: " 50-100" — one leading space
+        assert_eq!(
+            rows[1]["Net_x0020_Profit_x0020_Tier"],
+            json!(" 50-100"),
+            "one leading space preserved"
+        );
+
+        // Row 2: " 50 or Less" — one leading space
+        assert_eq!(
+            rows[2]["Net_x0020_Profit_x0020_Tier"],
+            json!(" 50 or Less"),
+            "leading space in 'or Less' variant preserved"
+        );
+
+        // Row 3: "100-150" — no leading space, baseline unchanged
+        assert_eq!(
+            rows[3]["Net_x0020_Profit_x0020_Tier"],
+            json!("100-150"),
+            "no leading space baseline unchanged"
+        );
+    }
+
+    /// `coerce_cell` must treat whitespace-only text as Null (indentation nodes),
+    /// while preserving leading spaces that precede non-whitespace content.
+    #[test]
+    fn coerce_cell_whitespace_only_is_null() {
+        assert_eq!(coerce_cell(""), Value::Null, "empty → Null");
+        assert_eq!(coerce_cell("   "), Value::Null, "spaces-only → Null");
+        assert_eq!(coerce_cell("\t\n"), Value::Null, "tab/newline-only → Null");
+    }
+
+    #[test]
+    fn coerce_cell_leading_space_preserved_in_string() {
+        assert_eq!(
+            coerce_cell("  0- 50"),
+            json!("  0- 50"),
+            "leading spaces in tier label preserved"
+        );
+        assert_eq!(
+            coerce_cell(" 50-100"),
+            json!(" 50-100"),
+            "one leading space preserved"
+        );
+    }
+
+    #[test]
+    fn coerce_cell_numeric_with_surrounding_spaces_parses_as_number() {
+        // Numbers may arrive with surrounding whitespace from XML formatting;
+        // numeric parsing trims first.
+        assert_eq!(coerce_cell(" 42 "), json!(42.0_f64), "padded int → f64");
+        assert_eq!(
+            coerce_cell("  3.14  "),
+            json!(3.14_f64),
+            "padded float → f64"
+        );
+    }
 }
