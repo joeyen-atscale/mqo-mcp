@@ -1865,6 +1865,7 @@ impl Server {
                     bound: out.bound.clone(),
                     filters_applied: out.filters_applied.clone(),
                     filters_dropped: out.filters_dropped.clone(),
+                    row_cap_tripped: out.row_cap_tripped,
                 };
 
                 // Cursor mode: persist and return first page when rows > page_size.
@@ -2109,6 +2110,11 @@ fn structured_ok(
     // the LLM can operate on the result without ever receiving all rows.
     attach_handle_summary(&mut payload, handle, out);
 
+    // FR-3: when the real result exceeded the materialization budget, the rows
+    // (and handle) are a truncated prefix. Surface a typed over-budget signal so
+    // a consumer never mistakes a clamped set for the full answer.
+    attach_over_budget_signal(&mut payload, out);
+
     // AC8: include federation metadata when active.
     if let Some(cluster) = cluster_used {
         payload["cluster_used"] = json!(cluster);
@@ -2216,6 +2222,9 @@ fn structured_cursor_ok(
     // Attach the typed-store handle + bounded summary alongside the cursor.
     attach_handle_summary(&mut payload, handle, out);
 
+    // FR-3: typed over-budget signal when the result exceeded the budget.
+    attach_over_budget_signal(&mut payload, out);
+
     if let Some(cluster) = cluster_used {
         payload["cluster_used"] = json!(cluster);
         payload["latency_ms"] = json!(latency_ms);
@@ -2226,6 +2235,44 @@ fn structured_cursor_ok(
         "structuredContent": payload,
         "isError": false
     })
+}
+
+/// Attach the typed over-budget signal (FR-3) when the engine result exceeded
+/// the materialization budget. On a tripped result the rows were truncated to
+/// exactly the budget, so `out.rows.len()` IS the budget value to report.
+///
+/// The query response stays `isError: false` (a handle + truncated prefix is
+/// still usable), but it carries an explicit `result_too_large` block plus a
+/// `truncated: true` marker and a steering note, so the consumer treats the
+/// handle as an incomplete prefix and re-runs with a higher `--max-result-rows`
+/// or a narrowing `dataset_filter`/`dataset_top_n` — never as the full answer.
+fn attach_over_budget_signal(payload: &mut Value, out: &PipelineOutput) {
+    if !out.row_cap_tripped {
+        return;
+    }
+    let budget = out.rows.len();
+    payload["truncated"] = json!(true);
+    payload["result_too_large"] = json!({
+        "code": "result_too_large",
+        "budget": budget,
+        "detail": format!(
+            "the query's full result exceeded the server materialization budget \
+             ({budget} rows); the handle and any inline rows are a truncated prefix \
+             of exactly {budget} rows, NOT the complete result. Raise \
+             --max-result-rows (up to the 200000 upstream ceiling) to materialize \
+             more, or narrow the query (dataset_filter / dataset_top_n / add a \
+             filter) so the full result fits the budget."
+        ),
+    });
+    let note = format!(
+        "OVER BUDGET: result exceeded the materialization budget ({budget} rows) and \
+         was truncated to {budget}. This handle is an incomplete prefix — do not treat \
+         aggregates/exports over it as the full answer."
+    );
+    match payload.get_mut("notes").and_then(Value::as_array_mut) {
+        Some(arr) => arr.push(json!(note)),
+        None => payload["notes"] = json!([note]),
+    }
 }
 
 /// Build a tool-call *application* error result (`isError: true`). Per MCP,
@@ -2536,6 +2583,7 @@ mod size_gate_tests {
             bound: json!({}),
             filters_applied: vec![],
             filters_dropped: vec![],
+            row_cap_tripped: false,
         }
     }
 
@@ -2558,6 +2606,61 @@ mod size_gate_tests {
         assert!(sc.get("handle").is_some(), "handle always present");
         assert!(sc.get("summary").is_some(), "summary always present");
         assert!(sc.get("capabilities").is_some(), "capabilities advertised");
+    }
+
+    /// FR-3 (G3): when the engine result tripped the materialization budget,
+    /// the response carries a typed `result_too_large` over-budget signal naming
+    /// the budget — never a silent clamp presented as complete.
+    #[test]
+    fn over_budget_signal_present_when_tripped() {
+        // A handle whose persisted rows == the budget, marked tripped.
+        let mut out = synth_output(5);
+        out.row_cap_tripped = true;
+        let (_hs, h) = store_handle(&out);
+        let resp = structured_ok(&out, None, 1, Some(&h), 25);
+        let sc = &resp["structuredContent"];
+        // isError stays false (a handle + prefix is still usable) but the typed
+        // signal is explicit.
+        assert_eq!(resp["isError"], json!(false));
+        assert_eq!(sc["truncated"], json!(true), "must mark truncated: {sc}");
+        let rtl = sc.get("result_too_large").expect("result_too_large signal");
+        assert_eq!(rtl["code"], json!("result_too_large"));
+        assert_eq!(rtl["budget"], json!(5), "budget == persisted (truncated) row count");
+        let notes = sc["notes"].as_array().expect("notes present when over budget");
+        assert!(
+            notes.iter().any(|n| n.as_str().is_some_and(|s| s.contains("OVER BUDGET"))),
+            "an over-budget steering note must be present: {sc}"
+        );
+    }
+
+    /// A within-budget result carries NO over-budget signal (negative control).
+    #[test]
+    fn no_over_budget_signal_when_within_budget() {
+        let out = synth_output(5); // row_cap_tripped = false
+        let (_hs, h) = store_handle(&out);
+        let resp = structured_ok(&out, None, 1, Some(&h), 25);
+        let sc = &resp["structuredContent"];
+        assert!(sc.get("result_too_large").is_none(), "no signal within budget: {sc}");
+        assert!(sc.get("truncated").is_none(), "no truncated marker within budget: {sc}");
+    }
+
+    /// FR-4 (G2): the inline sample bound is governed by `inline_threshold`,
+    /// independent of whether the budget tripped. A tripped result above the
+    /// inline threshold still omits `rows` (handle-first) — the trip does not
+    /// enlarge the LLM-context inline payload.
+    #[test]
+    fn over_budget_does_not_enlarge_inline_sample() {
+        let mut out = synth_output(100); // > inline_threshold=25
+        out.row_cap_tripped = true;
+        let (_hs, h) = store_handle(&out);
+        let resp = structured_ok(&out, None, 1, Some(&h), 25);
+        let sc = &resp["structuredContent"];
+        assert!(
+            sc.get("rows").is_none(),
+            "above inline_threshold rows must be omitted even when over budget: {sc}"
+        );
+        // The over-budget signal is still present (typed), but no rows inlined.
+        assert_eq!(sc["truncated"], json!(true));
     }
 
     /// Edge case: exactly K rows still inlines (≤K is inclusive).
@@ -2623,6 +2726,7 @@ mod handle_first_contract_tests {
             bound: json!({"measures": [], "dimensions": []}),
             filters_applied: vec![],
             filters_dropped: vec![],
+            row_cap_tripped: false,
         }
     }
 
@@ -2794,7 +2898,19 @@ mod dataset_export_tests {
     fn export_json_default_cap_is_enforced() {
         // We can't actually put DEFAULT_EXPORT_MAX_ROWS+1 rows in a test easily,
         // so instead just verify that the constant is reasonable.
-        assert_eq!(DEFAULT_EXPORT_MAX_ROWS, 10_000, "default cap must be 10_000");
+        //
+        // PRD-mqo-handle-full-materialization OQ-2: the JSON export default is
+        // aligned to the materialization budget default so export is not a
+        // second silent clamp below a handle's full capacity.
+        assert_eq!(
+            DEFAULT_EXPORT_MAX_ROWS,
+            mqo_auth_bridge::DEFAULT_MAX_RESULT_ROWS,
+            "export default cap must align with the materialization budget default"
+        );
+        assert_eq!(
+            DEFAULT_EXPORT_MAX_ROWS, 50_000,
+            "aligned export default cap must be 50_000"
+        );
     }
 }
 

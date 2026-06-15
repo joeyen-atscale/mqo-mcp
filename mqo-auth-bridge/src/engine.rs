@@ -4,9 +4,26 @@ use serde_json::Value;
 
 use crate::{backend::Backend, error::EngineError};
 
-/// Hard upper bound on rows any engine implementation will ever emit.
-/// Keeps results bounded by construction — matches the fixture engine's cap.
-pub const HARD_ROW_CAP: usize = 1000;
+/// Default per-handle **materialization budget**: the maximum number of rows
+/// the bridge will fetch, truncate to, and persist into a handle when the
+/// operator does not pass `--max-result-rows`.
+///
+/// This is the persisted-handle ceiling (PRD-mqo-handle-full-materialization),
+/// decoupled from the inline-sample bound the server uses for the LLM context.
+/// Raising it makes a handle a faithful proxy for the full result; it does NOT
+/// enlarge what `query_multidimensional` inlines (that is `inline_threshold`).
+pub const DEFAULT_MAX_RESULT_ROWS: usize = 50_000;
+
+/// Upstream PGWire ceiling. The materialization budget must never exceed this —
+/// the bridge cannot promise more rows than the engine will deliver (NFR-1).
+pub const MAX_RESULT_ROWS_CEILING: usize = 200_000;
+
+/// Deprecated alias retained for one release (migration §8). Historically a
+/// hard-coded 1000-row clamp applied at execution time *before* the handle was
+/// persisted, silently truncating every large result. It is now the default
+/// materialization budget; direct referents keep compiling. Prefer
+/// [`DEFAULT_MAX_RESULT_ROWS`] / the configured budget on `EndpointConfig`.
+pub const HARD_ROW_CAP: usize = DEFAULT_MAX_RESULT_ROWS;
 
 /// The bounded result of executing a compiled query.
 ///
@@ -16,7 +33,10 @@ pub const HARD_ROW_CAP: usize = 1000;
 pub struct EngineResult {
     /// Result rows as JSON objects (column name → value).
     pub rows: Vec<Value>,
-    /// Set to `true` when the result was clamped to [`HARD_ROW_CAP`].
+    /// Set to `true` when the real result **exceeded the materialization budget**
+    /// and was therefore truncated to it. A consumer MUST treat a tripped result
+    /// as incomplete (surface a typed over-budget signal), never as the full
+    /// answer (PRD-mqo-handle-full-materialization, FR-3).
     pub row_cap_tripped: bool,
 }
 
@@ -30,7 +50,8 @@ impl EngineResult {
         }
     }
 
-    /// Construct a result that **was** clamped to the row cap.
+    /// Construct a result that **was** clamped to the materialization budget
+    /// (the real result exceeded the budget).
     #[must_use]
     pub fn capped(rows: Vec<Value>) -> Self {
         Self {
@@ -46,7 +67,8 @@ impl EngineResult {
 /// [`crate::LiveExecutor`] (real `PGWire` / XMLA) implement this trait.
 pub trait Engine {
     /// Execute `compiled_query` against `backend`, returning at most `limit`
-    /// rows (further bounded by [`HARD_ROW_CAP`]).
+    /// rows (further bounded by the executor's materialization budget; see
+    /// `EndpointConfig::max_result_rows`).
     ///
     /// `model` is required for XMLA dispatch (`Dax`/`Mdx`) to derive the
     /// catalog and cube from the dot-separated MQO model path.

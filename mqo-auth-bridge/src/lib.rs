@@ -33,7 +33,9 @@ pub mod oidc;
 pub mod xmla;
 
 pub use backend::Backend;
-pub use engine::{Engine, EngineResult, HARD_ROW_CAP};
+pub use engine::{
+    Engine, EngineResult, DEFAULT_MAX_RESULT_ROWS, HARD_ROW_CAP, MAX_RESULT_ROWS_CEILING,
+};
 pub use error::EngineError;
 pub use executor::{EndpointConfig, LiveExecutor, RowSource};
 pub use fixture::FixtureEngine;

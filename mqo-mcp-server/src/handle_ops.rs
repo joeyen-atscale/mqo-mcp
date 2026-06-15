@@ -1394,7 +1394,14 @@ pub fn handle_dataset_chart(store: &SharedStore, args: &Value, inline_threshold:
 /// Above this the tool returns a typed `result_too_large` error.  Callers may
 /// pass a smaller `max_rows`; they may not exceed this cap without a server
 /// rebuild.
-pub const DEFAULT_EXPORT_MAX_ROWS: usize = 10_000;
+///
+/// Aligned with the materialization budget default
+/// (`mqo_auth_bridge::DEFAULT_MAX_RESULT_ROWS`, PRD-mqo-handle-full-
+/// materialization OQ-2): a handle can now hold up to the budget, so the JSON
+/// export default must not be a *second*, lower silent clamp below the handle's
+/// capacity. Operators raising `--max-result-rows` above this still get the
+/// full handle via csv/parquet export (which is exempt from the JSON cap).
+pub const DEFAULT_EXPORT_MAX_ROWS: usize = mqo_auth_bridge::DEFAULT_MAX_RESULT_ROWS;
 
 /// `dataset_export` — materialize a handle out-of-band.
 ///

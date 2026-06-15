@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use crate::{
     backend::Backend,
-    engine::{Engine, EngineResult, HARD_ROW_CAP},
+    engine::{Engine, EngineResult},
     error::EngineError,
     oidc::{OidcConfig, TokenCache},
 };
@@ -41,6 +41,18 @@ pub struct EndpointConfig {
     pub pg_user: Option<String>,
     /// Override `PGWire` password. When `Some`, skips OIDC token fetch entirely.
     pub pg_pass: Option<String>,
+    /// Per-handle **materialization budget**: the maximum number of rows the
+    /// executor fetches, truncates to, and lets the server persist into a
+    /// handle. Replaces the old hard-coded 1000-row clamp
+    /// (PRD-mqo-handle-full-materialization, FR-1/FR-2). When the real result
+    /// exceeds this, the executor returns [`EngineResult::capped`]
+    /// (`row_cap_tripped = true`) so the server can surface a typed over-budget
+    /// signal instead of a silent clamp.
+    ///
+    /// Sourced from `--max-result-rows` (default [`DEFAULT_MAX_RESULT_ROWS`]),
+    /// clamped to `1..=`[`MAX_RESULT_ROWS_CEILING`]. Set to 1000 to reproduce
+    /// the pre-fix behavior exactly (rollback, AC-4).
+    pub max_result_rows: usize,
 }
 
 // ─── Internal RowSource abstraction ─────────────────────────────────────────
@@ -455,7 +467,8 @@ fn parse_model_catalog_cube(model: &str) -> Result<(&str, &str), EngineError> {
 /// - `Dax` / `Mdx` → XMLA path (`xmla_url`)
 /// - `Sql` → `PGWire` path (`pgwire_host:pgwire_port`)
 ///
-/// Row results are clamped to [`HARD_ROW_CAP`].
+/// Row results are clamped to the configured materialization budget
+/// (`EndpointConfig::max_result_rows`).
 pub struct LiveExecutor {
     config: EndpointConfig,
     token_cache: TokenCache,
@@ -648,11 +661,17 @@ impl Engine for LiveExecutor {
         limit: Option<u64>,
         model: Option<&str>,
     ) -> Result<EngineResult, EngineError> {
-        let cap = HARD_ROW_CAP;
-        let fetch_limit = cap + 1;
+        // The materialization budget is the persisted-handle ceiling
+        // (PRD-mqo-handle-full-materialization). Fetch up to `budget + 1` so an
+        // over-budget result is *detectable* (the +1 distinguishes
+        // "exactly at budget" from "exceeded it"), then truncate to the budget.
+        let budget = self.config.max_result_rows.max(1);
+        let fetch_limit = budget.saturating_add(1);
+        // A caller-supplied `limit` is an *intentional* bound, not a truncation:
+        // it never trips `row_cap_tripped`. It is still clamped by the budget.
         let user_limit = limit
-            .map_or(cap, |l| usize::try_from(l).unwrap_or(cap))
-            .min(cap);
+            .map_or(budget, |l| usize::try_from(l).unwrap_or(budget))
+            .min(budget);
 
         let raw_rows = match backend {
             Backend::Sql => {
@@ -697,9 +716,21 @@ impl Engine for LiveExecutor {
             }
         };
 
-        if raw_rows.len() > cap || raw_rows.len() > user_limit {
-            let rows: Vec<Value> = raw_rows.into_iter().take(cap.min(user_limit)).collect();
+        // Over-budget: the real result exceeded the materialization budget.
+        // Truncate to the budget and trip the flag so the server surfaces a
+        // typed over-budget signal — never a silent clamp presented as complete
+        // (FR-3). Detected via the extra fetched row (len > budget).
+        if raw_rows.len() > budget {
+            let rows: Vec<Value> = raw_rows.into_iter().take(budget).collect();
             return Ok(EngineResult::capped(rows));
+        }
+
+        // Within budget. A caller-supplied `limit` smaller than the result is an
+        // intentional bound (e.g. top-N), not a truncation of the full set — it
+        // does NOT trip `row_cap_tripped`.
+        if raw_rows.len() > user_limit {
+            let rows: Vec<Value> = raw_rows.into_iter().take(user_limit).collect();
+            return Ok(EngineResult::new(rows));
         }
 
         Ok(EngineResult::new(raw_rows))
