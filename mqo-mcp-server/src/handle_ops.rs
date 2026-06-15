@@ -731,6 +731,86 @@ fn op_err_to_envelope(e: &dh_ops::OpError) -> Value {
     handle_err(code, &e.to_string())
 }
 
+/// Return a typed `unknown_column` error that lists the handle's actual
+/// canonical column names (FR-5).  Callers pass the name that was rejected
+/// and the dataset whose columns should appear in the error.
+fn unknown_column_error(rejected: &str, ds: &Dataset) -> Value {
+    let actual: Vec<&str> = ds.columns.iter().map(|c| c.name.as_str()).collect();
+    let payload = json!({
+        "error": {
+            "code": "unknown_column",
+            "detail": format!(
+                "column '{}' not found in handle. Use column names as returned by \
+                 query_multidimensional or dataset_describe. Available columns: {:?}",
+                rejected, actual
+            ),
+            "column": rejected,
+            "available_columns": actual,
+        }
+    });
+    json!({
+        "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+        "structuredContent": payload,
+        "isError": true
+    })
+}
+
+/// Try to resolve a legacy raw-key column arg to a canonical column name stored
+/// in the dataset (FR-4 back-compat fallback).
+///
+/// Matching order:
+/// 1. Exact match against stored canonical names (a no-op if already canonical).
+/// 2. `clean_label(arg)` matches a stored canonical name exactly (the primary
+///    legacy path: the raw XMLA key decodes to the canonical label).
+/// 3. Case-insensitive match of `clean_label(arg)` against stored names.
+///
+/// Returns `Some((canonical_name, is_legacy))` — `is_legacy` is `true` when
+/// the arg was NOT an exact match (i.e. the fallback fired and a deprecation
+/// warning should be emitted).  Returns `None` when no match is found.
+fn resolve_col_name<'a>(arg: &str, ds: &'a Dataset) -> Option<(&'a str, bool)> {
+    // 1. Exact match: the arg is already canonical — no warning needed.
+    if let Some(col) = ds.columns.iter().find(|c| c.name == arg) {
+        return Some((col.name.as_str(), false));
+    }
+    // 2. clean_label of the arg matches a stored canonical name exactly.
+    let decoded = clean_label(arg);
+    if let Some(col) = ds.columns.iter().find(|c| c.name == decoded) {
+        return Some((col.name.as_str(), true));
+    }
+    // 3. Case-insensitive fallback.
+    let decoded_lower = decoded.to_lowercase();
+    if let Some(col) = ds
+        .columns
+        .iter()
+        .find(|c| c.name.to_lowercase() == decoded_lower)
+    {
+        return Some((col.name.as_str(), true));
+    }
+    None
+}
+
+/// Recursively replace every JSON string value that equals `old` with `new`.
+///
+/// This rewrites column-name strings embedded anywhere in the args tree
+/// (e.g. inside `{"predicate": {"col": "old"}}`) without knowing the arg
+/// shape of a specific op.
+fn replace_string_in_value(v: Value, old: &str, new: &str) -> Value {
+    match v {
+        Value::String(s) if s == old => Value::String(new.to_string()),
+        Value::Array(arr) => Value::Array(
+            arr.into_iter()
+                .map(|item| replace_string_in_value(item, old, new))
+                .collect(),
+        ),
+        Value::Object(obj) => Value::Object(
+            obj.into_iter()
+                .map(|(k, val)| (k, replace_string_in_value(val, old, new)))
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
 /// Build the size-gated result payload for a derived dataset.
 ///
 /// Always carries `{new_handle, row_count, schema, summary, capabilities}`;
@@ -783,9 +863,24 @@ fn reconstruct_handle(id: &str) -> DatasetHandle {
 // ── dh-ops backed handlers (aggregate/filter/sort/top_n/pivot/compare/drill/describe) ──
 
 /// Generic dispatcher for the single-handle dh-ops functions.
+///
+/// **Column-name contract (FR-1/FR-2):** column args MUST use the canonical
+/// clean names as returned by `query_multidimensional` or `dataset_describe`.
+///
+/// **Back-compat fallback (FR-4):** if dh-ops returns `UnknownColumn`, this
+/// dispatcher attempts to resolve the rejected name via [`resolve_col_name`]
+/// (which applies `clean_label` and a case-insensitive match against the
+/// handle's stored canonical names).  If a match is found the op is retried
+/// once with the resolved name and a deprecation warning is included in the
+/// success response.  This preserves backward compatibility with callers that
+/// pass a legacy raw XMLA key, while steering them toward the canonical form.
+///
+/// **Unknown-column error (FR-5):** when no resolver match is found the
+/// response is a typed `unknown_column` error that lists the handle's actual
+/// canonical column names so the caller can self-correct in one turn.
 fn run_dh_op<F>(store: &SharedStore, args: &Value, inline_threshold: usize, op: F) -> Value
 where
-    F: FnOnce(&mut Store, &DatasetHandle, &Value) -> Result<dh_spec::OpResult, dh_ops::OpError>,
+    F: Fn(&mut Store, &DatasetHandle, &Value) -> Result<dh_spec::OpResult, dh_ops::OpError>,
 {
     let handle = match parse_handle(args) {
         Ok(h) => h,
@@ -800,6 +895,59 @@ where
             match guard.get(&res.handle) {
                 Ok(ds) => handle_ok(&derived_payload(&res.handle, &ds, inline_threshold)),
                 Err(e) => handle_err("internal_error", &e.to_string()),
+            }
+        }
+        Err(dh_ops::OpError::UnknownColumn(ref bad_col)) => {
+            // FR-4 / FR-5: try the back-compat resolver before giving up.
+            let bad_col = bad_col.clone();
+            let src_ds = match guard.get(&handle) {
+                Ok(d) => d,
+                Err(_) => {
+                    return handle_err(
+                        "handle_not_found",
+                        &format!("handle '{}' not found or expired", handle.id),
+                    );
+                }
+            };
+            match resolve_col_name(&bad_col, &src_ds) {
+                Some((canonical, is_legacy)) if is_legacy => {
+                    // FR-4: resolved via the legacy fallback — retry with the
+                    // canonical name substituted everywhere in args.
+                    let fixed_args = replace_string_in_value(args.clone(), &bad_col, canonical);
+                    let warning = format!(
+                        "DEPRECATION: column arg '{}' was resolved to canonical name '{}' via \
+                         the back-compat resolver. Use the canonical name '{}' (as returned by \
+                         query_multidimensional or dataset_describe) to avoid this warning.",
+                        bad_col, canonical, canonical
+                    );
+                    match op(&mut guard, &handle, &fixed_args) {
+                        Ok(res) => {
+                            match guard.get(&res.handle) {
+                                Ok(ds) => {
+                                    let mut payload =
+                                        derived_payload(&res.handle, &ds, inline_threshold);
+                                    // Surface the deprecation warning in the response.
+                                    payload["warnings"] = json!([warning]);
+                                    handle_ok(&payload)
+                                }
+                                Err(e) => handle_err("internal_error", &e.to_string()),
+                            }
+                        }
+                        Err(e2) => {
+                            // Resolver fired but retry still failed — return
+                            // the enriched unknown_column error for the retry's error.
+                            let retry_col = match &e2 {
+                                dh_ops::OpError::UnknownColumn(c) => c.clone(),
+                                _ => return op_err_to_envelope(&e2),
+                            };
+                            unknown_column_error(&retry_col, &src_ds)
+                        }
+                    }
+                }
+                // Exact match (already canonical, is_legacy=false) should not
+                // reach here (the first op call would have succeeded).  Treat
+                // as FR-5 unknown-column with column list.
+                _ => unknown_column_error(&bad_col, &src_ds),
             }
         }
         Err(e) => op_err_to_envelope(&e),
@@ -986,6 +1134,47 @@ pub fn handle_dataset_period_over_period(
         Ok(d) => d,
         Err(e) => return handle_err("handle_not_found", &e.to_string()),
     };
+
+    // FR-1/FR-5: validate that date_col and measure_cols are canonical names;
+    // apply the back-compat resolver (FR-4) when a legacy raw key is passed.
+    let (date_col, date_legacy_warning) = match resolve_col_name(&date_col, &src_ds) {
+        None => return unknown_column_error(&date_col, &src_ds),
+        Some((canonical, is_legacy)) => {
+            let w = if is_legacy {
+                Some(format!(
+                    "DEPRECATION: date_col arg '{}' resolved to canonical name '{}' via the \
+                     back-compat resolver. Use '{}' directly.",
+                    date_col, canonical, canonical
+                ))
+            } else {
+                None
+            };
+            (canonical.to_string(), w)
+        }
+    };
+    let mut measure_cols_resolved: Vec<String> = Vec::with_capacity(measure_cols.len());
+    let mut measure_legacy_warnings: Vec<String> = Vec::new();
+    for mc in &measure_cols {
+        match resolve_col_name(mc, &src_ds) {
+            None => return unknown_column_error(mc, &src_ds),
+            Some((canonical, is_legacy)) => {
+                if is_legacy {
+                    measure_legacy_warnings.push(format!(
+                        "DEPRECATION: measure_cols arg '{}' resolved to canonical name '{}' via \
+                         the back-compat resolver. Use '{}' directly.",
+                        mc, canonical, canonical
+                    ));
+                }
+                measure_cols_resolved.push(canonical.to_string());
+            }
+        }
+    }
+    let measure_cols = measure_cols_resolved;
+    let all_warnings: Vec<String> = date_legacy_warning
+        .into_iter()
+        .chain(measure_legacy_warnings)
+        .collect();
+
     let rows = dataset_to_json_rows(&src_ds);
 
     // Group rows by bucket (BTreeMap → naturally sorted).
@@ -1052,7 +1241,11 @@ pub fn handle_dataset_period_over_period(
         Ok(h) => h,
         Err(e) => return handle_err("internal_error", &e.to_string()),
     };
-    handle_ok(&derived_payload(&new_handle, &out_ds, inline_threshold))
+    let mut payload = derived_payload(&new_handle, &out_ds, inline_threshold);
+    if !all_warnings.is_empty() {
+        payload["warnings"] = json!(all_warnings);
+    }
+    handle_ok(&payload)
 }
 
 // ── dataset_chart (bespoke; emits Vega-Lite spec, no new handle) ───────────────
@@ -1093,9 +1286,52 @@ pub fn handle_dataset_chart(store: &SharedStore, args: &Value, inline_threshold:
             Err(e) => return handle_err("handle_not_found", &e.to_string()),
         }
     };
+
+    // FR-1/FR-5: validate x_col and y_cols against canonical handle columns;
+    // apply back-compat resolver (FR-4) for legacy raw keys.
+    let (x_col, x_legacy_warn) = match resolve_col_name(&x_col, &ds) {
+        None => return unknown_column_error(&x_col, &ds),
+        Some((canonical, is_legacy)) => {
+            let w = if is_legacy {
+                Some(format!(
+                    "DEPRECATION: x_col arg '{}' resolved to canonical name '{}' via the \
+                     back-compat resolver. Use '{}' directly.",
+                    x_col, canonical, canonical
+                ))
+            } else {
+                None
+            };
+            (canonical.to_string(), w)
+        }
+    };
+    let mut y_cols_resolved: Vec<String> = Vec::with_capacity(y_cols.len());
+    let mut y_legacy_warnings: Vec<String> = Vec::new();
+    for yc in &y_cols {
+        match resolve_col_name(yc, &ds) {
+            None => return unknown_column_error(yc, &ds),
+            Some((canonical, is_legacy)) => {
+                if is_legacy {
+                    y_legacy_warnings.push(format!(
+                        "DEPRECATION: y_cols arg '{}' resolved to canonical name '{}' via the \
+                         back-compat resolver. Use '{}' directly.",
+                        yc, canonical, canonical
+                    ));
+                }
+                y_cols_resolved.push(canonical.to_string());
+            }
+        }
+    }
+    let y_cols = y_cols_resolved;
+
     let mut rows = dataset_to_json_rows(&ds);
     rows.truncate(inline_threshold);
-    let spec = build_vega_spec(vl_mark, &x_col, &y_cols, title, &rows);
+    let mut spec = build_vega_spec(vl_mark, &x_col, &y_cols, title, &rows);
+
+    // Surface any deprecation warnings (FR-4).
+    let all_warnings: Vec<String> = x_legacy_warn.into_iter().chain(y_legacy_warnings).collect();
+    if !all_warnings.is_empty() {
+        spec["warnings"] = json!(all_warnings);
+    }
     handle_ok(&spec)
 }
 
@@ -1302,14 +1538,27 @@ pub fn handle_op_descriptors() -> Vec<Value> {
     vec![
         json!({
             "name": "dataset_aggregate",
-            "description": "Aggregate a result-set handle by grouping on dimensions and rolling up a measure (sum/mean/min/max/count/count_distinct). Computes server-side over typed columns — no AtScale round-trip. Derives a new handle; returns {new_handle, row_count, summary, capabilities} (rows inlined only when row_count ≤ inline_threshold).",
+            "description": "Aggregate a result-set handle by grouping on dimensions and rolling up a measure \
+(sum/mean/min/max/count/count_distinct). Computes server-side over typed columns — no AtScale round-trip. \
+Derives a new handle; returns {new_handle, row_count, summary, capabilities} (rows inlined only when \
+row_count ≤ inline_threshold).\n\n\
+**Column names:** use the exact column names returned by `query_multidimensional` or `dataset_describe` \
+(e.g. `\"Revenue\"`, `\"Store Name\"`). Passing an unrecognised name returns a typed `unknown_column` \
+error that lists the handle's actual column names.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "handle": { "type": "string", "description": "Handle id of the input result." },
-                    "group_by": { "type": "array", "items": { "type": "string" }, "description": "Column names to group by." },
+                    "group_by": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Column names to group by. Use the exact names returned by query_multidimensional or dataset_describe."
+                    },
                     "agg": { "type": "string", "enum": ["sum","mean","min","max","count","count_distinct"], "description": "Aggregation function." },
-                    "measure": { "type": "string", "description": "Column to aggregate (not needed for count)." },
+                    "measure": {
+                        "type": "string",
+                        "description": "Column to aggregate (not needed for count). Use the exact name returned by query_multidimensional or dataset_describe."
+                    },
                     "measures": { "type": "array", "items": { "type": "object" }, "description": "Legacy multi-measure shape [{col,agg}]; first is used." }
                 },
                 "required": ["handle","group_by"]
@@ -1318,12 +1567,21 @@ pub fn handle_op_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "dataset_filter",
-            "description": "Filter a result-set handle by a compound AND/OR predicate over columns (ops: eq, ne, lt, le, gt, ge, in, contains, is_null, is_not_null). Computes server-side — no AtScale round-trip. Derives a new handle.",
+            "description": "Filter a result-set handle by a compound AND/OR predicate over columns \
+(ops: eq, ne, lt, le, gt, ge, in, contains, is_null, is_not_null). Computes server-side — no AtScale \
+round-trip. Derives a new handle.\n\n\
+**Column names:** the `col` field in every predicate must use the exact column name returned by \
+`query_multidimensional` or `dataset_describe` (e.g. `\"Year\"`, `\"Product Category\"`). An \
+unrecognised name returns a typed `unknown_column` error listing the handle's actual columns.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "handle": { "type": "string", "description": "Handle id of the input result." },
-                    "predicate": { "type": "object", "description": "Predicate tree: {col,op,val} or {and:[…]} / {or:[…]}." }
+                    "predicate": {
+                        "type": "object",
+                        "description": "Predicate tree: {col, op, val} or {and:[…]} / {or:[…]}. \
+The `col` field uses the column name exactly as returned by query_multidimensional or dataset_describe."
+                    }
                 },
                 "required": ["handle","predicate"]
             },
@@ -1331,12 +1589,27 @@ pub fn handle_op_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "dataset_sort",
-            "description": "Sort a result-set handle by one or more keys (asc/desc, stable). Computes server-side — no AtScale round-trip. Derives a new handle.",
+            "description": "Sort a result-set handle by one or more keys (asc/desc, stable). Computes \
+server-side — no AtScale round-trip. Derives a new handle.\n\n\
+**Column names:** the `col` field in each sort key must use the exact column name returned by \
+`query_multidimensional` or `dataset_describe`. An unrecognised name returns a typed `unknown_column` \
+error listing the handle's actual columns.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "handle": { "type": "string", "description": "Handle id of the input result." },
-                    "keys": { "type": "array", "items": { "type": "object", "properties": { "col": { "type": "string" }, "dir": { "type": "string", "enum": ["asc","desc"] } }, "required": ["col"] }, "description": "Sort keys in priority order." }
+                    "keys": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "col": { "type": "string", "description": "Column name exactly as returned by query_multidimensional or dataset_describe." },
+                                "dir": { "type": "string", "enum": ["asc","desc"] }
+                            },
+                            "required": ["col"]
+                        },
+                        "description": "Sort keys in priority order."
+                    }
                 },
                 "required": ["handle","keys"]
             },
@@ -1344,13 +1617,20 @@ pub fn handle_op_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "dataset_top_n",
-            "description": "Return the top or bottom N rows of a handle by a measure column (deterministic tie-break). Computes server-side — no AtScale round-trip. Derives a new handle.",
+            "description": "Return the top or bottom N rows of a handle by a measure column \
+(deterministic tie-break). Computes server-side — no AtScale round-trip. Derives a new handle.\n\n\
+**Column names:** `measure` must use the exact column name returned by `query_multidimensional` or \
+`dataset_describe`. An unrecognised name returns a typed `unknown_column` error listing the handle's \
+actual columns.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "handle": { "type": "string", "description": "Handle id of the input result." },
                     "n": { "type": "integer", "description": "Number of rows to keep." },
-                    "measure": { "type": "string", "description": "Measure column to rank by." },
+                    "measure": {
+                        "type": "string",
+                        "description": "Measure column to rank by. Use the exact name returned by query_multidimensional or dataset_describe."
+                    },
                     "dir": { "type": "string", "enum": ["top","bottom"], "description": "Top (default) or bottom." }
                 },
                 "required": ["handle","n","measure"]
@@ -1359,14 +1639,27 @@ pub fn handle_op_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "dataset_pivot",
-            "description": "Pivot a handle's rows × columns × measure into a crosstab. Computes server-side — no AtScale round-trip. Derives a new handle.",
+            "description": "Pivot a handle's rows × columns × measure into a crosstab. Computes \
+server-side — no AtScale round-trip. Derives a new handle.\n\n\
+**Column names:** `row_dim`, `col_dim`, and `measure` must use the exact column names returned by \
+`query_multidimensional` or `dataset_describe`. An unrecognised name returns a typed `unknown_column` \
+error listing the handle's actual columns.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "handle": { "type": "string", "description": "Handle id of the input result." },
-                    "row_dim": { "type": "string", "description": "Column for pivot rows." },
-                    "col_dim": { "type": "string", "description": "Column for pivot columns." },
-                    "measure": { "type": "string", "description": "Measure to aggregate per cell." },
+                    "row_dim": {
+                        "type": "string",
+                        "description": "Column for pivot rows. Use the exact name returned by query_multidimensional or dataset_describe."
+                    },
+                    "col_dim": {
+                        "type": "string",
+                        "description": "Column for pivot columns. Use the exact name returned by query_multidimensional or dataset_describe."
+                    },
+                    "measure": {
+                        "type": "string",
+                        "description": "Measure to aggregate per cell. Use the exact name returned by query_multidimensional or dataset_describe."
+                    },
                     "agg": { "type": "string", "enum": ["sum","mean","min","max","count"], "description": "Cell aggregation (default sum)." }
                 },
                 "required": ["handle","row_dim","col_dim","measure"]
@@ -1375,14 +1668,25 @@ pub fn handle_op_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "dataset_compare",
-            "description": "Compare two handles by joining on keys and computing delta + pct-change for a measure. Computes server-side — no AtScale round-trip. Derives a new handle (multi-parent lineage).",
+            "description": "Compare two handles by joining on keys and computing delta + pct-change for \
+a measure. Computes server-side — no AtScale round-trip. Derives a new handle (multi-parent lineage).\n\n\
+**Column names:** `join_keys` elements and `measure` must use the exact column names returned by \
+`query_multidimensional` or `dataset_describe`. An unrecognised name returns a typed `unknown_column` \
+error listing the handle's actual columns.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "handle": { "type": "string", "description": "Handle id of the first (A) result." },
                     "handle_b": { "type": "object", "description": "The second result's full DatasetHandle JSON." },
-                    "join_keys": { "type": "array", "items": { "type": "string" }, "description": "Columns to join on." },
-                    "measure": { "type": "string", "description": "Measure column to diff." }
+                    "join_keys": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Columns to join on. Use exact names returned by query_multidimensional or dataset_describe."
+                    },
+                    "measure": {
+                        "type": "string",
+                        "description": "Measure column to diff. Use the exact name returned by query_multidimensional or dataset_describe."
+                    }
                 },
                 "required": ["handle","handle_b","join_keys","measure"]
             },
@@ -1390,12 +1694,19 @@ pub fn handle_op_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "dataset_drill",
-            "description": "Expand a grouped row of a handle back to its constituent detail rows via lineage. Computes server-side — no AtScale round-trip. Derives a new handle.",
+            "description": "Expand a grouped row of a handle back to its constituent detail rows via \
+lineage. Computes server-side — no AtScale round-trip. Derives a new handle.\n\n\
+**Column names:** keys in `group_row` must use the exact column names returned by \
+`query_multidimensional` or `dataset_describe`.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "handle": { "type": "string", "description": "Handle id of the grouped result." },
-                    "group_row": { "type": "object", "description": "Column→value map identifying the group to drill into." }
+                    "group_row": {
+                        "type": "object",
+                        "description": "Column→value map identifying the group to drill into. \
+Keys must be the exact column names returned by query_multidimensional or dataset_describe."
+                    }
                 },
                 "required": ["handle","group_row"]
             },
@@ -1403,7 +1714,9 @@ pub fn handle_op_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "dataset_describe",
-            "description": "Produce per-column stats (min/max/sum/mean/distinct) for a handle without changing rows. Computes server-side — no AtScale round-trip. Derives a new handle.",
+            "description": "Produce per-column stats (min/max/sum/mean/distinct) for a handle without \
+changing rows. Computes server-side — no AtScale round-trip. Derives a new handle. The resulting \
+schema lists the canonical column names to use in all subsequent `dataset_*` ops.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1416,12 +1729,21 @@ pub fn handle_op_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "dataset_slice",
-            "description": "Filter a result-set handle to rows matching all supplied [{col, op, value}] filters (op: =, !=, <, <=, >, >=, in). Compatibility alias for dataset_filter. row_count=0 for no matches is not an error. Computes server-side — no AtScale round-trip. Derives a new handle.",
+            "description": "Filter a result-set handle to rows matching all supplied [{col, op, value}] \
+filters (op: =, !=, <, <=, >, >=, in). Compatibility alias for dataset_filter. row_count=0 for no \
+matches is not an error. Computes server-side — no AtScale round-trip. Derives a new handle.\n\n\
+**Column names:** the `col` field in each filter must use the exact column name returned by \
+`query_multidimensional` or `dataset_describe`. An unrecognised name returns a typed `unknown_column` \
+error listing the handle's actual columns.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "handle": { "type": "string", "description": "Handle id of the input result." },
-                    "filters": { "type": "array", "items": { "type": "object" }, "description": "Row filters: [{col, op, value}]." }
+                    "filters": {
+                        "type": "array",
+                        "items": { "type": "object" },
+                        "description": "Row filters: [{col, op, value}]. `col` uses the exact name returned by query_multidimensional or dataset_describe."
+                    }
                 },
                 "required": ["handle","filters"]
             },
@@ -1429,14 +1751,25 @@ pub fn handle_op_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "dataset_period_over_period",
-            "description": "Compute period-over-period deltas by bucketing date_col by period, summing measure_cols per bucket, and adding prior-period value, absolute delta, and percentage delta columns. Computes server-side — no AtScale round-trip. Derives a new handle.",
+            "description": "Compute period-over-period deltas by bucketing date_col by period, summing \
+measure_cols per bucket, and adding prior-period value, absolute delta, and percentage delta columns. \
+Computes server-side — no AtScale round-trip. Derives a new handle.\n\n\
+**Column names:** `date_col` and every element of `measure_cols` must use the exact column names \
+returned by `query_multidimensional` or `dataset_describe`.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "handle": { "type": "string", "description": "Handle id of the input result." },
-                    "date_col": { "type": "string", "description": "Column containing date/timestamp values." },
+                    "date_col": {
+                        "type": "string",
+                        "description": "Column containing date/timestamp values. Use the exact name returned by query_multidimensional or dataset_describe."
+                    },
                     "period": { "type": "string", "enum": ["day","week","month","quarter","year"], "description": "Bucketing period." },
-                    "measure_cols": { "type": "array", "items": { "type": "string" }, "description": "Measure columns to aggregate and compare across periods." }
+                    "measure_cols": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Measure columns to aggregate and compare across periods. Use exact names returned by query_multidimensional or dataset_describe."
+                    }
                 },
                 "required": ["handle","date_col","period","measure_cols"]
             },
@@ -1444,14 +1777,26 @@ pub fn handle_op_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "dataset_chart",
-            "description": "Produce a Vega-Lite v5 JSON spec from a result handle. Reads at most inline_threshold rows for inline data.values. Returns the spec directly — no new handle. Computes server-side — no AtScale round-trip.",
+            "description": "Produce a Vega-Lite v5 JSON spec from a result handle. Reads at most \
+inline_threshold rows for inline data.values. Returns the spec directly — no new handle. Computes \
+server-side — no AtScale round-trip.\n\n\
+**Column names:** `x_col` and every element of `y_cols` must use the exact column names returned by \
+`query_multidimensional` or `dataset_describe`. An unrecognised name returns a typed `unknown_column` \
+error listing the handle's actual columns.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "handle": { "type": "string", "description": "Handle id of the input result." },
                     "chart_type": { "type": "string", "enum": ["bar","line","area","point"], "description": "Vega-Lite mark type." },
-                    "x_col": { "type": "string", "description": "Column to bind to the x-axis." },
-                    "y_cols": { "type": "array", "items": { "type": "string" }, "description": "Column(s) to bind to the y-axis." },
+                    "x_col": {
+                        "type": "string",
+                        "description": "Column to bind to the x-axis. Use the exact name returned by query_multidimensional or dataset_describe."
+                    },
+                    "y_cols": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Column(s) to bind to the y-axis. Use exact names returned by query_multidimensional or dataset_describe."
+                    },
                     "title": { "type": "string", "description": "Optional chart title." }
                 },
                 "required": ["handle","chart_type","x_col","y_cols"]
@@ -2020,5 +2365,345 @@ mod tests {
                 "Handle missing response column '{col}'; handle: {handle_cols:?}"
             );
         }
+    }
+
+    // ── PRD-mqo-dataset-op-clean-args AC tests (v0.33.0) ────────────────────
+
+    /// Fixture that stores a canonical-label handle for testing dataset_* ops.
+    ///
+    /// Returns `(SharedStore, DatasetHandle)` with columns `["Year", "Revenue"]`.
+    /// `Year` is a Dimension, `Revenue` is a Measure (bound-authoritative).
+    fn fixture_year_revenue_handle() -> (SharedStore, DatasetHandle) {
+        let year_key = "atscale_catalogs_x005b_Sold_x0020_Calendar_x0020_Year_x005d_";
+        let revenue_key = "_x005b_Revenue_x005d_";
+        let bound = json!({
+            "dimensions": [{ "unique_name": "sold_date.[Sold Calendar Year]", "label": "Year" }],
+            "measures": [{ "unique_name": "sales.Revenue", "label": "Revenue" }],
+        });
+        let rows = vec![
+            json!({ year_key: 2021.0, revenue_key: 100.0 }),
+            json!({ year_key: 2022.0, revenue_key: 200.0 }),
+            json!({ year_key: 2023.0, revenue_key: 150.0 }),
+        ];
+        let hs = HandleStore::new();
+        let handle = hs
+            .put_rows_with_canonical_labels(&rows, &bound)
+            .expect("put succeeds");
+        (hs.store.clone(), handle)
+    }
+
+    /// AC-1 (sort): `dataset_sort` with canonical column name `"Revenue"` works
+    /// directly — no resolver needed.  Confirms FR-1 for sort.
+    #[test]
+    fn clean_args_ac1_sort_by_canonical_revenue() {
+        let (store, handle) = fixture_year_revenue_handle();
+        let result = handle_dataset_sort(
+            &store,
+            &json!({
+                "handle": handle.id,
+                "keys": [{ "col": "Revenue", "dir": "desc" }]
+            }),
+            25,
+        );
+        let is_err = result["isError"].as_bool().unwrap_or(true);
+        assert!(!is_err, "dataset_sort with canonical 'Revenue' must succeed; got: {result}");
+        // Top row after desc sort should be year 2022 (Revenue=200).
+        if let Some(rows) = result["structuredContent"]["rows"].as_array() {
+            let top_rev = rows[0]["Revenue"].as_f64().unwrap_or(0.0);
+            assert!(
+                (top_rev - 200.0).abs() < 1e-6,
+                "After desc sort, first row Revenue must be 200.0, got {top_rev}"
+            );
+        }
+    }
+
+    /// AC-2 (filter): `dataset_filter` with canonical column name `"Year"` works
+    /// directly — confirms FR-1 for filter.
+    #[test]
+    fn clean_args_ac2_filter_by_canonical_year() {
+        let (store, handle) = fixture_year_revenue_handle();
+        let result = handle_dataset_filter(
+            &store,
+            &json!({
+                "handle": handle.id,
+                "predicate": { "col": "Year", "op": "eq", "val": 2022.0 }
+            }),
+            25,
+        );
+        let is_err = result["isError"].as_bool().unwrap_or(true);
+        assert!(!is_err, "dataset_filter with canonical 'Year' must succeed; got: {result}");
+        let row_count = result["structuredContent"]["row_count"].as_u64().unwrap_or(0);
+        assert_eq!(row_count, 1, "Filter Year=2022 must return exactly 1 row");
+    }
+
+    /// AC-3 (round-trip invariant, FR-3): Every column name from a
+    /// `query_multidimensional`-style response (produced by `clean_result_rows`)
+    /// is accepted unchanged by every `dataset_*` op.
+    ///
+    /// This is the guardrail that would have caught the chart-path regression
+    /// (AC10 in the eval): column names from the response are used verbatim as
+    /// op args, and every op must accept them.
+    ///
+    /// Fixture: mangled raw rows → `clean_result_rows` → columns `"Year"` and
+    /// `"Revenue"` → stored via `put_rows_with_canonical_labels`.  Then every op
+    /// that takes a column arg is exercised with both column names.
+    #[test]
+    fn clean_args_ac3_round_trip_invariant_every_op_accepts_response_columns() {
+        // Step 1: simulate a query response — raw XMLA-mangled rows.
+        let year_key = "atscale_catalogs_x005b_Sold_x0020_Calendar_x0020_Year_x005d_";
+        let revenue_key = "_x005b_Revenue_x005d_";
+        let bound = json!({
+            "dimensions": [{ "unique_name": "sold_date.[Sold Calendar Year]", "label": "Year" }],
+            "measures": [{ "unique_name": "sales.Revenue", "label": "Revenue" }],
+        });
+        let raw_rows = vec![
+            json!({ year_key: 2021.0, revenue_key: 100.0 }),
+            json!({ year_key: 2022.0, revenue_key: 200.0 }),
+            json!({ year_key: 2023.0, revenue_key: 150.0 }),
+        ];
+
+        // Step 2: the response path produces the column names the LLM sees.
+        let response_rows = clean_result_rows(&raw_rows, &bound);
+        let response_cols: Vec<String> = response_rows
+            .first()
+            .and_then(Value::as_object)
+            .map(|obj| obj.keys().cloned().collect())
+            .unwrap_or_default();
+        // Must be ["Year", "Revenue"] (or in some order).
+        assert!(
+            response_cols.contains(&"Year".to_string()),
+            "Response must contain 'Year', got: {response_cols:?}"
+        );
+        assert!(
+            response_cols.contains(&"Revenue".to_string()),
+            "Response must contain 'Revenue', got: {response_cols:?}"
+        );
+
+        // Step 3: store via the canonical path (same as the real query pipeline).
+        let hs = HandleStore::new();
+        let handle = hs
+            .put_rows_with_canonical_labels(&raw_rows, &bound)
+            .expect("put succeeds");
+        let store = hs.store.clone();
+
+        // Step 4: assert every op accepts the response column names unchanged.
+        //
+        // dataset_sort
+        let r = handle_dataset_sort(
+            &store,
+            &json!({ "handle": handle.id, "keys": [{ "col": "Revenue", "dir": "desc" }] }),
+            25,
+        );
+        assert!(!r["isError"].as_bool().unwrap_or(true), "round-trip: dataset_sort(Revenue) failed: {r}");
+
+        // dataset_filter
+        let r = handle_dataset_filter(
+            &store,
+            &json!({ "handle": handle.id, "predicate": { "col": "Year", "op": "gt", "val": 2020.0 } }),
+            25,
+        );
+        assert!(!r["isError"].as_bool().unwrap_or(true), "round-trip: dataset_filter(Year) failed: {r}");
+
+        // dataset_aggregate (group_by Year, sum Revenue)
+        let r = handle_dataset_aggregate(
+            &store,
+            &json!({ "handle": handle.id, "group_by": ["Year"], "agg": "sum", "measure": "Revenue" }),
+            25,
+        );
+        assert!(!r["isError"].as_bool().unwrap_or(true), "round-trip: dataset_aggregate(Year,Revenue) failed: {r}");
+
+        // dataset_top_n (by Revenue)
+        let r = handle_dataset_top_n(
+            &store,
+            &json!({ "handle": handle.id, "n": 2, "measure": "Revenue" }),
+            25,
+        );
+        assert!(!r["isError"].as_bool().unwrap_or(true), "round-trip: dataset_top_n(Revenue) failed: {r}");
+
+        // dataset_slice (filter by Year)
+        let r = handle_dataset_slice(
+            &store,
+            &json!({ "handle": handle.id, "filters": [{ "col": "Year", "op": "=", "value": 2022.0 }] }),
+            25,
+        );
+        assert!(!r["isError"].as_bool().unwrap_or(true), "round-trip: dataset_slice(Year) failed: {r}");
+
+        // dataset_period_over_period (date_col=Year, measure_cols=[Revenue])
+        let r = handle_dataset_period_over_period(
+            &store,
+            &json!({ "handle": handle.id, "date_col": "Year", "period": "year", "measure_cols": ["Revenue"] }),
+            25,
+        );
+        assert!(!r["isError"].as_bool().unwrap_or(true), "round-trip: dataset_period_over_period(Year,Revenue) failed: {r}");
+
+        // dataset_chart (x_col=Year, y_cols=[Revenue])
+        let r = handle_dataset_chart(
+            &store,
+            &json!({ "handle": handle.id, "chart_type": "bar", "x_col": "Year", "y_cols": ["Revenue"] }),
+            25,
+        );
+        assert!(!r["isError"].as_bool().unwrap_or(true), "round-trip: dataset_chart(Year,Revenue) failed: {r}");
+
+        // dataset_export (no column args; just verify it works)
+        let r = handle_dataset_export(&store, &json!({ "handle": handle.id, "format": "json" }));
+        assert!(!r["isError"].as_bool().unwrap_or(true), "round-trip: dataset_export failed: {r}");
+        // Export columns must match response columns.
+        if let Some(rows) = r["structuredContent"]["rows"].as_array() {
+            if let Some(first) = rows.first().and_then(Value::as_object) {
+                let export_cols: Vec<&str> = first.keys().map(String::as_str).collect();
+                for col in &response_cols {
+                    assert!(
+                        export_cols.contains(&col.as_str()),
+                        "dataset_export must return response column '{col}'; export has: {export_cols:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// AC-4 (unknown column, FR-5): An unrecognised column arg returns a typed
+    /// `unknown_column` error that lists the handle's actual canonical columns.
+    #[test]
+    fn clean_args_ac4_unknown_column_returns_typed_error_with_column_list() {
+        let (store, handle) = fixture_year_revenue_handle();
+        let result = handle_dataset_sort(
+            &store,
+            &json!({
+                "handle": handle.id,
+                "keys": [{ "col": "NonExistentColumn", "dir": "asc" }]
+            }),
+            25,
+        );
+        let is_err = result["isError"].as_bool().unwrap_or(false);
+        assert!(is_err, "Unknown column must produce an error; got: {result}");
+
+        let sc = &result["structuredContent"];
+        let code = sc["error"]["code"].as_str().unwrap_or("");
+        assert_eq!(code, "unknown_column", "Error code must be 'unknown_column'; got: {sc}");
+
+        // The error must include the available columns list (FR-5).
+        let available = &sc["error"]["available_columns"];
+        assert!(
+            available.is_array(),
+            "Error must include 'available_columns' array; got: {sc}"
+        );
+        let cols: Vec<&str> = available
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(
+            cols.contains(&"Year") && cols.contains(&"Revenue"),
+            "available_columns must list 'Year' and 'Revenue'; got: {cols:?}"
+        );
+    }
+
+    /// AC-5 (back-compat, FR-4): A legacy raw XMLA key passed as a column arg
+    /// resolves via the back-compat resolver with a deprecation warning, and the
+    /// op succeeds with correct results.
+    #[test]
+    fn clean_args_ac5_legacy_raw_key_resolves_via_fallback_with_warning() {
+        let (store, handle) = fixture_year_revenue_handle();
+        // "_x005b_Revenue_x005d_" is the legacy raw key that clean_label maps to "Revenue".
+        let legacy_key = "_x005b_Revenue_x005d_";
+        let result = handle_dataset_sort(
+            &store,
+            &json!({
+                "handle": handle.id,
+                "keys": [{ "col": legacy_key, "dir": "desc" }]
+            }),
+            25,
+        );
+        let is_err = result["isError"].as_bool().unwrap_or(true);
+        assert!(
+            !is_err,
+            "Legacy raw key '{}' must resolve via back-compat fallback; got: {result}",
+            legacy_key
+        );
+        // A deprecation warning must be present in the response.
+        let warnings = &result["structuredContent"]["warnings"];
+        assert!(
+            warnings.is_array() && !warnings.as_array().unwrap().is_empty(),
+            "Back-compat resolver must include a deprecation warning; got: {result}"
+        );
+        let warn_str = warnings.as_array().unwrap()[0].as_str().unwrap_or("");
+        assert!(
+            warn_str.contains("DEPRECATION"),
+            "Warning must contain 'DEPRECATION'; got: '{warn_str}'"
+        );
+    }
+
+    /// AC-6 (semantics, FR-6): Op results are semantically identical when using
+    /// the canonical name vs the legacy key (both must sort the same way).
+    #[test]
+    fn clean_args_ac6_semantics_unchanged_canonical_vs_legacy() {
+        let (store, handle) = fixture_year_revenue_handle();
+        let legacy_key = "_x005b_Revenue_x005d_";
+
+        // Sort by canonical name.
+        let r_canonical = handle_dataset_sort(
+            &store,
+            &json!({ "handle": handle.id, "keys": [{ "col": "Revenue", "dir": "asc" }] }),
+            25,
+        );
+        // Sort by legacy key.
+        let r_legacy = handle_dataset_sort(
+            &store,
+            &json!({ "handle": handle.id, "keys": [{ "col": legacy_key, "dir": "asc" }] }),
+            25,
+        );
+
+        assert!(!r_canonical["isError"].as_bool().unwrap_or(true), "canonical sort failed: {r_canonical}");
+        assert!(!r_legacy["isError"].as_bool().unwrap_or(true), "legacy sort failed: {r_legacy}");
+
+        // Both must produce the same row_count and same Revenue values in order.
+        let rc = r_canonical["structuredContent"]["row_count"].as_u64().unwrap_or(0);
+        let rl = r_legacy["structuredContent"]["row_count"].as_u64().unwrap_or(0);
+        assert_eq!(rc, rl, "row_count must be identical: canonical={rc} legacy={rl}");
+
+        if let (Some(rows_c), Some(rows_l)) = (
+            r_canonical["structuredContent"]["rows"].as_array(),
+            r_legacy["structuredContent"]["rows"].as_array(),
+        ) {
+            for (i, (rc_row, rl_row)) in rows_c.iter().zip(rows_l.iter()).enumerate() {
+                let rc_rev = rc_row["Revenue"].as_f64().unwrap_or(f64::NAN);
+                let rl_rev = rl_row["Revenue"].as_f64().unwrap_or(f64::NAN);
+                assert!(
+                    (rc_rev - rl_rev).abs() < 1e-6,
+                    "Row {i}: Revenue mismatch canonical={rc_rev} legacy={rl_rev}"
+                );
+            }
+        }
+    }
+
+    /// `resolve_col_name` unit tests: exact match, clean_label match, case-insensitive.
+    #[test]
+    fn resolve_col_name_exact_match_is_not_legacy() {
+        let ds = json_rows_to_dataset(&[json!({ "Year": 2021.0, "Revenue": 100.0 })]);
+        let r = resolve_col_name("Year", &ds);
+        assert_eq!(r, Some(("Year", false)), "Exact match should not be legacy");
+    }
+
+    #[test]
+    fn resolve_col_name_clean_label_match_is_legacy() {
+        let ds = json_rows_to_dataset(&[json!({ "Revenue": 100.0 })]);
+        // "_x005b_Revenue_x005d_" decodes to "Revenue" via clean_label.
+        let r = resolve_col_name("_x005b_Revenue_x005d_", &ds);
+        assert_eq!(r, Some(("Revenue", true)), "clean_label match should be legacy");
+    }
+
+    #[test]
+    fn resolve_col_name_no_match_returns_none() {
+        let ds = json_rows_to_dataset(&[json!({ "Revenue": 100.0 })]);
+        assert_eq!(resolve_col_name("NonExistent", &ds), None);
+    }
+
+    #[test]
+    fn replace_string_in_value_replaces_nested() {
+        let v = json!({ "predicate": { "col": "old_name", "val": 5 }, "keys": ["old_name"] });
+        let replaced = replace_string_in_value(v, "old_name", "new_name");
+        assert_eq!(replaced["predicate"]["col"].as_str(), Some("new_name"));
+        assert_eq!(replaced["keys"][0].as_str(), Some("new_name"));
     }
 }
