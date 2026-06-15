@@ -158,6 +158,44 @@ fn projection_order(bound: &Value) -> Vec<(String, Role)> {
     cols
 }
 
+/// Derive a friendly label from a bound `unique_name` (e.g. `time.calendar.[Year]` → `Year`,
+/// `Revenue` → `Revenue`).  Mirrors `handle_ops::label_from_unique_name` — kept local so the
+/// profiler crate has no dependency on `mqo-mcp-server` internals.
+fn label_from_unique_name(unique_name: &str) -> String {
+    // Prefer the last `[...]` bracket segment (e.g. `time.calendar.[Year]` → `Year`).
+    if let Some(open) = unique_name.rfind('[') {
+        if let Some(close) = unique_name[open..].find(']') {
+            let inner = &unique_name[open + 1..open + close];
+            if !inner.is_empty() {
+                return inner.to_owned();
+            }
+        }
+    }
+    // Fall back: last dot-segment, underscores → spaces.
+    let tail = unique_name.rsplit('.').next().unwrap_or(unique_name);
+    tail.replace('_', " ").trim().to_string()
+}
+
+/// Resolve a bound column name to the actual key present in `row_keys`.
+///
+/// Match priority (mirrors `clean_result_rows` in `handle_ops`):
+/// 1. Exact key match (bound name == row key, fixture / simple-string path).
+/// 2. `label_from_unique_name(bound_name)` == row key (clean-label path).
+/// 3. Fall back to the bound name itself (even if absent from rows — caller will get nulls).
+fn resolve_to_row_key(bound_name: &str, row_keys: &[String]) -> String {
+    // Priority 1: exact match.
+    if let Some(k) = row_keys.iter().find(|k| k.as_str() == bound_name) {
+        return k.clone();
+    }
+    // Priority 2: friendly-label match.
+    let label = label_from_unique_name(bound_name);
+    if let Some(k) = row_keys.iter().find(|k| k.as_str() == label) {
+        return k.clone();
+    }
+    // Fall back: return the bound name unchanged.
+    bound_name.to_owned()
+}
+
 /// Look up a column entry in the catalog by `unique_name`.
 fn catalog_entry<'c>(catalog: &'c Value, name: &str) -> Option<&'c Value> {
     let cols = catalog.get("columns").and_then(|v| v.as_array())?;
@@ -314,11 +352,31 @@ pub fn profile(response: &Value, catalog: &Value) -> Result<ResultProfile, Profi
     let bound = payload.get("bound").ok_or(ProfileError::MissingBound)?;
     let projection = projection_order(bound);
 
+    // Collect the actual column keys from the first row (the ground truth for what
+    // field names the rows carry).  When the response went through the clean-label path
+    // (v0.29.0+), these keys are clean semantic labels (e.g. `"Year"`, `"Revenue"`)
+    // while the bound may carry raw unique_names (e.g. `"time.calendar.[Year]"`).
+    // `resolve_to_row_key` maps each bound entry to its actual row key so that
+    // `ColumnProfile::name` (and therefore the downstream encoding field) always
+    // matches the rows the chart pipeline is handed.
+    let row_keys: Vec<String> = rows
+        .first()
+        .and_then(Value::as_object)
+        .map(|obj| obj.keys().cloned().collect())
+        .unwrap_or_default();
+
     let mut columns: Vec<ColumnProfile> = Vec::with_capacity(projection.len());
 
-    for (name, role) in &projection {
-        let entry = catalog_entry(catalog, name);
-        let label = catalog_label(entry, name);
+    for (bound_name, role) in &projection {
+        // Resolve to the actual row key (clean-label path: bound_name may be a raw
+        // unique_name that does not appear in the rows).
+        let row_key = resolve_to_row_key(bound_name, &row_keys);
+
+        // Catalog lookup: try the raw bound name first (exact unique_name), then the
+        // resolved row key (for catalogs keyed by clean label).
+        let entry = catalog_entry(catalog, bound_name)
+            .or_else(|| catalog_entry(catalog, &row_key));
+        let label = catalog_label(entry, &row_key);
 
         let is_calc = entry
             .and_then(|e| e.get("is_calc"))
@@ -329,11 +387,13 @@ pub fn profile(response: &Value, catalog: &Value) -> Result<ResultProfile, Profi
             .and_then(|e| e.get("semi_additive"))
             .is_some_and(|v| !v.is_null());
 
+        // Compute statistics using the resolved row key so that column values are
+        // found correctly in the (clean-labelled) rows.
         let (cardinality, null_rate, measure_range, data_type) =
-            compute_stats(rows, name, role, entry);
+            compute_stats(rows, &row_key, role, entry);
 
         columns.push(ColumnProfile {
-            name: name.clone(),
+            name: row_key,
             label,
             role: role.clone(),
             data_type,

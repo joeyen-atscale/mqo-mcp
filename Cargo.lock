@@ -2556,7 +2556,7 @@ dependencies = [
 
 [[package]]
 name = "mqo-mcp-server"
-version = "0.31.0"
+version = "0.31.1"
 dependencies = [
  "clap",
  "dh-export",

@@ -582,4 +582,239 @@ mod tests {
         assert_eq!(result["isError"], true);
         assert_eq!(result["structuredContent"]["error"]["code"], "invalid_input");
     }
+
+    // ── AC-1..AC-6: clean-label alignment tests ───────────────────────────────
+
+    /// Helper: build a catalog that uses raw unique_names (as the binder emits).
+    fn clean_label_catalog() -> Value {
+        json!({
+            "columns": [
+                {
+                    "unique_name": "time.calendar.[Year]",
+                    "label": "Year",
+                    "kind": "dimension",
+                    "hierarchy": "time.calendar"
+                },
+                {
+                    "unique_name": "sales_fact.[Revenue]",
+                    "label": "Revenue",
+                    "kind": "measure"
+                }
+            ]
+        })
+    }
+
+    /// AC-1: build_vega_spec on a clean-label result emits a valid spec;
+    /// encoding fields are present in the rows; isError is false.
+    #[test]
+    fn ac1_build_vega_spec_clean_label_result_emits_valid_spec() {
+        // Rows carry clean labels (as produced by v0.29.0 query_multidimensional).
+        let rows = json!([
+            {"Year": "2021", "Revenue": 100.0},
+            {"Year": "2022", "Revenue": 200.0}
+        ]);
+        // Bound uses raw unique_names (as the binder/MQO emits).
+        let bound = json!({
+            "measures": ["sales_fact.[Revenue]"],
+            "dimensions": ["time.calendar.[Year]"]
+        });
+        let catalog = clean_label_catalog();
+
+        // Full pipeline via `response` key: profiler resolves bound→row keys.
+        let args = json!({ "response": { "rows": rows, "bound": bound } });
+        let result = handle_build_vega_spec(&args, &catalog);
+
+        assert_eq!(result["isError"], false, "AC-1: isError must be false, got: {result}");
+        let spec = &result["structuredContent"];
+        assert!(spec.get("$schema").and_then(Value::as_str)
+            .is_some_and(|s| s.contains("vega-lite")),
+            "AC-1: $schema must contain vega-lite");
+
+        // Encoding fields must reference keys present in the rows.
+        let encoding = spec.get("encoding").and_then(Value::as_object)
+            .expect("AC-1: encoding must be an object");
+        for (channel, ch_val) in encoding {
+            let field = ch_val.get("field").and_then(Value::as_str)
+                .expect("AC-1: each encoding channel must have a field");
+            assert!(
+                field == "Year" || field == "Revenue",
+                "AC-1: encoding channel `{channel}` field `{field}` is not a clean row key"
+            );
+        }
+    }
+
+    /// AC-2: recommend_chart with {rows: clean, bound} returns encoding fields
+    /// that are all keys present in the rows.
+    #[test]
+    fn ac2_recommend_chart_clean_label_fields_present_in_rows() {
+        let rows = json!([
+            {"Year": "2021", "Revenue": 100.0},
+            {"Year": "2022", "Revenue": 200.0}
+        ]);
+        let bound = json!({
+            "measures": ["sales_fact.[Revenue]"],
+            "dimensions": ["time.calendar.[Year]"]
+        });
+        let catalog = clean_label_catalog();
+        let row_keys: std::collections::HashSet<&str> = ["Year", "Revenue"].iter().copied().collect();
+
+        let args = json!({ "rows": rows, "bound": bound });
+        let result = handle_recommend_chart(&args, &catalog);
+
+        assert_eq!(result["isError"], false, "AC-2: recommend_chart must not error, got: {result}");
+        let rec = &result["structuredContent"];
+        let encoding = rec.get("encoding").and_then(Value::as_object)
+            .expect("AC-2: encoding must be an object");
+        for (channel, ch_val) in encoding {
+            let field = ch_val.get("field").and_then(Value::as_str)
+                .expect("AC-2: each channel must have a field");
+            assert!(
+                row_keys.contains(field),
+                "AC-2: channel `{channel}` field `{field}` not found in row keys"
+            );
+        }
+    }
+
+    /// AC-3: end-to-end clean-label pipeline — recommend_chart → build_vega_spec.
+    /// (Unit-level analog of the binary AC10; does not require the live fleet.)
+    #[test]
+    fn ac3_end_to_end_clean_label_recommend_then_emit() {
+        let rows = json!([
+            {"Year": "2021", "Revenue": 100.0},
+            {"Year": "2022", "Revenue": 200.0}
+        ]);
+        let bound = json!({
+            "measures": ["sales_fact.[Revenue]"],
+            "dimensions": ["time.calendar.[Year]"]
+        });
+        let catalog = clean_label_catalog();
+
+        // Step 1: recommend.
+        let rec_args = json!({ "rows": rows, "bound": bound });
+        let rec_result = handle_recommend_chart(&rec_args, &catalog);
+        assert_eq!(rec_result["isError"], false, "AC-3: recommend must succeed");
+        let rec_sc = rec_result["structuredContent"].clone();
+
+        // Step 2: emit using the recommendation + same rows.
+        let emit_args = json!({ "recommendation": rec_sc, "rows": rows });
+        let emit_result = handle_build_vega_spec(&emit_args, &catalog);
+        assert_eq!(emit_result["isError"], false,
+            "AC-3: build_vega_spec must succeed, got: {emit_result}");
+        let spec = &emit_result["structuredContent"];
+        assert!(spec.get("$schema").is_some(), "AC-3: spec must have $schema");
+        assert!(spec.get("data").and_then(|d| d.get("values")).is_some(),
+            "AC-3: spec must embed data.values");
+    }
+
+    /// AC-4 (back-compat): rows whose keys already match the encoding fields
+    /// (raw-key / fixture path) emit unchanged.
+    #[test]
+    fn ac4_raw_key_rows_emit_correctly() {
+        // Rows where keys already match the bound entries (classic fixture path).
+        let rows = json!([
+            {"revenue": 100.0, "year": "2021"},
+            {"revenue": 200.0, "year": "2022"}
+        ]);
+        let bound = json!({
+            "measures": ["revenue"],
+            "dimensions": ["year"]
+        });
+        let catalog = json!({
+            "columns": [
+                {"unique_name": "revenue", "label": "Revenue", "kind": "measure"},
+                {"unique_name": "year", "label": "Year", "kind": "dimension",
+                 "hierarchy": "time.calendar"}
+            ]
+        });
+
+        let args = json!({ "response": { "rows": rows, "bound": bound } });
+        let result = handle_build_vega_spec(&args, &catalog);
+
+        assert_eq!(result["isError"], false,
+            "AC-4: raw-key rows must still emit correctly, got: {result}");
+        let spec = &result["structuredContent"];
+        let encoding = spec.get("encoding").and_then(Value::as_object)
+            .expect("AC-4: encoding must be present");
+        // Fields must be the raw row keys (not catalog labels, not unique_names).
+        for (channel, ch_val) in encoding {
+            let field = ch_val.get("field").and_then(Value::as_str)
+                .expect("AC-4: channel must have a field");
+            assert!(
+                field == "revenue" || field == "year",
+                "AC-4: channel `{channel}` field `{field}` does not match raw row keys"
+            );
+        }
+    }
+
+    /// AC-5: build_bi_asset on a clean-label result emits a valid spec with present fields.
+    #[test]
+    fn ac5_build_bi_asset_clean_label_result_emits_valid_spec() {
+        let rows = json!([
+            {"Year": "2021", "Revenue": 100.0},
+            {"Year": "2022", "Revenue": 200.0}
+        ]);
+        let bound = json!({
+            "measures": ["sales_fact.[Revenue]"],
+            "dimensions": ["time.calendar.[Year]"]
+        });
+        let catalog = clean_label_catalog();
+
+        let args = json!({ "response": { "rows": rows, "bound": bound } });
+        let result = handle_build_bi_asset(&args, &catalog);
+
+        assert_eq!(result["isError"], false,
+            "AC-5: build_bi_asset must not error on clean-label result, got: {result}");
+        assert_eq!(result["structuredContent"]["asset"], "bi-asset.v1");
+        assert!(result["structuredContent"]["vega_spec"].is_object(),
+            "AC-5: vega_spec must be an object");
+        // The spec must not have isError itself.
+        assert_ne!(result["structuredContent"]["vega_spec"].get("error"),
+            Some(&json!(true)),
+            "AC-5: vega_spec must not be an error envelope");
+    }
+
+    /// AC-6 (held-out): a 2-measure, 1-dimension clean-label result produces
+    /// encoding channels that all reference present row keys.
+    #[test]
+    fn ac6_two_measure_one_dim_clean_label_encoding_fields_present() {
+        let rows = json!([
+            {"Year": "2021", "Revenue": 100.0, "Units": 50.0},
+            {"Year": "2022", "Revenue": 200.0, "Units": 80.0}
+        ]);
+        let bound = json!({
+            "measures": ["sales_fact.[Revenue]", "sales_fact.[Units]"],
+            "dimensions": ["time.calendar.[Year]"]
+        });
+        let catalog = json!({
+            "columns": [
+                {"unique_name": "sales_fact.[Revenue]", "label": "Revenue", "kind": "measure"},
+                {"unique_name": "sales_fact.[Units]",   "label": "Units",   "kind": "measure"},
+                {
+                    "unique_name": "time.calendar.[Year]",
+                    "label": "Year",
+                    "kind": "dimension",
+                    "hierarchy": "time.calendar"
+                }
+            ]
+        });
+        let row_keys: std::collections::HashSet<&str> =
+            ["Year", "Revenue", "Units"].iter().copied().collect();
+
+        let args = json!({ "response": { "rows": rows, "bound": bound } });
+        let result = handle_build_vega_spec(&args, &catalog);
+
+        assert_eq!(result["isError"], false,
+            "AC-6: 2-measure 1-dim clean-label result must emit, got: {result}");
+        let spec = &result["structuredContent"];
+        let encoding = spec.get("encoding").and_then(Value::as_object)
+            .expect("AC-6: encoding must be present");
+        for (channel, ch_val) in encoding {
+            let field = ch_val.get("field").and_then(Value::as_str)
+                .expect("AC-6: channel must have a field");
+            assert!(
+                row_keys.contains(field),
+                "AC-6: channel `{channel}` field `{field}` not found in row keys {row_keys:?}"
+            );
+        }
+    }
 }
