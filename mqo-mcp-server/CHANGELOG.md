@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.29.1 — 2026-06-14
+
+Fix `near_twins` concept grouping: `core_label` no longer drops a trailing "name" token before computing the bucket key. The trailing-"name" pop entered in v0.16.0 (`8c00a42`) was redundant — the Name-preferring canonical is already correctly handled by `build_near_twins`'s `canonical_un` selection via `label_is_name` — and harmful: it re-keyed `"brand name"` → `"product brand"` (survived by coincidence) and completely broke `State Name` grouping (`"customer state"` ≠ `"store state"` → no cross-hierarchy group). Fix: remove the pop so cross-hierarchy twins like `Customer/Store/Warehouse State Name` all key to `"state name"` and land in one group. Two previously-failing acceptance tests now pass: `disambig_ac2_near_twins_present_for_known_conflicts` and `wire_grounding_model_filtered_describe_yields_level_and_measure_twins`. (PRD-mqo-near-twin-concept-grouping)
+
 ## v0.29.0 — 2026-06-15
 
 `query_multidimensional` now returns clean semantic column labels instead of raw DAX-mangled keys. Previously, columns like `product_dimension_x005b_Product_x0020_Category_x005d_` and `_x005b_Total_x0020_Product_x0020_Count_x005d_` were returned verbatim, causing 5/20 tpcds_sql_derived eval cases to fail on label matching alone despite correct row values. Fix: reuse the existing `clean_label` decoder (handle_ops.rs) at the `query_multidimensional` response boundary (FR-2: one decoder, not two). Prefer the catalog `label` from the bound when available (OQ-3), fall back to decoded key. Disambiguate collisions deterministically with the hierarchy-qualified prefix (FR-4). Dataset handle path (`dataset_*`) is unchanged — the handle store still receives raw rows so existing handle-op behavior is unaffected (FR-6). (PRD-mqo-clean-result-labels)
