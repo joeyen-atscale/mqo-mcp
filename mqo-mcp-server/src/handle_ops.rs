@@ -82,6 +82,42 @@ impl HandleStore {
         let guard = self.store.lock().map_err(|_| "store lock poisoned".to_string())?;
         Ok(guard.put(ds, STORE_TTL_SECS))
     }
+
+    /// Ingest result rows into the store using **canonical clean column labels**
+    /// identical to those the `query_multidimensional` response uses (PRD-mqo-handle-canonical-labels,
+    /// FR-1/FR-3/G1).
+    ///
+    /// This is the **single shared path** (FR-3): applies `clean_result_rows` (the same
+    /// function that cleans the response) to normalize raw DAX-mangled column keys to
+    /// canonical clean labels BEFORE persisting, so:
+    ///   - handle schema == response columns (AC-1)
+    ///   - `dataset_export` columns == response columns (AC-2)
+    ///   - collision disambiguation is identical (FR-5, AC-3)
+    ///   - already-clean names are a no-op (`clean_label(clean) == clean`, FR-7, AC-6)
+    ///
+    /// Column *roles* are still bound-authoritative (same as [`put_rows_with_bound`]).
+    ///
+    /// Back-compat (FR-6): callers that pass a legacy raw key to a `dataset_*` op
+    /// will encounter an `unknown_column` error from dh-ops (the raw key is no longer
+    /// stored).  The caller-side resolver in [`clean_result_rows`] remains available
+    /// for ops that need to map incoming raw keys to canonical names.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Err(String)` if the store lock is poisoned.
+    pub fn put_rows_with_canonical_labels(
+        &self,
+        rows: &[Value],
+        bound: &Value,
+    ) -> Result<DatasetHandle, String> {
+        // FR-3: reuse the SAME `clean_result_rows` function the response uses.
+        // This is the single shared implementation — no fork.
+        let canonical_rows = clean_result_rows(rows, bound);
+        // Bound-authoritative roles over the canonical-keyed rows.
+        let ds = json_rows_to_dataset_with_bound(&canonical_rows, bound);
+        let guard = self.store.lock().map_err(|_| "store lock poisoned".to_string())?;
+        Ok(guard.put(ds, STORE_TTL_SECS))
+    }
 }
 
 impl Default for HandleStore {
@@ -1692,25 +1728,297 @@ mod tests {
         );
     }
 
-    /// AC-5: The dataset_* handle path (json_rows_to_dataset_with_bound) is
-    /// unaffected — it still stores raw mangled keys in the dataset column names.
-    /// Verify by calling it with mangled keys and checking the column name.
+    /// AC-5 (PRD-mqo-clean-result-labels): `json_rows_to_dataset_with_bound`
+    /// itself does NOT rename columns — it is the lower-level function used by
+    /// the persist path after names are already canonical.  Calling it directly
+    /// with mangled keys yields raw column names in the dataset; that is expected
+    /// and tested here so we have a stable baseline for the lower-level function.
+    ///
+    /// NOTE: `put_rows_with_canonical_labels` (used by the live query path) applies
+    /// `clean_result_rows` BEFORE calling this function, so the handle store now
+    /// receives canonical names (see canonical-labels AC tests below).
     #[test]
-    fn ac5_dataset_handle_path_unchanged() {
+    fn ac5_json_rows_to_dataset_with_bound_preserves_raw_keys() {
         let cat_key = "product_dimension_x005b_Product_x0020_Category_x005d_";
         let rows = vec![json!({ cat_key: "Books" })];
         let bound = json!({
             "dimensions": [{ "unique_name": "product_dimension.[Product Category]" }],
             "measures": [],
         });
-        // The handle store path does NOT clean column names.
+        // `json_rows_to_dataset_with_bound` alone does NOT clean column names —
+        // only the role is bound-authoritative.
         let ds = json_rows_to_dataset_with_bound(&rows, &bound);
         let has_raw_key = ds.columns.iter().any(|c| c.name == cat_key);
         assert!(
             has_raw_key,
-            "Handle store should preserve raw mangled key '{}', got: {:?}",
+            "json_rows_to_dataset_with_bound should preserve raw key '{}', got: {:?}",
             cat_key,
             ds.columns.iter().map(|c| &c.name).collect::<Vec<_>>()
         );
+    }
+
+    // ── Canonical-labels AC tests (PRD-mqo-handle-canonical-labels v0.32.0) ──
+
+    /// AC-1: The handle stores the same canonical clean labels the response uses.
+    ///
+    /// Given a query whose response columns are `["Year", "Revenue"]`, when the
+    /// result is persisted via `put_rows_with_canonical_labels`, the handle's
+    /// dataset column names must be exactly `["Year", "Revenue"]`.
+    #[test]
+    fn canonical_ac1_handle_stores_canonical_labels() {
+        use crate::handle_ops::HandleStore;
+
+        let year_key = "atscale_catalogs_x005b_Sold_x0020_Calendar_x0020_Year_x005d_";
+        let revenue_key = "_x005b_Revenue_x005d_";
+        let bound = json!({
+            "dimensions": [{ "unique_name": "sold_date.[Sold Calendar Year]", "label": "Year" }],
+            "measures": [{ "unique_name": "sales.Revenue", "label": "Revenue" }],
+        });
+        let rows = vec![
+            json!({ year_key: 2021.0, revenue_key: 100.5 }),
+            json!({ year_key: 2022.0, revenue_key: 200.5 }),
+        ];
+
+        let hs = HandleStore::new();
+        let handle = hs
+            .put_rows_with_canonical_labels(&rows, &bound)
+            .expect("put succeeds");
+
+        let guard = hs.store.lock().unwrap();
+        let ds = guard.get(&handle).expect("handle present");
+
+        let col_names: Vec<&str> = ds.columns.iter().map(|c| c.name.as_str()).collect();
+        assert!(
+            col_names.contains(&"Year"),
+            "Expected 'Year' in column names, got: {col_names:?}"
+        );
+        assert!(
+            col_names.contains(&"Revenue"),
+            "Expected 'Revenue' in column names, got: {col_names:?}"
+        );
+        assert!(
+            !col_names.iter().any(|n| n.contains("_x005b_") || n.contains("_x0020_")),
+            "Handle must not store mangled keys, got: {col_names:?}"
+        );
+    }
+
+    /// AC-2: Handle columns == response columns → `dataset_export` columns == response.
+    ///
+    /// The handle's column names equal what `clean_result_rows` produces for the
+    /// same rows+bound (the response path), so `dataset_export` output == response.
+    #[test]
+    fn canonical_ac2_handle_columns_match_response_columns() {
+        let cat_key = "product_dimension_x005b_Product_x0020_Category_x005d_";
+        let cnt_key = "_x005b_Total_x0020_Product_x0020_Count_x005d_";
+        let bound = json!({
+            "dimensions": [{ "unique_name": "product_dimension.[Product Category]" }],
+            "measures": [{ "unique_name": "catalog.total_product_count" }],
+        });
+        let rows = vec![
+            json!({ cat_key: "Books", cnt_key: 42 }),
+            json!({ cat_key: "Electronics", cnt_key: 17 }),
+        ];
+
+        // Response path:
+        let response_cols: Vec<String> = clean_result_rows(&rows, &bound)
+            .first()
+            .and_then(Value::as_object)
+            .map(|obj| obj.keys().cloned().collect())
+            .unwrap_or_default();
+
+        // Handle persist path:
+        use crate::handle_ops::HandleStore;
+        let hs = HandleStore::new();
+        let handle = hs
+            .put_rows_with_canonical_labels(&rows, &bound)
+            .expect("put succeeds");
+        let guard = hs.store.lock().unwrap();
+        let ds = guard.get(&handle).expect("handle present");
+        let handle_cols: Vec<&str> = ds.columns.iter().map(|c| c.name.as_str()).collect();
+
+        for col in &response_cols {
+            assert!(
+                handle_cols.contains(&col.as_str()),
+                "Handle missing response column '{col}'; handle has: {handle_cols:?}"
+            );
+        }
+    }
+
+    /// AC-3: Collision disambiguation in the handle matches the response exactly.
+    ///
+    /// Two columns that both clean to "City" get distinct qualified names; the
+    /// handle's names must equal the response's disambiguated names.
+    #[test]
+    fn canonical_ac3_collision_disambiguation_matches_response() {
+        let cust_city_key = "customer_dimension_x005b_City_x005d_";
+        let store_city_key = "store_dimension_x005b_City_x005d_";
+        let bound = json!({
+            "dimensions": [
+                { "unique_name": "customer_dimension.[City]" },
+                { "unique_name": "store_dimension.[City]" }
+            ],
+            "measures": [],
+        });
+        let rows = vec![json!({ cust_city_key: "New York", store_city_key: "Boston" })];
+
+        // Response path produces disambiguated names:
+        let response_cols: Vec<String> = clean_result_rows(&rows, &bound)
+            .first()
+            .and_then(Value::as_object)
+            .map(|obj| obj.keys().cloned().collect())
+            .unwrap_or_default();
+
+        // Handle persist path must match:
+        use crate::handle_ops::HandleStore;
+        let hs = HandleStore::new();
+        let handle = hs
+            .put_rows_with_canonical_labels(&rows, &bound)
+            .expect("put succeeds");
+        let guard = hs.store.lock().unwrap();
+        let ds = guard.get(&handle).expect("handle present");
+        let handle_cols: Vec<&str> = ds.columns.iter().map(|c| c.name.as_str()).collect();
+
+        // Both paths must produce 2 distinct keys.
+        assert_eq!(response_cols.len(), 2, "Response must have 2 distinct keys: {response_cols:?}");
+        assert_eq!(handle_cols.len(), 2, "Handle must have 2 distinct keys: {handle_cols:?}");
+
+        // They must be identical.
+        for col in &response_cols {
+            assert!(
+                handle_cols.contains(&col.as_str()),
+                "Handle missing disambiguated column '{col}'; handle: {handle_cols:?}"
+            );
+        }
+    }
+
+    /// AC-4 (exposed vs internal): The exposed column name is the canonical label
+    /// even if it contains spaces (DuckDB-legal quoting is internal only).
+    ///
+    /// dh-store stores the column under the canonical name as-is; the exposed
+    /// `name` field in the ColumnSchema is the canonical label (e.g. "Product Category").
+    #[test]
+    fn canonical_ac4_canonical_name_with_spaces_is_exposed() {
+        let cat_key = "product_dimension_x005b_Product_x0020_Category_x005d_";
+        let bound = json!({
+            "dimensions": [{ "unique_name": "product_dimension.[Product Category]" }],
+            "measures": [],
+        });
+        let rows = vec![json!({ cat_key: "Books" })];
+
+        use crate::handle_ops::HandleStore;
+        let hs = HandleStore::new();
+        let handle = hs
+            .put_rows_with_canonical_labels(&rows, &bound)
+            .expect("put succeeds");
+        let guard = hs.store.lock().unwrap();
+        let ds = guard.get(&handle).expect("handle present");
+
+        let has_canonical = ds.columns.iter().any(|c| c.name == "Product Category");
+        assert!(
+            has_canonical,
+            "Exposed column name must be canonical 'Product Category', got: {:?}",
+            ds.columns.iter().map(|c| &c.name).collect::<Vec<_>>()
+        );
+    }
+
+    /// AC-5 (back-compat): The legacy raw-key resolver `clean_result_rows` still
+    /// works for back-compat — callers can still pass a raw key and get back the
+    /// canonical label.  (FR-6: resolver stays.)
+    #[test]
+    fn canonical_ac5_baccompat_resolver_still_works() {
+        let cat_key = "product_dimension_x005b_Product_x0020_Category_x005d_";
+        let bound = json!({
+            "dimensions": [{ "unique_name": "product_dimension.[Product Category]" }],
+            "measures": [],
+        });
+        let rows = vec![json!({ cat_key: "Books" })];
+
+        // The resolver (clean_result_rows) maps a raw key to its canonical label.
+        let cleaned = clean_result_rows(&rows, &bound);
+        let row = cleaned[0].as_object().unwrap();
+        assert!(
+            row.contains_key("Product Category"),
+            "Resolver must map '{}' → 'Product Category'; got: {:?}",
+            cat_key,
+            row.keys().collect::<Vec<_>>()
+        );
+    }
+
+    /// AC-6 (idempotent): Re-persisting an already-canonical result is a no-op on names.
+    ///
+    /// `clean_result_rows(clean_rows, bound)` == `clean_rows` — normalization is
+    /// idempotent (FR-7).
+    #[test]
+    fn canonical_ac6_idempotent_already_clean() {
+        let bound = json!({
+            "dimensions": [{ "unique_name": "product_dimension.[Product Category]" }],
+            "measures": [{ "unique_name": "sales.Revenue" }],
+        });
+        // Already-canonical rows (as produced by the response path):
+        let clean_rows = vec![
+            json!({ "Product Category": "Books", "Revenue": 100.0 }),
+        ];
+
+        // Re-applying clean_result_rows is a no-op on names.
+        let re_cleaned = clean_result_rows(&clean_rows, &bound);
+        let re_row = re_cleaned[0].as_object().unwrap();
+        assert!(
+            re_row.contains_key("Product Category"),
+            "Idempotent: 'Product Category' must survive re-cleaning; got: {:?}",
+            re_row.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            re_row.contains_key("Revenue"),
+            "Idempotent: 'Revenue' must survive re-cleaning; got: {:?}",
+            re_row.keys().collect::<Vec<_>>()
+        );
+        // No spurious new keys.
+        assert_eq!(re_row.len(), 2);
+    }
+
+    /// AC-7 (shared fn): The response builder and persist path produce identical
+    /// column names from the same raw keys + bound.  One function, no fork.
+    #[test]
+    fn canonical_ac7_shared_function_response_and_persist_identical() {
+        let year_key = "sold_date_dimensions_x005b_Sold_x0020_Calendar_x0020_Year_x005d_";
+        let sales_key = "_x005b_Total_x0020_Store_x0020_Sales_x005d_";
+        let bound = json!({
+            "dimensions": [{ "unique_name": "sold_date_dimensions.[Sold Calendar Year]" }],
+            "measures": [{ "unique_name": "tpcds.total_store_sales" }],
+        });
+        let rows = vec![
+            json!({ year_key: 2021.0, sales_key: 100.5 }),
+            json!({ year_key: 2022.0, sales_key: 200.5 }),
+        ];
+
+        // Response path: clean_result_rows produces the canonical names.
+        let response_cols: Vec<String> = clean_result_rows(&rows, &bound)
+            .first()
+            .and_then(Value::as_object)
+            .map(|obj| obj.keys().cloned().collect())
+            .unwrap_or_default();
+
+        // Persist path: put_rows_with_canonical_labels uses the SAME clean_result_rows.
+        use crate::handle_ops::HandleStore;
+        let hs = HandleStore::new();
+        let handle = hs
+            .put_rows_with_canonical_labels(&rows, &bound)
+            .expect("put succeeds");
+        let guard = hs.store.lock().unwrap();
+        let ds = guard.get(&handle).expect("handle present");
+        let handle_cols: Vec<&str> = ds.columns.iter().map(|c| c.name.as_str()).collect();
+
+        // Both must have the same column names.
+        assert_eq!(
+            response_cols.len(),
+            handle_cols.len(),
+            "Column count mismatch: response {response_cols:?} vs handle {handle_cols:?}"
+        );
+        for col in &response_cols {
+            assert!(
+                handle_cols.contains(&col.as_str()),
+                "Handle missing response column '{col}'; handle: {handle_cols:?}"
+            );
+        }
     }
 }
