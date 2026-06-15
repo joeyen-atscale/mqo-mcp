@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.30.0 — 2026-06-15
+
+`search_columns` now supports a `member_value` mode (PRD-mqo-member-locate): when the `member_value` parameter is supplied, the tool scans captured level domains (case-insensitive, whitespace-normalized) for the given member value and returns `{found, matched_levels, value}` in one call — instead of the model rephrasing column-name searches 16 times. When the value is found in one or more captured domains, `found: true` is returned with the matching level(s) (each carrying `unique_name`, `hierarchy`, `label`, `domain_unknown: false`). When the value is absent from all captured domains, `found: false` is returned with candidate levels listed (including `domain_unknown: true` for levels with no captured domain) so the model can still pin one without re-searching. Matching is bounded to in-memory captured domains — no warehouse query per call. Column-name search behavior is unchanged when `member_value` is absent (FR-6 back-compat). Validated against AC-1..AC-6.
+
 ## v0.29.1 — 2026-06-14
 
 Fix `near_twins` concept grouping: `core_label` no longer drops a trailing "name" token before computing the bucket key. The trailing-"name" pop entered in v0.16.0 (`8c00a42`) was redundant — the Name-preferring canonical is already correctly handled by `build_near_twins`'s `canonical_un` selection via `label_is_name` — and harmful: it re-keyed `"brand name"` → `"product brand"` (survived by coincidence) and completely broke `State Name` grouping (`"customer state"` ≠ `"store state"` → no cross-hierarchy group). Fix: remove the pop so cross-hierarchy twins like `Customer/Store/Warehouse State Name` all key to `"state name"` and land in one group. Two previously-failing acceptance tests now pass: `disambig_ac2_near_twins_present_for_known_conflicts` and `wire_grounding_model_filtered_describe_yields_level_and_measure_twins`. (PRD-mqo-near-twin-concept-grouping)

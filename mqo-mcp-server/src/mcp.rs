@@ -181,6 +181,13 @@ fn normalize_label(label: &str) -> String {
     label.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
+/// Normalize a member value for domain matching: trim, collapse interior
+/// whitespace, lowercase.  Mirrors the catalog's member normalization so that
+/// `"  Corpcorp #1 "` and `"corpcorp  #1"` both resolve to the same key.
+fn normalize_member(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
 /// The "core label" of an attribute: the trailing concept words shared by
 /// near-twins across hierarchies (e.g. "Product Brand Name",
 /// "Store Item Product Brand Name" → "brand name"; "Customer State Name",
@@ -792,10 +799,13 @@ fn core_tool_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "search_columns",
-            "description": "Search measures and dimension levels by label or unique name. Read-only.",
+            "description": "Search measures and dimension levels by label or unique name (column-name mode), OR find which level(s) hold a specific member value (member_value mode). When member_value is supplied, scans captured level domains for the value (case-insensitive) and returns {found, matched_levels, value}. Use member_value to ground a filter member in one call instead of rephrasing column-name searches. Read-only.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "query": { "type": "string", "description": "Substring to match against label/unique_name." } },
+                "properties": {
+                    "query": { "type": "string", "description": "Substring to match against label/unique_name (column-name mode). Omit when using member_value." },
+                    "member_value": { "type": "string", "description": "A filter member value to locate (e.g. 'corpcorp #1'). When present, searches captured level domains for this value and returns the level(s) that contain it. Mutually exclusive with query." }
+                },
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": true }
@@ -1416,6 +1426,25 @@ impl Server {
     }
 
     fn search_columns(&self, args: &Value) -> Value {
+        // ── member_value mode (PRD-mqo-member-locate) ─────────────────────────
+        // When `member_value` is supplied, scan captured level domains for the
+        // value (case-insensitive, whitespace-normalized) and return which levels
+        // contain it.  Levels with no captured domain are listed as candidates
+        // marked `domain_unknown: true` — never falsely asserted absent.
+        if let Some(raw_value) = args.get("member_value").and_then(Value::as_str) {
+            let value = raw_value.trim().to_string();
+            if value.is_empty() {
+                return json!({
+                    "error": {
+                        "code": "invalid_input",
+                        "detail": "member_value must not be empty"
+                    }
+                });
+            }
+            return self.locate_member(&value);
+        }
+
+        // ── column-name search mode (FR-6 back-compat) ───────────────────────
         let q = args
             .get("query")
             .and_then(Value::as_str)
@@ -1445,6 +1474,117 @@ impl Server {
             })
             .unwrap_or_default();
         json!({ "columns": columns })
+    }
+
+    /// Value → level lookup for the `member_value` mode of `search_columns`.
+    ///
+    /// Scans all catalog columns where `kind == "level"` for a case-insensitive,
+    /// whitespace-normalized match of `value` in the column's `domain` array.
+    ///
+    /// Returns:
+    /// ```json
+    /// {
+    ///   "value": "<queried value>",
+    ///   "found": true|false,
+    ///   "matched_levels": [
+    ///     { "unique_name": "...", "hierarchy": "...", "label": "...", "domain_unknown": true|false }
+    ///   ]
+    /// }
+    /// ```
+    ///
+    /// When `found` is `true`, `matched_levels` lists only the levels whose
+    /// captured domain contains the value. When `found` is `false`, `matched_levels`
+    /// lists all level candidates (including `domain_unknown` ones) so the model
+    /// can still pin a level without re-searching. Levels with no captured domain
+    /// are always surfaced as candidates marked `domain_unknown: true`.
+    fn locate_member(&self, value: &str) -> Value {
+        // Normalize the target: whitespace-collapse + lowercase.
+        let target = normalize_member(value);
+
+        let all_cols = match self
+            .catalog
+            .get("columns")
+            .and_then(Value::as_array)
+        {
+            Some(c) => c,
+            None => return json!({ "value": value, "found": false, "matched_levels": [] }),
+        };
+
+        // Scan all level columns.
+        let mut matched: Vec<Value> = Vec::new();
+        let mut domain_unknown_candidates: Vec<Value> = Vec::new();
+
+        for col in all_cols {
+            if col.get("kind").and_then(Value::as_str) != Some("level") {
+                continue;
+            }
+            let un = match col.get("unique_name").and_then(Value::as_str) {
+                Some(s) => s,
+                None => continue,
+            };
+            let label = col.get("label").and_then(Value::as_str).unwrap_or(un);
+            let hier: String = col
+                .get("hierarchy")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .or_else(|| un.split_once('.').map(|(h, _)| h.to_string()))
+                .unwrap_or_default();
+
+            match col.get("domain").and_then(Value::as_array) {
+                Some(domain) if !domain.is_empty() => {
+                    // Captured domain — check if value is in it.
+                    let hit = domain.iter().any(|v| {
+                        v.as_str()
+                            .is_some_and(|s| normalize_member(s) == target)
+                    });
+                    if hit {
+                        matched.push(json!({
+                            "unique_name": un,
+                            "hierarchy": hier,
+                            "label": label,
+                            "domain_unknown": false
+                        }));
+                    }
+                }
+                _ => {
+                    // No captured domain — list as candidate (G3).
+                    domain_unknown_candidates.push(json!({
+                        "unique_name": un,
+                        "hierarchy": hier,
+                        "label": label,
+                        "domain_unknown": true
+                    }));
+                }
+            }
+        }
+
+        // Sort for determinism.
+        matched.sort_by(|a, b| {
+            a.get("unique_name")
+                .and_then(Value::as_str)
+                .cmp(&b.get("unique_name").and_then(Value::as_str))
+        });
+        domain_unknown_candidates.sort_by(|a, b| {
+            a.get("unique_name")
+                .and_then(Value::as_str)
+                .cmp(&b.get("unique_name").and_then(Value::as_str))
+        });
+
+        let found = !matched.is_empty();
+        let result_levels: Vec<Value> = if found {
+            // Found: return only the matching levels (not unknowns).
+            matched
+        } else {
+            // Not found: return all candidates (domain_unknown included) so the
+            // model can still pin one without re-searching (FR-3 / G2 / G3).
+            domain_unknown_candidates
+        };
+
+        json!({
+            "value": value,
+            "found": found,
+            "matched_levels": result_levels
+        })
     }
 
     // ── Federation tools (registry-only) ──────────────────────────────────
