@@ -141,6 +141,20 @@ pub enum PipelineError {
         /// The configured cap.
         cap: usize,
     },
+
+    /// The requested model is a non-queryable dimension — it exists in the
+    /// catalog but has no XMLA cube mapping.  The caller should retry against
+    /// one of the cubes listed in `candidate_cubes`.
+    ///
+    /// Classified as `model_path` (not `infrastructure`) so the LLM can act on
+    /// it in one retry rather than treating it as an opaque infra failure.
+    #[error("model '{model}' is a dimension, not a queryable cube; use one of: {candidate_cubes:?}")]
+    NonQueryableDimension {
+        /// The dimension model name the caller requested.
+        model: String,
+        /// The queryable cube(s) that contain this dimension.
+        candidate_cubes: Vec<String>,
+    },
 }
 
 // ── Error classification ──────────────────────────────────────────────────────
@@ -184,6 +198,7 @@ pub fn error_class(e: &PipelineError) -> &'static str {
         | PipelineError::CrossFactIncompatible { .. }
         | PipelineError::ParamRejected { .. }
         | PipelineError::ProjectionTooLarge { .. }
+        | PipelineError::NonQueryableDimension { .. }
         | PipelineError::Invalid(_)
         | PipelineError::NotAnMqo(_)
         | PipelineError::Subprocess { .. } => MODEL_PATH,

@@ -1072,22 +1072,56 @@ impl Server {
     // ── Catalog tools (read-only snapshot passthrough) ─────────────────────
 
     fn list_models(&self) -> Value {
-        // Derive the set of model prefixes from column unique_names plus any
-        // explicit models list embedded in the snapshot.
-        if let Some(models) = self.catalog.get("models") {
-            return json!({ "models": models.clone() });
-        }
-        let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        if let Some(cols) = self.catalog.get("columns").and_then(Value::as_array) {
-            for c in cols {
-                if let Some(un) = c.get("unique_name").and_then(Value::as_str) {
-                    if let Some((model, _)) = un.split_once('.') {
-                        set.insert(model.to_string());
+        // Derive the set of model names from the catalog.  When an explicit
+        // `models` list is present in the snapshot, use it; otherwise derive
+        // from column unique-name prefixes.
+        let model_names: Vec<String> = if let Some(models) = self.catalog.get("models") {
+            if let Some(arr) = models.as_array() {
+                arr.iter()
+                    .filter_map(|m| m.as_str().map(str::to_string))
+                    .collect()
+            } else {
+                vec![]
+            }
+        } else {
+            let mut set: std::collections::BTreeSet<String> =
+                std::collections::BTreeSet::new();
+            if let Some(cols) = self.catalog.get("columns").and_then(Value::as_array) {
+                for c in cols {
+                    if let Some(un) = c.get("unique_name").and_then(Value::as_str) {
+                        if let Some((model, _)) = un.split_once('.') {
+                            set.insert(model.to_string());
+                        }
                     }
                 }
             }
-        }
-        json!({ "models": set.into_iter().collect::<Vec<_>>() })
+            set.into_iter().collect()
+        };
+
+        // FR-1 / FR-5: annotate each model with its queryability.
+        //   - XMLA discovery ran (>0 cubes): queryable = true iff the model is
+        //     a mapped cube in `xmla_model_coords`.
+        //   - Discovery not run or 0 cubes mapped: emit `queryable: null`
+        //     (unknown) — never falsely mark a real cube as non-queryable.
+        let discovery_ran = !self.xmla_model_coords.is_empty();
+        let annotated: Vec<Value> = model_names
+            .iter()
+            .map(|name| {
+                let queryable_field = if discovery_ran {
+                    json!(self.xmla_model_coords.contains_key(name.as_str()))
+                } else {
+                    Value::Null
+                };
+                json!({ "name": name, "queryable": queryable_field })
+            })
+            .collect();
+
+        // Emit both the enriched objects array and the legacy bare-name list
+        // for back-compat with callers that only read `models` as strings.
+        json!({
+            "models": model_names,
+            "model_details": annotated
+        })
     }
 
     fn describe_model(&self, args: &Value) -> Value {
@@ -1347,13 +1381,42 @@ impl Server {
             Value::Object(obj)
         };
 
-        json!({
+        // FR-2 / FR-5: annotate the model with queryability.
+        // When a specific model was requested, emit the flag for that model.
+        // When discovery has not run (0 cubes), emit `null` (unknown).
+        let (queryable_field, candidate_cubes_field) = match model {
+            None => (Value::Null, Value::Null),
+            Some(m) => {
+                if self.xmla_model_coords.is_empty() {
+                    // Discovery has not run — unknown, never false-negative.
+                    (Value::Null, Value::Null)
+                } else if self.xmla_model_coords.contains_key(m) {
+                    // Confirmed queryable cube.
+                    (json!(true), Value::Null)
+                } else {
+                    // Not in the XMLA map → non-queryable dimension.
+                    // List all known cubes as candidates.
+                    let mut cubes: Vec<String> =
+                        self.xmla_model_coords.keys().cloned().collect();
+                    cubes.sort();
+                    (json!(false), json!(cubes))
+                }
+            }
+        };
+
+        let mut resp = json!({
             "model": model,
+            "queryable": queryable_field,
             "columns": columns,
             "near_twins": near_twins,
             "hierarchy_levels": hierarchy_levels_val,
             "describe_model": self.catalog.get("describe_model").cloned().unwrap_or(Value::Null)
-        })
+        });
+        // Only include `candidate_cubes` when the model is non-queryable.
+        if !candidate_cubes_field.is_null() {
+            resp["candidate_cubes"] = candidate_cubes_field;
+        }
+        resp
     }
 
     fn search_columns(&self, args: &Value) -> Value {
@@ -1576,6 +1639,27 @@ impl Server {
                         level: too_large.level,
                         estimate: too_large.estimate,
                         cap: too_large.cap,
+                    });
+                }
+            }
+        }
+
+        // ── Non-queryable dimension guard (FR-3, PRD-mqo-queryable-model-grounding) ─
+        // When XMLA discovery has run (>0 cubes in the map) and the requested model
+        // is NOT in the map, it is a dimension table — return a typed model_path
+        // error naming the candidate cubes rather than the opaque xmla_coords_not_found.
+        // This fires BEFORE the pipeline so the LLM can recover in one retry.
+        // When discovery has not run (empty map), we fall through and let the
+        // pipeline handle it as before (FR-5 fail-safe: never mislabel a real cube).
+        if !self.xmla_model_coords.is_empty() {
+            if let Some(requested_model) = query.get("model").and_then(Value::as_str) {
+                if !self.xmla_model_coords.contains_key(requested_model) {
+                    let mut cubes: Vec<String> =
+                        self.xmla_model_coords.keys().cloned().collect();
+                    cubes.sort();
+                    return structured_err(&PipelineError::NonQueryableDimension {
+                        model: requested_model.to_string(),
+                        candidate_cubes: cubes,
                     });
                 }
             }
@@ -1959,6 +2043,18 @@ fn structured_err(e: &PipelineError) -> Value {
                      of {estimate}, which exceeds the configured cap of {cap}. \
                      Add a filter to narrow the set or ask the operator to raise \
                      --max-projection-cardinality."
+                )
+            }),
+        ),
+        PipelineError::NonQueryableDimension { model, candidate_cubes } => (
+            "non_queryable_dimension",
+            json!({
+                "model": model,
+                "candidate_cubes": candidate_cubes,
+                "detail": format!(
+                    "Model '{model}' is a dimension table, not a queryable cube. \
+                     Re-issue query_multidimensional with one of the following \
+                     cube model(s) instead: {candidate_cubes:?}."
                 )
             }),
         ),

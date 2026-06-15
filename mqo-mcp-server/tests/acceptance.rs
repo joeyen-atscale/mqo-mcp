@@ -2033,3 +2033,281 @@ fn structured_err_response_contains_error_class_field() {
     // A not_an_mqo error is model_path.
     assert_eq!(class, "model_path", "not_an_mqo → model_path");
 }
+
+// ── Queryable-model grounding tests (PRD-mqo-queryable-model-grounding) ───────
+
+/// Helper: build a Server where discovery has run and mapped exactly one cube.
+/// `tpcds_benchmark_model` is the cube; `ship_mode` and `store_dimension` are
+/// dimensions (not in the XMLA map).
+fn server_with_cube_map() -> Server {
+    let mut coords: HashMap<String, (String, String)> = HashMap::new();
+    coords.insert(
+        "tpcds_benchmark_model".to_string(),
+        ("tpcds_Snowflake".to_string(), "tpcds_benchmark_model".to_string()),
+    );
+    Server {
+        catalog: load_catalog(),
+        stats: load_stats(),
+        tools: resolve_tools(),
+        row_threshold: 50_000,
+        engine: ServerEngine::Fixture,
+        backend_override: None,
+        capabilities: BackendCapabilities::all_live(),
+        registry: None,
+        health_cache: None,
+        handle_store: None,
+        cursor_store: None,
+        page_size: mqo_mcp_server::cursor::DEFAULT_PAGE_SIZE,
+        inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
+        enriched: None,
+        xmla_model_coords: coords,
+        max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
+    }
+}
+
+/// AC-1: list_models annotates queryable:true for a catalog model that is in the
+/// XMLA map, and queryable:false for a model that is not.
+///
+/// The test catalog has `sales` as its only model.  `server_with_cube_map`
+/// maps `tpcds_benchmark_model` as the cube (not `sales`), so:
+///   - `sales` → queryable:false (dimension, not in XMLA map)
+/// We also build a dedicated server where `sales` IS the mapped cube to assert
+/// the queryable:true path.
+#[test]
+fn qmg_ac1_list_models_flags_cube_vs_dimension() {
+    // ── Part A: sales is not in XMLA map → queryable:false ──────────────────
+    let srv_a = server_with_cube_map(); // tpcds_benchmark_model mapped, not sales
+    let result_a = call_tool(&srv_a, "list_models", json!({}));
+    assert_eq!(result_a["isError"], json!(false), "list_models must succeed: {result_a}");
+
+    let details_a = result_a["structuredContent"]["model_details"]
+        .as_array()
+        .expect("model_details must be an array");
+
+    // `sales` is in the catalog but NOT in the XMLA map → queryable:false
+    let sales_a = details_a.iter().find(|d| d["name"] == "sales");
+    assert!(sales_a.is_some(), "sales must appear in model_details");
+    assert_eq!(
+        sales_a.unwrap()["queryable"],
+        json!(false),
+        "sales must be queryable:false when not in XMLA map"
+    );
+
+    // ── Part B: when sales IS the mapped cube → queryable:true ───────────────
+    let mut coords_b: HashMap<String, (String, String)> = HashMap::new();
+    coords_b.insert(
+        "sales".to_string(),
+        ("test_catalog".to_string(), "sales".to_string()),
+    );
+    let srv_b = Server {
+        catalog: load_catalog(),
+        stats: load_stats(),
+        tools: resolve_tools(),
+        row_threshold: 50_000,
+        engine: ServerEngine::Fixture,
+        backend_override: None,
+        capabilities: BackendCapabilities::all_live(),
+        registry: None,
+        health_cache: None,
+        handle_store: None,
+        cursor_store: None,
+        page_size: mqo_mcp_server::cursor::DEFAULT_PAGE_SIZE,
+        inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
+        enriched: None,
+        xmla_model_coords: coords_b,
+        max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
+    };
+    let result_b = call_tool(&srv_b, "list_models", json!({}));
+    assert_eq!(result_b["isError"], json!(false));
+    let details_b = result_b["structuredContent"]["model_details"]
+        .as_array()
+        .expect("model_details");
+    let sales_b = details_b.iter().find(|d| d["name"] == "sales");
+    assert!(sales_b.is_some(), "sales must appear in model_details (part B)");
+    assert_eq!(
+        sales_b.unwrap()["queryable"],
+        json!(true),
+        "sales must be queryable:true when in XMLA map"
+    );
+
+    // Legacy `models` string array is still present for back-compat.
+    let models = result_b["structuredContent"]["models"]
+        .as_array()
+        .expect("legacy models array must be present");
+    assert!(
+        models.iter().any(|m| m.as_str() == Some("sales")),
+        "legacy models array must contain model names"
+    );
+}
+
+/// AC-1b: when discovery has NOT run (empty map), queryable field is null (unknown).
+#[test]
+fn qmg_ac1b_list_models_unknown_when_no_discovery() {
+    let srv = server(); // xmla_model_coords is empty
+    let result = call_tool(&srv, "list_models", json!({}));
+    assert_eq!(result["isError"], json!(false));
+
+    let details = result["structuredContent"]["model_details"]
+        .as_array()
+        .expect("model_details array");
+
+    // All entries should have queryable: null (unknown) when discovery has not run.
+    for detail in details {
+        assert_eq!(
+            detail["queryable"],
+            Value::Null,
+            "queryable must be null/unknown when discovery has not run: {detail}"
+        );
+    }
+}
+
+/// AC-2: query_multidimensional against a non-queryable model (dimension) returns
+/// a typed model_path error naming the cube, not xmla_coords_not_found.
+///
+/// Given a server where discovery maps tpcds_benchmark_model as a cube,
+/// when query_multidimensional is called with model:"ship_mode", then the
+/// response is a non_queryable_dimension error (model_path class) naming the cube.
+#[test]
+fn qmg_ac2_query_dimension_returns_typed_model_path_error() {
+    let srv = server_with_cube_map();
+    let mqo = json!({
+        "model": "ship_mode",
+        "measures": [{ "unique_name": "Revenue" }],
+        "dimensions": [],
+        "filters": [],
+        "time_intelligence": [],
+        "order": null,
+        "limit": 10,
+        "non_empty": true
+    });
+    let result = call_tool(&srv, "query_multidimensional", json!({ "mqo": mqo }));
+
+    assert_eq!(result["isError"], json!(true), "must be an error: {result}");
+    let err = &result["structuredContent"]["error"];
+
+    // Must be non_queryable_dimension, NOT xmla_coords_not_found.
+    assert_eq!(
+        err["code"],
+        json!("non_queryable_dimension"),
+        "error code must be non_queryable_dimension, got: {err}"
+    );
+    // error_class must be model_path (actionable by the LLM).
+    assert_eq!(
+        err["error_class"],
+        json!("model_path"),
+        "error_class must be model_path: {err}"
+    );
+    // candidate_cubes must name the real cube.
+    let cubes = err["detail"]["candidate_cubes"]
+        .as_array()
+        .expect("candidate_cubes must be an array");
+    assert!(
+        cubes.iter().any(|c| c.as_str() == Some("tpcds_benchmark_model")),
+        "candidate_cubes must include tpcds_benchmark_model: {cubes:?}"
+    );
+}
+
+/// AC-3: describe_model on a non-queryable dimension reports queryable:false + cube list.
+#[test]
+fn qmg_ac3_describe_model_dimension_flags_non_queryable() {
+    let srv = server_with_cube_map();
+    // `sales` is in the catalog but NOT in the xmla_model_coords map → dimension.
+    let result = call_tool(&srv, "describe_model", json!({ "model": "sales" }));
+    assert_eq!(result["isError"], json!(false), "describe_model must succeed: {result}");
+
+    let sc = &result["structuredContent"];
+    assert_eq!(
+        sc["queryable"],
+        json!(false),
+        "sales (not in XMLA map) must be queryable:false: {sc}"
+    );
+    // candidate_cubes must be present and list tpcds_benchmark_model.
+    let cubes = sc["candidate_cubes"]
+        .as_array()
+        .expect("candidate_cubes must be present for a non-queryable dimension");
+    assert!(
+        cubes.iter().any(|c| c.as_str() == Some("tpcds_benchmark_model")),
+        "candidate_cubes must include tpcds_benchmark_model: {cubes:?}"
+    );
+}
+
+/// AC-4: When XMLA discovery mapped 0 cubes (empty map), list_models emits
+/// queryable:null (unknown) and no model is tagged queryable:false.
+#[test]
+fn qmg_ac4_zero_cube_discovery_emits_unknown_not_false() {
+    let srv = server(); // empty xmla_model_coords
+    let result = call_tool(&srv, "list_models", json!({}));
+    assert_eq!(result["isError"], json!(false));
+
+    let details = result["structuredContent"]["model_details"]
+        .as_array()
+        .expect("model_details array");
+
+    for detail in details {
+        // Must never be json!(false) — that would be a false negative.
+        assert_ne!(
+            detail["queryable"],
+            json!(false),
+            "no model must be tagged queryable:false when discovery has not run: {detail}"
+        );
+    }
+}
+
+/// AC-5: A query_multidimensional against a real cube (the `sales` model which IS
+/// in the XMLA coords map) is unchanged — the fixture engine still executes it.
+#[test]
+fn qmg_ac5_queryable_cube_query_is_unchanged() {
+    if !fleet_present() {
+        eprintln!("qmg_ac5 SKIPPED (mock-gated): fleet binaries not found");
+        return;
+    }
+    // Build a server where `sales` is the mapped cube (matching the test catalog).
+    let mut coords: HashMap<String, (String, String)> = HashMap::new();
+    coords.insert(
+        "sales".to_string(),
+        ("test_catalog".to_string(), "sales".to_string()),
+    );
+    let srv = Server {
+        catalog: load_catalog(),
+        stats: load_stats(),
+        tools: resolve_tools(),
+        row_threshold: 50_000,
+        engine: ServerEngine::Fixture,
+        backend_override: None,
+        capabilities: BackendCapabilities::all_live(),
+        registry: None,
+        health_cache: None,
+        handle_store: None,
+        cursor_store: None,
+        page_size: mqo_mcp_server::cursor::DEFAULT_PAGE_SIZE,
+        inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
+        enriched: None,
+        xmla_model_coords: coords,
+        max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
+    };
+    let mqo = valid_mqo(
+        vec![json!({ "hierarchy": "time.calendar", "level": "Year" })],
+        4,
+    );
+    let result = call_tool(&srv, "query_multidimensional", json!({ "mqo": mqo }));
+    assert_eq!(result["isError"], json!(false), "cube query must succeed unchanged: {result}");
+    let rows = result["structuredContent"]["rows"]
+        .as_array()
+        .expect("rows array");
+    assert!(!rows.is_empty(), "fixture rows returned for real cube");
+}
+
+/// AC-5b: error_class for NonQueryableDimension is model_path (not infrastructure).
+#[test]
+fn qmg_ac5b_non_queryable_dimension_error_class_is_model_path() {
+    use mqo_mcp_server::{error_class, error_class_values, PipelineError};
+    let e = PipelineError::NonQueryableDimension {
+        model: "ship_mode".to_string(),
+        candidate_cubes: vec!["tpcds_benchmark_model".to_string()],
+    };
+    assert_eq!(
+        error_class(&e),
+        error_class_values::MODEL_PATH,
+        "NonQueryableDimension must be classified as model_path"
+    );
+}
