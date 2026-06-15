@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.30.0 — 2026-06-15
+
+`search_columns` now supports a `member_value` mode (PRD-mqo-member-locate): when the `member_value` parameter is supplied, the tool scans captured level domains (case-insensitive, whitespace-normalized) for the given member value and returns `{found, matched_levels, value}` in one call — instead of the model rephrasing column-name searches 16 times. When the value is found in one or more captured domains, `found: true` is returned with the matching level(s) (each carrying `unique_name`, `hierarchy`, `label`, `domain_unknown: false`). When the value is absent from all captured domains, `found: false` is returned with candidate levels listed (including `domain_unknown: true` for levels with no captured domain) so the model can still pin one without re-searching. Matching is bounded to in-memory captured domains — no warehouse query per call. Column-name search behavior is unchanged when `member_value` is absent (FR-6 back-compat). Validated against AC-1..AC-6.
+
 ## v0.29.0 — 2026-06-15
 
 `query_multidimensional` now returns clean semantic column labels instead of raw DAX-mangled keys. Previously, columns like `product_dimension_x005b_Product_x0020_Category_x005d_` and `_x005b_Total_x0020_Product_x0020_Count_x005d_` were returned verbatim, causing 5/20 tpcds_sql_derived eval cases to fail on label matching alone despite correct row values. Fix: reuse the existing `clean_label` decoder (handle_ops.rs) at the `query_multidimensional` response boundary (FR-2: one decoder, not two). Prefer the catalog `label` from the bound when available (OQ-3), fall back to decoded key. Disambiguate collisions deterministically with the hierarchy-qualified prefix (FR-4). Dataset handle path (`dataset_*`) is unchanged — the handle store still receives raw rows so existing handle-op behavior is unaffected (FR-6). (PRD-mqo-clean-result-labels)

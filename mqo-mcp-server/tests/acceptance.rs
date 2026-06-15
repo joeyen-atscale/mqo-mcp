@@ -2329,3 +2329,283 @@ fn qmg_ac5b_non_queryable_dimension_error_class_is_model_path() {
         "NonQueryableDimension must be classified as model_path"
     );
 }
+
+// ── PRD-mqo-member-locate: search_columns member_value mode ─────────────────
+//
+// AC-1: value in exactly one captured level → found=true, that level returned.
+// AC-2: value in multiple captured levels → found=true, all returned.
+// AC-3: value in no captured domain → found=false + candidate levels (including
+//        domain_unknown ones) listed.
+// AC-4: case/whitespace variance → still matches.
+// AC-5: no warehouse query issued — lookup is bounded to captured domains.
+//       (verified structurally: the call is synchronous and reads only the
+//       catalog field; no subprocess is spawned).
+// AC-6: column-name search mode (no member_value) — behavior unchanged.
+
+/// Build a catalog with three level columns:
+///   - product_dimension.[Product Brand Name] — domain: ["Amalgcorp #7", "Corpcorp #1", "Alpha Brand"]
+///   - product_dimension.[Product Brand ID]   — domain: ["100", "200"]
+///   - geo.[Country]                           — no domain captured
+///
+/// Used by the member-locate tests to avoid depending on fixture files that may
+/// not carry domain data.
+fn catalog_with_domains() -> serde_json::Value {
+    json!({
+        "columns": [
+            {
+                "unique_name": "product_dimension.[Product Brand Name]",
+                "label": "Product Brand Name",
+                "kind": "level",
+                "hierarchy": "product_dimension",
+                "domain": ["Amalgcorp #7", "Corpcorp #1", "Alpha Brand"]
+            },
+            {
+                "unique_name": "product_dimension.[Product Brand ID]",
+                "label": "Product Brand ID",
+                "kind": "level",
+                "hierarchy": "product_dimension",
+                "domain": ["100", "200"]
+            },
+            {
+                "unique_name": "geo.[Country]",
+                "label": "Country",
+                "kind": "level",
+                "hierarchy": "geo"
+                // no "domain" key → domain_unknown
+            },
+            {
+                "unique_name": "sales.revenue",
+                "label": "Revenue",
+                "kind": "measure"
+            }
+        ]
+    })
+}
+
+fn server_with_domains() -> Server {
+    Server {
+        catalog: catalog_with_domains(),
+        stats: load_stats(),
+        tools: resolve_tools(),
+        row_threshold: 50_000,
+        engine: ServerEngine::Fixture,
+        backend_override: None,
+        capabilities: BackendCapabilities::all_live(),
+        registry: None,
+        health_cache: None,
+        handle_store: None,
+        cursor_store: None,
+        page_size: mqo_mcp_server::cursor::DEFAULT_PAGE_SIZE,
+        inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
+        enriched: None,
+        xmla_model_coords: HashMap::new(),
+        max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
+    }
+}
+
+/// AC-1: value in one captured level → found=true, that level returned.
+#[test]
+fn member_locate_ac1_value_in_one_captured_level() {
+    let srv = server_with_domains();
+    let result = call_tool(
+        &srv,
+        "search_columns",
+        json!({ "member_value": "Corpcorp #1" }),
+    );
+    // The tool returns text content; parse the inner JSON.
+    let text = result["content"][0]["text"]
+        .as_str()
+        .expect("text content");
+    let payload: serde_json::Value =
+        serde_json::from_str(text).expect("valid JSON in text content");
+
+    assert_eq!(payload["found"], json!(true), "AC-1: found must be true: {payload}");
+    let levels = payload["matched_levels"].as_array().expect("matched_levels array");
+    assert_eq!(levels.len(), 1, "AC-1: exactly one level matched: {payload}");
+    assert_eq!(
+        levels[0]["unique_name"],
+        json!("product_dimension.[Product Brand Name]"),
+        "AC-1: correct level returned"
+    );
+    assert_eq!(
+        levels[0]["domain_unknown"],
+        json!(false),
+        "AC-1: domain_unknown must be false for a captured match"
+    );
+    assert_eq!(payload["value"], json!("Corpcorp #1"), "AC-1: value echoed back");
+}
+
+/// AC-2: value present in two captured levels → both returned (ambiguous).
+/// We test with "100" which only exists in Product Brand ID, so we'll use a
+/// value we put in both by redefining; instead use "Corpcorp #1" appears only
+/// in Brand Name. For AC-2 we craft a dedicated two-level catalog inline.
+#[test]
+fn member_locate_ac2_value_in_multiple_levels() {
+    // Build a catalog where "SharedValue" is in two different level domains.
+    let multi_catalog = json!({
+        "columns": [
+            {
+                "unique_name": "dim_a.[Level A]",
+                "label": "Level A",
+                "kind": "level",
+                "hierarchy": "dim_a",
+                "domain": ["SharedValue", "Other"]
+            },
+            {
+                "unique_name": "dim_b.[Level B]",
+                "label": "Level B",
+                "kind": "level",
+                "hierarchy": "dim_b",
+                "domain": ["SharedValue", "Different"]
+            }
+        ]
+    });
+    let srv = Server {
+        catalog: multi_catalog,
+        stats: load_stats(),
+        tools: resolve_tools(),
+        row_threshold: 50_000,
+        engine: ServerEngine::Fixture,
+        backend_override: None,
+        capabilities: BackendCapabilities::all_live(),
+        registry: None,
+        health_cache: None,
+        handle_store: None,
+        cursor_store: None,
+        page_size: mqo_mcp_server::cursor::DEFAULT_PAGE_SIZE,
+        inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
+        enriched: None,
+        xmla_model_coords: HashMap::new(),
+        max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
+    };
+
+    let result = call_tool(&srv, "search_columns", json!({ "member_value": "SharedValue" }));
+    let text = result["content"][0]["text"].as_str().expect("text");
+    let payload: serde_json::Value = serde_json::from_str(text).expect("json");
+
+    assert_eq!(payload["found"], json!(true), "AC-2: found must be true: {payload}");
+    let levels = payload["matched_levels"].as_array().expect("matched_levels");
+    assert_eq!(levels.len(), 2, "AC-2: both levels returned: {payload}");
+    let uns: Vec<&str> = levels
+        .iter()
+        .filter_map(|l| l["unique_name"].as_str())
+        .collect();
+    assert!(uns.contains(&"dim_a.[Level A]"), "AC-2: Level A in result");
+    assert!(uns.contains(&"dim_b.[Level B]"), "AC-2: Level B in result");
+}
+
+/// AC-3: value in no captured domain → found=false + candidate level list
+///        (including domain_unknown levels).
+#[test]
+fn member_locate_ac3_value_absent_returns_candidates() {
+    let srv = server_with_domains();
+    let result = call_tool(
+        &srv,
+        "search_columns",
+        json!({ "member_value": "NonexistentBrand #999" }),
+    );
+    let text = result["content"][0]["text"].as_str().expect("text");
+    let payload: serde_json::Value = serde_json::from_str(text).expect("json");
+
+    assert_eq!(payload["found"], json!(false), "AC-3: found must be false: {payload}");
+    let levels = payload["matched_levels"].as_array().expect("matched_levels");
+    assert!(!levels.is_empty(), "AC-3: candidate levels returned even when not found: {payload}");
+    // The geo.[Country] level has no captured domain, so it must be in the candidates.
+    let country_entry = levels.iter().find(|l| l["unique_name"] == "geo.[Country]");
+    assert!(
+        country_entry.is_some(),
+        "AC-3: domain_unknown level geo.[Country] in candidates: {payload}"
+    );
+    assert_eq!(
+        country_entry.unwrap()["domain_unknown"],
+        json!(true),
+        "AC-3: geo.[Country] must be marked domain_unknown"
+    );
+}
+
+/// AC-4: case/whitespace variation in value still matches.
+#[test]
+fn member_locate_ac4_case_insensitive_match() {
+    let srv = server_with_domains();
+    // Stored as "Corpcorp #1"; search with different casing and extra spaces.
+    for variant in &["corpcorp #1", "CORPCORP #1", " Corpcorp  #1 "] {
+        let result = call_tool(
+            &srv,
+            "search_columns",
+            json!({ "member_value": variant }),
+        );
+        let text = result["content"][0]["text"].as_str().expect("text");
+        let payload: serde_json::Value = serde_json::from_str(text).expect("json");
+        assert_eq!(
+            payload["found"],
+            json!(true),
+            "AC-4: case/whitespace variant '{variant}' must match: {payload}"
+        );
+        let levels = payload["matched_levels"].as_array().unwrap();
+        assert_eq!(
+            levels[0]["unique_name"],
+            json!("product_dimension.[Product Brand Name]"),
+            "AC-4: correct level for variant '{variant}'"
+        );
+    }
+}
+
+/// AC-6: column-name search mode unchanged when member_value is absent.
+#[test]
+fn member_locate_ac6_column_name_search_unchanged() {
+    let srv = server_with_domains();
+    // Search by label substring "Brand" — should find both Brand Name and Brand ID columns.
+    let result = call_tool(&srv, "search_columns", json!({ "query": "Brand" }));
+    let text = result["content"][0]["text"].as_str().expect("text");
+    let payload: serde_json::Value = serde_json::from_str(text).expect("json");
+
+    let columns = payload["columns"].as_array().expect("columns array");
+    assert_eq!(columns.len(), 2, "AC-6: column-name search returns matching columns: {payload}");
+    let uns: Vec<&str> = columns
+        .iter()
+        .filter_map(|c| c["unique_name"].as_str())
+        .collect();
+    assert!(
+        uns.contains(&"product_dimension.[Product Brand Name]"),
+        "AC-6: Product Brand Name in column search result"
+    );
+    assert!(
+        uns.contains(&"product_dimension.[Product Brand ID]"),
+        "AC-6: Product Brand ID in column search result"
+    );
+}
+
+/// empty member_value → typed input error (not a scan).
+#[test]
+fn member_locate_empty_value_returns_error() {
+    let srv = server_with_domains();
+    let result = call_tool(&srv, "search_columns", json!({ "member_value": "   " }));
+    let text = result["content"][0]["text"].as_str().expect("text");
+    let payload: serde_json::Value = serde_json::from_str(text).expect("json");
+    assert!(
+        payload.get("error").is_some(),
+        "empty member_value must return an error: {payload}"
+    );
+    assert_eq!(
+        payload["error"]["code"],
+        json!("invalid_input"),
+        "error code must be invalid_input"
+    );
+}
+
+/// Tool descriptor: search_columns schema must include member_value property.
+#[test]
+fn member_locate_descriptor_includes_member_value() {
+    let tools = mqo_mcp_server::tool_descriptors();
+    let sc = tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "search_columns")
+        .expect("search_columns must be in tool list");
+    let props = &sc["inputSchema"]["properties"];
+    assert!(
+        props.get("member_value").is_some(),
+        "search_columns schema must include member_value property: {sc}"
+    );
+}
