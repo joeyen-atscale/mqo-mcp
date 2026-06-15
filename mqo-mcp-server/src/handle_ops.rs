@@ -285,6 +285,58 @@ pub(crate) fn clean_label(raw_key: &str) -> String {
     decoded.trim_matches(|c| c == '.' || c == '_' || c == ' ').to_string()
 }
 
+/// Collapse a **near-twin** dimension level caption to its **canonical** label.
+///
+/// (PRD-mqo-near-twin-dimension-drop, G2 — the canonical-output-label half.)
+///
+/// A "near-twin" hierarchy is a role-playing / snowflaked copy of a base
+/// dimension: its level captions are the base level caption **prefixed with the
+/// relationship path**. In the TPC-DS benchmark model the base
+/// `product_dimension` carries `Item Product Name`, `Product Brand Name`,
+/// `Product Category`, …; the twin `promotion_product_item_product_dimension`
+/// carries `Promotion Product Item Item Product Name`,
+/// `Promotion Product Item Product Brand Name`, … and `store_item_product_dimension`
+/// carries `Store Item Product Category`, ….
+///
+/// When such a twin level is projected, the DAX result column is labeled with the
+/// **full prefixed caption** (e.g. `Promotion Product Item Item Product Name`),
+/// so an exact-name comparison against the canonical `Item Product Name` (what
+/// the analyst/gold expects, and what the base hierarchy would have produced)
+/// fails. This function recovers the canonical label so the projected twin
+/// column matches the base attribute name.
+///
+/// ## Derivation (pure label logic — needs NO catalog domain metadata)
+///
+/// `caption` is canonical-collapsed to the **longest proper token-suffix of
+/// `caption` that is itself a level caption present on some _other_ hierarchy**
+/// in `all_level_captions`. "Proper" = strictly shorter than `caption`, so a
+/// base-hierarchy caption (which has no shorter twin) is returned unchanged.
+///
+/// Examples (with the TPC-DS caption registry):
+/// - `"Promotion Product Item Item Product Name"` → `"Item Product Name"`
+/// - `"Store Item Product Category"` → `"Product Category"`
+/// - `"Item Product Name"` (base) → `"Item Product Name"` (unchanged — no
+///   shorter caption is also a level)
+/// - `"Sold Calendar Year"` (unique, non-twin) → unchanged
+///
+/// Conservative: when no proper suffix of `caption` is a level caption elsewhere,
+/// the caption is returned verbatim (unique levels are never altered, FR-4).
+pub(crate) fn canonical_level_label(caption: &str, all_level_captions: &std::collections::HashSet<String>) -> String {
+    let tokens: Vec<&str> = caption.split_whitespace().collect();
+    if tokens.len() < 2 {
+        return caption.to_string();
+    }
+    // Try successively shorter suffixes (i = 1 drops one leading token, …).
+    // The FIRST (longest) proper suffix that is a known level caption wins.
+    for i in 1..tokens.len() {
+        let suffix = tokens[i..].join(" ");
+        if all_level_captions.contains(&suffix) {
+            return suffix;
+        }
+    }
+    caption.to_string()
+}
+
 /// Friendly label for a bound `unique_name` (`hier.[Level]` or `model.measure`).
 /// Mirrors the bridge's `_label_from_unique_name`.
 pub(crate) fn label_from_unique_name(unique_name: &str) -> String {
@@ -1841,6 +1893,96 @@ error listing the handle's actual columns.",
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Near-twin captions (the prefixed role-playing copies) collapse to the
+    /// canonical base attribute; base/unique levels are returned unchanged.
+    /// (PRD-mqo-near-twin-dimension-drop, G2 — canonical output labels.)
+    #[test]
+    fn canonical_level_label_collapses_near_twins() {
+        // The model's full level-caption registry (base + two twins).
+        let captions: std::collections::HashSet<String> = [
+            // Base product_dimension levels.
+            "Item Product Name",
+            "Product Brand Name",
+            "Product Category",
+            // promotion_product_item_product_dimension twin captions.
+            "Promotion Product Item Item Product Name",
+            "Promotion Product Item Product Brand Name",
+            "Promotion Product Item Product Category",
+            // store_item_product_dimension twin captions.
+            "Store Item Item Product Name",
+            "Store Item Product Brand Name",
+            "Store Item Product Category",
+            // A genuinely unique, non-twin level.
+            "Sold Calendar Year",
+        ]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+
+        // Failure-1 twin (project): the prefixed twin name collapses to the base.
+        assert_eq!(
+            canonical_level_label("Promotion Product Item Item Product Name", &captions),
+            "Item Product Name"
+        );
+        // Failure-1 filter level twin.
+        assert_eq!(
+            canonical_level_label("Promotion Product Item Product Brand Name", &captions),
+            "Product Brand Name"
+        );
+        // Failure-2 twin: store-prefixed category collapses to the base category.
+        assert_eq!(
+            canonical_level_label("Store Item Product Category", &captions),
+            "Product Category"
+        );
+
+        // Base levels (no shorter twin) are unchanged — FR-4 (no regression).
+        assert_eq!(canonical_level_label("Item Product Name", &captions), "Item Product Name");
+        assert_eq!(canonical_level_label("Product Category", &captions), "Product Category");
+        // Unique non-twin level is unchanged.
+        assert_eq!(canonical_level_label("Sold Calendar Year", &captions), "Sold Calendar Year");
+        // Single-token caption never collapses.
+        assert_eq!(canonical_level_label("Category", &captions), "Category");
+    }
+
+    /// End-to-end label path: a near-twin level projected via `query_multidimensional`
+    /// surfaces its CANONICAL column name (`Item Product Name`), not the prefixed
+    /// twin caption — because the bound entry carries the canonical `label` that
+    /// `clean_result_rows` prefers. This is the result the gold exact-name
+    /// comparison needs (corpcorp-brand-products / product-count-per-category).
+    #[test]
+    fn clean_result_rows_emits_canonical_near_twin_label() {
+        // Bound shape as produced by the binder + `attach_canonical_dimension_labels`:
+        // the dimension's unique_name is the prefixed twin caption, but the entry
+        // now carries the canonical `label`.
+        let twin_un = "promotion_product_item_product_dimension.[Promotion Product Item Item Product Name]";
+        let bound = json!({
+            "measures": [{ "unique_name": "tpcds_benchmark_model.total_product_count", "label": "Total Product Count" }],
+            "dimensions": [{ "unique_name": twin_un, "label": "Item Product Name" }],
+        });
+        // Live DAX result keys are XMLA-name-mangled from the twin caption.
+        let dim_key = "promotion_product_item_product_dimension_x005b_Promotion_x0020_Product_x0020_Item_x0020_Item_x0020_Product_x0020_Name_x005d_";
+        let meas_key = "_x005b_Total_x0020_Product_x0020_Count_x005d_";
+        let rows = vec![
+            json!({ dim_key: "AAA", meas_key: 3.0 }),
+            json!({ dim_key: "BBB", meas_key: 5.0 }),
+        ];
+
+        let cleaned = clean_result_rows(&rows, &bound);
+        let first = cleaned[0].as_object().expect("row is object");
+        // The dimension column is named by its CANONICAL label, not the twin caption.
+        assert!(
+            first.contains_key("Item Product Name"),
+            "expected canonical 'Item Product Name' column, got keys: {:?}",
+            first.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            !first.contains_key("Promotion Product Item Item Product Name"),
+            "the prefixed twin caption must NOT appear as a column name"
+        );
+        assert_eq!(first["Item Product Name"], json!("AAA"));
+        assert!(first.contains_key("Total Product Count"));
+    }
 
     /// AC: column roles come from the `bound`, not the value dtype.  A numeric
     /// (Float/Int) column the bound marks as a **dimension** must be labelled

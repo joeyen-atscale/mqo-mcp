@@ -2349,7 +2349,7 @@ dependencies = [
 
 [[package]]
 name = "mqo-auth-bridge"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "futures",
  "native-tls",
@@ -2556,7 +2556,7 @@ dependencies = [
 
 [[package]]
 name = "mqo-mcp-server"
-version = "0.34.0"
+version = "0.36.0"
 dependencies = [
  "clap",
  "dh-export",
