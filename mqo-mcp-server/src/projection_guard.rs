@@ -418,19 +418,39 @@ fn single_filter_estimate(
                 Some(members.len() as u64)
             }
         }
-        // A range on one of this hierarchy's projected levels.
+        // A range on a level of this hierarchy.
         Filter::Range { level: fl, lo, hi } => {
-            let target = levels.iter().find(|l| l.level_un == *fl)?;
-            match estimate_range_selectivity(lo, hi, target.total_members) {
-                Some(sel) => target.total_members.map(|t| {
-                    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                    let est = ((t as f64) * sel).ceil() as u64;
-                    est.max(1)
-                }),
-                // Range with unknown total → bounded intent; cap is the
-                // conservative upper bound so it may pass.
-                None if target.total_members.is_none() => Some(cap as u64),
-                None => None,
+            if let Some(target) = levels.iter().find(|l| l.level_un == *fl) {
+                // Range on a PROJECTED level: use its fractional selectivity.
+                match estimate_range_selectivity(lo, hi, target.total_members) {
+                    Some(sel) => target.total_members.map(|t| {
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                        let est = ((t as f64) * sel).ceil() as u64;
+                        est.max(1)
+                    }),
+                    // Range with unknown total → bounded intent; cap is the
+                    // conservative upper bound so it may pass.
+                    None if target.total_members.is_none() => Some(cap as u64),
+                    None => None,
+                }
+            } else {
+                // Range on a NON-projected level of THIS hierarchy (e.g.
+                // `Product Current Price > 70` filtering an `Item Product Name`
+                // projection — both in product_dimension). A filter on ANY level of
+                // a hierarchy constrains the whole group (the levels co-vary), so the
+                // earlier "projected level only" guard under-applied it and left the
+                // estimate at the full unfiltered domain (the price-above-70 gap).
+                // We don't know the filtered level's cardinality, so apply the same
+                // conservative 1/10 selectivity used for cross-hierarchy Range filters
+                // (FR-5) to the group's base; the runtime materialization budget
+                // (row_cap_tripped) remains the hard bound if the estimate is optimistic.
+                let filter_hier = fl.split_once(".[").map(|(h, _)| h).unwrap_or(fl.as_str());
+                if filter_hier == hierarchy {
+                    let base = levels.iter().filter_map(|l| l.total_members).max();
+                    base.map(|b| (b / 10).max(1))
+                } else {
+                    None
+                }
             }
         }
         _ => None,
@@ -970,6 +990,46 @@ mod tests {
             result.is_ok(),
             "same-hierarchy attribute projection must be bounded by the finest level (~1002), \
              not the product (~9e8); got: {result:?}"
+        );
+    }
+
+    // GAP FIX (products-price-above-70): a Range filter on a NON-projected level
+    // of the SAME hierarchy as the projection must reduce the estimate. Projecting
+    // `Item Product Name` (206,021) WHERE `Product Current Price` > 70 was estimated
+    // at the full unfiltered domain (206,021 > 50,000 cap → wrongly rejected), because
+    // the Range arm only matched a filter on the *projected* level and the
+    // cross-hierarchy path skipped it (same hierarchy). With the fix, a 1/10
+    // selectivity is applied to the group base (206,021 → ~20,602 < 50,000 → passes).
+    #[test]
+    fn range_on_non_projected_level_of_same_hierarchy_reduces_estimate() {
+        let catalog = CatalogSnapshot {
+            columns: vec![
+                level_col("product_dimension", "Item Product Name", 206_021),
+                level_col("product_dimension", "Product Current Price", 0),
+            ],
+            ..Default::default()
+        };
+        let mut mqo = projection_with_levels(
+            "tpcds_benchmark_model",
+            &[("product_dimension", "Item Product Name")],
+        );
+        // Control: without the filter, the bare projection exceeds the 50k cap.
+        assert!(
+            check_projection_cardinality(&mqo, &catalog, 50_000).is_err(),
+            "bare Item Product Name projection (206k) should exceed a 50k cap"
+        );
+        // With the price>70 Range filter on a non-projected level of the same hierarchy,
+        // the 1/10 selectivity brings the estimate under the cap → passes.
+        mqo.filters = vec![Filter::Range {
+            level: "product_dimension.[Product Current Price]".to_string(),
+            lo: RangeBound::Number(70.0),
+            hi: RangeBound::Number(1_000_000.0),
+        }];
+        let result = check_projection_cardinality(&mqo, &catalog, 50_000);
+        assert!(
+            result.is_ok(),
+            "a Range filter on a non-projected level of the same hierarchy must reduce \
+             the estimate (206021/10 ≈ 20602 < 50000); got: {result:?}"
         );
     }
 
