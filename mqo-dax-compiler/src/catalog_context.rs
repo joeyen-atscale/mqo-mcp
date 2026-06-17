@@ -25,6 +25,12 @@ struct ColumnEntryMirror {
     /// level-domain capture). Drives domain-aware `Member`-filter grounding.
     #[serde(default)]
     domain: Option<Vec<String>>,
+    /// Inferred value type for this level's domain members: `"integer"`,
+    /// `"decimal"`, `"date"`, or `"string"` (default). Written by
+    /// `catalog_ingest` when capturing live domain data. Used in
+    /// `resolve_member_level` for dtype-aware numeric comparison.
+    #[serde(default)]
+    value_type: Option<String>,
 }
 
 /// Minimal mirror of `CatalogSnapshot` from `mqo-catalog-binder`.
@@ -100,6 +106,15 @@ pub struct DaxCatalogContext {
     /// fall back to first-level grounding.
     pub level_domains: HashMap<String, Vec<String>>,
 
+    /// `level unique_name → value_type` for levels that carry dtype metadata
+    /// (e.g. `"integer"`, `"decimal"`, `"date"`, `"string"`). Written by
+    /// `catalog_ingest` when capturing live domain data. Used by
+    /// [`Self::resolve_member_level`] to perform dtype-aware numeric comparison
+    /// when the probe string doesn't match the domain string exactly (e.g. probe
+    /// `"9"` vs domain entry `"9.00"`). Absent entries default to `"string"`
+    /// (exact lowercased match).
+    pub level_dtypes: HashMap<String, String>,
+
     /// Whether the target engine supports "Mark as Date Table" and thus the
     /// `SAMEPERIODLASTYEAR` / `DATESYTD` / `DATESQTD` / `DATESMTD` /
     /// `DATEADD` time-intelligence functions.
@@ -161,6 +176,7 @@ impl DaxCatalogContext {
         let mut measure_names = std::collections::HashSet::new();
         let mut hierarchy_levels: HashMap<String, Vec<String>> = HashMap::new();
         let mut level_domains: HashMap<String, Vec<String>> = HashMap::new();
+        let mut level_dtypes: HashMap<String, String> = HashMap::new();
         // Infer date_level_unique_name from the first column with kind "date_level"
         // or "date_dim" when not explicitly provided in the snapshot.
         let mut inferred_date_level: Option<String> = None;
@@ -194,6 +210,13 @@ impl DaxCatalogContext {
                 if let Some(d) = &col.domain {
                     if !d.is_empty() {
                         level_domains.insert(col.unique_name.clone(), d.clone());
+                    }
+                }
+                // Record the level's value_type (if present) for dtype-aware
+                // numeric comparison in resolve_member_level.
+                if let Some(vt) = &col.value_type {
+                    if !vt.is_empty() && vt != "string" {
+                        level_dtypes.insert(col.unique_name.clone(), vt.clone());
                     }
                 }
 
@@ -250,6 +273,7 @@ impl DaxCatalogContext {
             measure_names,
             hierarchy_levels,
             level_domains,
+            level_dtypes,
             has_date_table: snapshot.has_date_table,
             date_level_unique_name,
         })
@@ -300,15 +324,37 @@ impl DaxCatalogContext {
                 .find(|(k, _)| k.to_lowercase() == lower)
                 .map(|(_, v)| v)
         })?;
+        // Numeric probe: parse the probe as f64 once so we can do dtype-aware
+        // comparison for integer/decimal levels without re-parsing per domain value.
+        let probe_f64: Option<f64> = probe.parse::<f64>().ok();
+
         // Candidates: levels of this hierarchy whose enumerated domain contains the
         // member. Dedup by unique_name — the reverse index can list a level under
         // several alias keys, so the same level may appear more than once.
         let mut candidates: Vec<&String> = levels
             .iter()
             .filter(|lvl| {
-                self.level_domains
-                    .get(*lvl)
-                    .is_some_and(|d| d.iter().any(|v| v.to_lowercase() == probe))
+                let Some(domain) = self.level_domains.get(*lvl) else {
+                    return false;
+                };
+                // Fast path: exact lowercased string match (handles all string levels
+                // and numeric levels where the probe and domain value formats agree).
+                if domain.iter().any(|v| v.to_lowercase() == probe) {
+                    return true;
+                }
+                // Slow path: dtype-aware numeric comparison.  Only attempted when
+                // (a) this level's dtype is "integer" or "decimal" AND
+                // (b) the probe parsed as f64 successfully.
+                let dtype = self.level_dtypes.get(*lvl).map(String::as_str).unwrap_or("string");
+                if matches!(dtype, "integer" | "decimal") {
+                    if let Some(pf) = probe_f64 {
+                        return domain.iter().any(|v| {
+                            v.parse::<f64>()
+                                .is_ok_and(|vf| (vf - pf).abs() < 1e-9)
+                        });
+                    }
+                }
+                false
             })
             .collect();
         candidates.sort();
@@ -606,5 +652,74 @@ mod member_grounding_tests {
         let c = DaxCatalogContext::from_json(json).unwrap();
         assert!(!c.hierarchy_has_any_domain("store_dimension"));
         assert!(!c.hierarchy_has_any_domain("nonexistent_dim"));
+    }
+
+    // ── Dtype-aware numeric member resolution (PRD-mqo-numeric-member-filter) ──
+
+    fn numeric_ctx() -> DaxCatalogContext {
+        // Income Band level: domain stored as "9.00", "10.00", "20.00" (decimal dtype).
+        // Age Band level: domain stored as "18", "25", "35" (integer dtype).
+        // String level: domain stored as "Low", "Medium", "High" (string dtype).
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level","unique_name":"customer_demographics.[Income Band]","label":"Income Band",
+           "hierarchy":"customer_demographics","level":"Income Band",
+           "domain":["9.00","10.00","20.00"],"value_type":"decimal"},
+          {"kind":"level","unique_name":"customer_demographics.[Age Band]","label":"Age Band",
+           "hierarchy":"customer_demographics","level":"Age Band",
+           "domain":["18","25","35"],"value_type":"integer"},
+          {"kind":"level","unique_name":"customer_demographics.[Income Group]","label":"Income Group",
+           "hierarchy":"customer_demographics","level":"Income Group",
+           "domain":["Low","Medium","High"]}
+        ]}"#;
+        DaxCatalogContext::from_json(json).unwrap()
+    }
+
+    #[test]
+    fn decimal_probe_without_trailing_zeros_matches_domain() {
+        // Probe "9" should match domain entry "9.00" via numeric comparison.
+        let c = numeric_ctx();
+        let got = c.resolve_member_level("customer_demographics", &["9".into()], &[]);
+        assert_eq!(got, Some("customer_demographics.[Income Band]"));
+    }
+
+    #[test]
+    fn decimal_probe_with_trailing_zeros_matches_domain() {
+        // Probe "10.00" matches domain entry "10.00" exactly (fast path) or numerically.
+        let c = numeric_ctx();
+        let got = c.resolve_member_level("customer_demographics", &["10.00".into()], &[]);
+        assert_eq!(got, Some("customer_demographics.[Income Band]"));
+    }
+
+    #[test]
+    fn integer_probe_matches_integer_domain() {
+        // Probe "25" matches domain entry "25" in the integer-typed Age Band.
+        let c = numeric_ctx();
+        let got = c.resolve_member_level("customer_demographics", &["25".into()], &[]);
+        assert_eq!(got, Some("customer_demographics.[Age Band]"));
+    }
+
+    #[test]
+    fn numeric_probe_does_not_match_string_domain() {
+        // "9" is not in the string domain ["Low","Medium","High"].
+        let c = numeric_ctx();
+        // Neither Age Band (18/25/35) nor Income Band (9.00/10.00/20.00) contain "5",
+        // and Income Group (string) does not either.
+        let got = c.resolve_member_level("customer_demographics", &["5".into()], &[]);
+        assert_eq!(got, None);
+    }
+
+    #[test]
+    fn value_type_decimal_stored_in_level_dtypes() {
+        let c = numeric_ctx();
+        assert_eq!(
+            c.level_dtypes.get("customer_demographics.[Income Band]").map(String::as_str),
+            Some("decimal")
+        );
+        assert_eq!(
+            c.level_dtypes.get("customer_demographics.[Age Band]").map(String::as_str),
+            Some("integer")
+        );
+        // String type is not stored (only non-string dtypes are recorded).
+        assert!(!c.level_dtypes.contains_key("customer_demographics.[Income Group]"));
     }
 }
