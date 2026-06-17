@@ -9,7 +9,7 @@
 //!   3  — one or more references are ambiguous, or a Member filter member matches
 //!         multiple levels; stdout is `{"ambiguous":[...]}` or `{"member_ambiguous":[...]}`
 //!   4  — one or more references were not found, or a Member filter member is not
-//!         in the domain of any enumerated level, or a `MemberLevel` filter is on a
+//!         in the domain of any enumerated level, or a MemberLevel filter is on a
 //!         near-twin hierarchy that cannot co-resolve with the projected dimension;
 //!         stdout is `{"not_found":[...]}`, `{"member_unbound":[...]}`, or
 //!         `{"member_unbound_cross_hierarchy":[...]}`
