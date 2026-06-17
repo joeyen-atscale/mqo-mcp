@@ -1,0 +1,29 @@
+[package]
+name = "mqo-pg-query"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70.0"
+description = "Verbatim PgSql executor over AtScale OIDC+PGWire — gold-oracle CLI for the eval harness"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/joeyen-atscale/mqo-mcp"
+keywords = ["semantic-layer", "olap", "mqo", "pgwire", "atscale"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "mqo-pg-query"
+path = "src/main.rs"
+
+[lib]
+name = "mqo_pg_query"
+path = "src/lib.rs"
+
+[dependencies]
+mqo-auth-bridge = { path = "../mqo-auth-bridge" }
+clap       = { version = "4", features = ["derive", "env"] }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+tokio      = { workspace = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros", "rt-multi-thread"] }
