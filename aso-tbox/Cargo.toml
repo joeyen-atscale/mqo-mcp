@@ -1,0 +1,15 @@
+[package]
+name        = "aso-tbox"
+version     = "0.1.0"
+edition     = "2021"
+description = "AtScale Semantic-model Ontology (aso:) — BFO-grounded OWL2-DL TBox as an embedded Turtle resource with Rust IRI constants and an oxrdf/oxttl loader"
+license     = "MIT"
+publish     = false
+
+[dependencies]
+# RDF data structures + Turtle parser — the RDF stack referenced in ousia-atscale
+oxrdf  = "0.3"
+oxttl  = "0.2"
+
+[dev-dependencies]
+# nothing beyond the main deps needed for tests
