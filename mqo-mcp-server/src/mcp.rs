@@ -19,6 +19,7 @@
 use crate::chart_tools;
 use crate::cursor::CursorStore;
 use crate::handle_ops::{self, HandleStore};
+use crate::model_graph::ModelGraphStore;
 use crate::pipeline::{self, PipelineError, PipelineOutput, ToolPaths};
 use crate::probe::BackendCapabilities;
 use crate::projection_guard::check_projection_cardinality;
@@ -759,6 +760,12 @@ pub struct Server {
     /// row cap).  Default: `DEFAULT_MAX_PROJECTION_CARDINALITY`.  Set to 0 to
     /// always decline projections.
     pub max_projection_cardinality: usize,
+    /// Lifted model RDF graph store for the `query_model_graph` tool.
+    ///
+    /// `None` → tool returns `model_graph_not_available` (FR6/AC6).  This is the
+    /// expected state until the auto-lift tier (OSL #2) populates the graph at
+    /// startup. Tests load a fixture graph directly via `ModelGraphStore::load_turtle`.
+    pub model_graph: Option<Box<ModelGraphStore>>,
 }
 
 /// Default maximum distinct-row estimate for a projection MQO.
@@ -939,6 +946,30 @@ fn core_tool_descriptors() -> Vec<Value> {
             },
             "annotations": { "readOnlyHint": true }
         }),
+        json!({
+            "name": "query_model_graph",
+            "description": "Query the lifted model RDF knowledge graph (aso-lift output) using a named canned query. \
+Answers structural questions about the model — hierarchy rollup levels, calc/measure lineage, role-playing \
+dimension references, cross-model conformance — that cannot be answered from `describe_model` alone. \
+Read-only; results contain only model-metadata IRIs/literals, never warehouse row data.\n\n\
+**v1 query set (set `query` to one of):**\n\
+- `hierarchy_levels` — ordered levels of a hierarchy (coarse→fine), with IRIs and labels. \
+  Params: `hierarchy_iri` (IRI) or `hierarchy_label` (label string); omit to return all hierarchies.\n\
+- `calc_dependencies` — measures/columns a calc depends on (`aso:dependsOn` lineage). \
+  Params: `measure_iri` or `measure_label`; omit to return all.\n\
+- `role_playing_refs` — role-playing dimension references (`aso:playsRoleOf`). \
+  Params: `base_dimension_iri` to filter; omit for all.\n\
+- `conformance_check` — cross-model `owl:sameAs` conformance links (requires lattice-bridge OSL #7). \
+  Params: `entity_a_iri`, `entity_b_iri`; omit for all sameAs links.\n\n\
+**Responses:**\n\
+- Normal: `{query, bindings: [...], row_count}` — each binding includes IRIs + labels.\n\
+- No graph: `{status: 'model_graph_not_available'}` — no lifted graph loaded; auto-lift tier not yet deployed.\n\
+- Budget exceeded: `{status: 'budget_exceeded'}` — narrow query with params.\n\
+- Raw SPARQL disabled: `{status: 'raw_sparql_disabled'}` — use a canned query instead.\n\
+- Bad query/params: `{status: 'error', valid_queries, params_help}`.",
+            "inputSchema": crate::model_graph::query_model_graph_input_schema(),
+            "annotations": { "readOnlyHint": true }
+        }),
     ]
 }
 
@@ -1026,6 +1057,7 @@ impl Server {
                 Ok(chart_tools::handle_build_bi_asset(&args, &effective_catalog))
             }
             "compose_dashboard" => Ok(chart_tools::handle_compose_dashboard(&args)),
+            "query_model_graph" => Ok(self.query_model_graph(&args)),
             "dataset_aggregate"
             | "dataset_filter"
             | "dataset_sort"
@@ -1079,6 +1111,35 @@ impl Server {
                 }
             },
         }
+    }
+
+    // ── Model graph tool ──────────────────────────────────────────────────────
+
+    /// Handle a `query_model_graph` tool call.
+    ///
+    /// Delegates to the in-process [`ModelGraphStore`]. When `model_graph` is
+    /// `None` the store's `query()` method returns `model_graph_not_available`
+    /// (AC6/FR6). This is the expected state for live and fixture-mode servers
+    /// until the auto-lift tier (OSL #2) lands.
+    fn query_model_graph(&self, args: &Value) -> Value {
+        let result = match &self.model_graph {
+            Some(store) => store.query(args),
+            None => {
+                // No store at all — return not-available directly (same as an
+                // empty store; avoids the indirection through ModelGraphStore).
+                serde_json::json!({
+                    "status": "model_graph_not_available",
+                    "detail": "No lifted model graph is available for this model. \
+                               The auto-lift tier (OSL #2) has not been deployed on this server. \
+                               Live models return this result until auto-lift is integrated."
+                })
+            }
+        };
+        let text = serde_json::to_string(&result).unwrap_or_default();
+        serde_json::json!({
+            "content": [{ "type": "text", "text": text }],
+            "structuredContent": result
+        })
     }
 
     // ── Catalog tools (read-only snapshot passthrough) ─────────────────────
@@ -3478,6 +3539,7 @@ mod hierarchy_levels_value_type_tests {
             enriched: None,
             xmla_model_coords: std::collections::HashMap::new(),
             max_projection_cardinality: DEFAULT_MAX_PROJECTION_CARDINALITY,
+            model_graph: None,
         }
     }
 
@@ -3576,6 +3638,7 @@ mod hierarchy_levels_value_type_tests {
             enriched: None,
             xmla_model_coords: std::collections::HashMap::new(),
             max_projection_cardinality: DEFAULT_MAX_PROJECTION_CARDINALITY,
+            model_graph: None,
         };
         let resp = srv.describe_model(&json!({"model": "test_model"}));
         let hl = resp
@@ -3656,6 +3719,7 @@ mod hierarchy_levels_value_type_tests {
             enriched: None,
             xmla_model_coords: std::collections::HashMap::new(),
             max_projection_cardinality: DEFAULT_MAX_PROJECTION_CARDINALITY,
+            model_graph: None,
         };
         let resp = srv.describe_model(&json!({}));
 

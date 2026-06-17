@@ -32,6 +32,7 @@ pub mod chart_tools;
 pub mod cursor;
 pub mod handle_ops;
 pub mod mcp;
+pub mod model_graph;
 pub mod pipeline;
 pub mod probe;
 pub mod projection_guard;

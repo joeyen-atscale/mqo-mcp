@@ -185,7 +185,7 @@ fn binary_tools_list_returns_fourteen_tools() {
         .and_then(Value::as_array)
         .expect("tools array present");
 
-    assert_eq!(tools.len(), 24, "AC9: expected 24 tools, got {}", tools.len());
+    assert_eq!(tools.len(), 25, "AC9: expected 25 tools (24 prior + query_model_graph), got {}", tools.len());
 
     let tool_names: Vec<&str> = tools
         .iter()

@@ -624,6 +624,9 @@ fn main() {
         enriched,
         xmla_model_coords,
         max_projection_cardinality: effective_max_projection,
+        // Auto-lift tier (OSL #2) not yet deployed; model_graph is populated
+        // when the lift pipeline is integrated at server startup.
+        model_graph: None,
     };
 
     serve(&server);
