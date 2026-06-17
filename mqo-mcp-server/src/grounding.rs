@@ -59,6 +59,10 @@ impl GroundingStore {
     /// and builds a label index for name-based lookup.
     ///
     /// Returns the count of grounded elements on success, or an error string.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the Turtle cannot be parsed or grounding fails.
     pub fn load_turtle(&mut self, turtle: &str) -> Result<usize, String> {
         let grounded = ground(turtle).map_err(|e| format!("grounding error: {e}"))?;
         let count = grounded.len();
@@ -109,16 +113,13 @@ impl GroundingStore {
     /// - No grounding: `{"status": "grounding_not_available", "detail": "..."}`
     #[must_use]
     pub fn lookup(&self, args: &Value) -> Value {
-        let elements = match &self.elements {
-            Some(e) => e,
-            None => {
-                return json!({
-                    "status": "grounding_not_available",
-                    "detail": "No grounding artifacts are loaded for this model. \
-                               Grounding is produced by the aso-ground overlay (OSL #3). \
-                               Load a grounded Turtle fixture or enable the auto-lift + overlay tier."
-                });
-            }
+        let Some(elements) = &self.elements else {
+            return json!({
+                "status": "grounding_not_available",
+                "detail": "No grounding artifacts are loaded for this model. \
+                           Grounding is produced by the aso-ground overlay (OSL #3). \
+                           Load a grounded Turtle fixture or enable the auto-lift + overlay tier."
+            });
         };
 
         // Parse entity references
@@ -150,10 +151,8 @@ impl GroundingStore {
         let max_entities = args
             .get("max_entities")
             .and_then(Value::as_u64)
-            .map(|n| n as usize)
-            .unwrap_or(50)
-            .max(1)
-            .min(200);
+            .map_or(50_usize, |n| usize::try_from(n).unwrap_or(50))
+            .clamp(1, 200);
 
         let total_requested = entity_refs.len();
         let to_serve = entity_refs.iter().take(max_entities);
@@ -195,7 +194,7 @@ impl GroundingStore {
     }
 
     /// Resolve a single entity reference (IRI or name) against the grounded elements.
-    fn resolve_entity<'a>(&self, entity_ref: &str, elements: &'a [GroundedElement]) -> Value {
+    fn resolve_entity(&self, entity_ref: &str, elements: &[GroundedElement]) -> Value {
         // Validate that if it looks like an IRI it is parseable.
         if entity_ref.starts_with("http://") || entity_ref.starts_with("https://") {
             // IRI-based lookup: find by exact IRI match.

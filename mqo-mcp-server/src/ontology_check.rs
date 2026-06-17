@@ -1,4 +1,4 @@
-//! # ontology_check — `validate_query_ontology` MCP tool
+//! # `ontology_check` — `validate_query_ontology` MCP tool
 //!
 //! Advisory-first pre-execution validation of an agent's proposed MQO against
 //! the loaded `aso:` graph.  Returns a structured findings array so the agent
@@ -13,11 +13,11 @@
 //! existence/type checks against the `aso:` schema.
 //!
 //! Three checks in v1:
-//! 1. **entity_existence** — every measure/dimension label or unique_name
+//! 1. **`entity_existence`** — every measure/dimension label or `unique_name`
 //!    referenced in the query must appear in the graph.
-//! 2. **type_mismatch** — a named entity must be used in the role its `rdf:type`
+//! 2. **`type_mismatch`** — a named entity must be used in the role its `rdf:type`
 //!    permits (measure vs dimension).
-//! 3. **semi_additive_sum_over_time** — a measure typed `aso:SemiAdditiveMeasure`
+//! 3. **`semi_additive_sum_over_time`** — a measure typed `aso:SemiAdditiveMeasure`
 //!    cannot be summed over a Time/Date dimension (advisory warning).
 //!
 //! ## Response shape
@@ -78,6 +78,10 @@ impl OntologyCheckStore {
     ///
     /// Replaces any previously loaded graph.  Returns the triple count on
     /// success or an error string on parse failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the Turtle cannot be parsed.
     pub fn load_turtle(&mut self, turtle: &str) -> Result<usize, String> {
         use oxttl::TurtleParser;
         let parser = TurtleParser::new()
@@ -115,22 +119,19 @@ impl OntologyCheckStore {
     #[must_use]
     pub fn check(&self, args: &Value) -> Value {
         // Fail-open: no graph → single info finding, conforms=true.
-        let graph = match &self.graph {
-            Some(g) => g,
-            None => {
-                return json!({
-                    "conforms": true,
-                    "findings": [{
-                        "rule_id": "ontology_graph_not_available",
-                        "severity": "info",
-                        "entity": null,
-                        "message": "No lifted ontology graph is available for this model. \
-                                    The auto-lift tier (OSL #2) has not been deployed. \
-                                    Ontology-based query validation is advisory-only; \
-                                    the query may proceed."
-                    }]
-                });
-            }
+        let Some(graph) = &self.graph else {
+            return json!({
+                "conforms": true,
+                "findings": [{
+                    "rule_id": "ontology_graph_not_available",
+                    "severity": "info",
+                    "entity": null,
+                    "message": "No lifted ontology graph is available for this model. \
+                                The auto-lift tier (OSL #2) has not been deployed. \
+                                Ontology-based query validation is advisory-only; \
+                                the query may proceed."
+                }]
+            });
         };
 
         // Index all known entities by label (case-insensitive) and type.
@@ -141,10 +142,7 @@ impl OntologyCheckStore {
         // Check measures
         if let Some(measures) = args.get("measures").and_then(Value::as_array) {
             for m in measures {
-                let name = match m.as_str().or_else(|| m.get("name").and_then(Value::as_str)) {
-                    Some(n) => n,
-                    None => continue,
-                };
+                let Some(name) = m.as_str().or_else(|| m.get("name").and_then(Value::as_str)) else { continue };
                 check_entity(name, EntityRole::Measure, &index, &mut findings);
             }
         }
@@ -152,13 +150,9 @@ impl OntologyCheckStore {
         // Check dimensions (may be strings or objects with a "hierarchy"/"level" key)
         if let Some(dims) = args.get("dimensions").and_then(Value::as_array) {
             for d in dims {
-                let name = match d.as_str()
+                let Some(name) = d.as_str()
                     .or_else(|| d.get("level").and_then(Value::as_str))
-                    .or_else(|| d.get("hierarchy").and_then(Value::as_str))
-                {
-                    Some(n) => n,
-                    None => continue,
-                };
+                    .or_else(|| d.get("hierarchy").and_then(Value::as_str)) else { continue };
                 check_entity(name, EntityRole::Dimension, &index, &mut findings);
             }
         }
@@ -244,7 +238,7 @@ fn build_entity_index(graph: &Graph) -> EntityIndex {
                 );
             }
             // Also index by the IRI's fragment (the local name)
-            if let Some(frag) = iri.split('#').last() {
+            if let Some(frag) = iri.split('#').next_back() {
                 by_label.entry(frag.to_lowercase()).or_insert(EntityEntry {
                     iri: iri.clone(),
                     kind: kind.clone(),
@@ -261,7 +255,7 @@ fn build_entity_index(graph: &Graph) -> EntityIndex {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// What role is the agent trying to use this entity as?
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EntityRole {
     Measure,
     Dimension,
@@ -316,7 +310,7 @@ fn check_entity(name: &str, role: EntityRole, index: &EntityIndex, findings: &mu
     }
 }
 
-/// Detect semi-additive measure names in an SQL SUM() expression (heuristic).
+/// Detect semi-additive measure names in an SQL `SUM()` expression (heuristic).
 fn check_semi_additive_sql(sql: &str, index: &EntityIndex, findings: &mut Vec<Value>) {
     let sql_lower = sql.to_lowercase();
     // Heuristic: look for SUM( ... ) — if a semi-additive measure label appears nearby
@@ -365,7 +359,7 @@ fn check_semi_additive_cross(args: &Value, index: &EntityIndex, findings: &mut V
         .filter_map(|m| m.as_str().or_else(|| m.get("name").and_then(Value::as_str)))
         .filter(|name| {
             let entry = index.by_label.get(&name.to_lowercase());
-            entry.map_or(false, |e| e.kind == EntityKind::SemiAdditiveMeasure)
+            entry.is_some_and(|e| e.kind == EntityKind::SemiAdditiveMeasure)
         })
         .map(str::to_string)
         .collect();
