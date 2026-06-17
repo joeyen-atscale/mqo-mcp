@@ -1,3 +1,9 @@
+# Changelog
+
+## v0.9.0 — 2026-06-17
+
+Add RULE6: synthetic rank/row-number guard. Rejects ungrounded rank/ordinal columns (Rank, Ranking, Row Number, RowNum, Ordinal, Position, etc.) injected by the agent into top-N queries. Grounded catalog objects named "Rank" or "Net Profit Tier" are not rejected (FR4). Fixes three eval corpus cases (store-employee-counts, store-returns-per-product, web-sales-per-customer-state) where spurious Rank column tanked column_jaccard to 0.67. Wired into validate() alongside RULE1-4,7. Add SyntheticRankColumn { column } RejectReason variant with actionable message referencing ORDER BY + LIMIT.
+
 ## v0.7.0 — Binding near-twin dimension rejection (PRD-mqo-validator-near-twin-rejection)
 check_near_twin_dimension fires pre-execution and returns NonCanonicalNearTwin with the canonical suggestion. Already wired in mqo-mcp-server pipeline. Tests green.
 

@@ -59,6 +59,19 @@ pub struct CatalogMeasure {
     /// calc-aggregation guard. `None` falls back to the name signal.
     #[serde(default)]
     pub calc_kind: Option<CalcKind>,
+    /// Optional channel scope descriptor derived from `FactBindings` channel
+    /// groups (FR1/FR2, PRD-mqo-channel-scope-measure-grounding). When present,
+    /// lists the fact-table column-group identifiers this measure aggregates,
+    /// e.g. `["store_sales"]` for `Store Quantity Sold` or
+    /// `["store_sales","catalog_sales","web_sales"]` for `Total Quantity Sold`.
+    ///
+    /// Used by the `ChannelScopeMismatch` guard (RULE 7) to detect the case where
+    /// an all-channel measure is bound when a channel-scoped sibling exists and
+    /// the request names a single channel.
+    ///
+    /// `None` (absent) → no channel-scope binding known; guard stays silent (FR4).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_scope: Option<Vec<String>>,
 }
 
 /// Classification of an `is_calc` measure for the calc-aggregation guard.
@@ -290,6 +303,30 @@ pub enum RejectReason {
         column: String,
         /// Human-readable note: why this is wrong and what to do instead.
         reason: String,
+    },
+    /// RULE 6: the MQO includes a rank / row-number / ordinal column (e.g.
+    /// `Rank`, `Ranking`, `Row Number`, `RowNum`, `Ordinal`, `Position`)
+    /// that does not ground to any catalog measure or dimension level.
+    ///
+    /// "Top N" ordering is already expressed by the ORDER BY + LIMIT in the
+    /// query; materialising an additional rank column is a spurious artifact
+    /// the model does not have and the question never requested.  The agent
+    /// should drop the column and rely on ORDER BY + LIMIT alone.
+    SyntheticRankColumn {
+        /// The ungrounded rank/ordinal column name.
+        column: String,
+    },
+    /// RULE 7 (PRD-mqo-channel-scope-measure-grounding): the MQO binds an
+    /// all-channel total measure when a channel-scoped sibling exists for the
+    /// named channel. This silently inflates values by summing all channels
+    /// instead of the single channel the request names.
+    ChannelScopeMismatch {
+        /// The all-channel measure that was bound (the wrong pick).
+        measure: String,
+        /// The channel that the context names (e.g. `"store_sales"`).
+        named_channel: String,
+        /// The channel-scoped sibling measure the caller should use instead.
+        suggested_measure: String,
     },
 }
 
@@ -538,6 +575,16 @@ pub fn validate(mqo: &BoundMqoInput, catalog: &CatalogSnapshot) -> Vec<ParamReje
     // RULE 4 (PRD filter-level check): reject a filter whose value type/domain
     // cannot match the target level. Dormant unless `level_meta` is enriched.
     check_filter_level(mqo, catalog, &mut rejections);
+
+    // RULE 6 (PRD synthetic-rank-guard): reject an ungrounded rank / row-number
+    // / ordinal column injected by the agent beyond the grounded select.
+    check_synthetic_rank_column(mqo, catalog, &mut rejections);
+
+    // RULE 7 (PRD-mqo-channel-scope-measure-grounding): reject an all-channel
+    // measure pick when a single-channel sibling exists for the named channel.
+    // Guard stays silent when no sibling exists (FR4) — additive, never
+    // replaces prior rejections.
+    check_channel_scope_mismatch(mqo, catalog, &mut rejections);
 
     rejections
 }
@@ -2002,6 +2049,288 @@ pub fn check_dataset_aggregate_attribute(
 }
 
 // ---------------------------------------------------------------------------
+// RULE 6: synthetic rank / row-number guard (PRD-mqo-validator-synthetic-rank-guard)
+// ---------------------------------------------------------------------------
+
+/// Rank/ordinal label patterns that identify a synthetic rank column.
+///
+/// A column must BOTH match one of these (case/whitespace-insensitive, via
+/// `normalize()`) AND fail to ground to any catalog measure or dimension level
+/// to be rejected (FR4: grounding success is the gate — a legitimately-modeled
+/// "Rank" measure or "Net Profit Tier" level is never rejected).
+///
+/// Exclusions (OQ2): bare `#` and `No.` are intentionally omitted because
+/// they commonly appear in store/item identifiers ("Store #", "Item No.")
+/// whose grounding can be ambiguous.  Single-character or abbreviation forms
+/// require the full grounding-failure signal, not just the name alone.
+const RANK_LABEL_PATTERNS: &[&str] = &[
+    "rank",
+    "ranking",
+    "row number",
+    "rownum",
+    "rownumber",
+    "row no",
+    "ordinal",
+    "position",
+    "row rank",
+    "row order",
+];
+
+/// Returns `true` when the normalized column label matches a rank/ordinal shape.
+fn is_rank_shaped(label: &str) -> bool {
+    let n = normalize(label);
+    RANK_LABEL_PATTERNS.iter().any(|p| n == *p)
+}
+
+/// RULE 6 — reject columns in the MQO whose label matches a rank/row-number/
+/// ordinal shape AND that do not ground to any catalog object (measure or level).
+///
+/// Fires on both the `measures` list (an agent that stuffs a `Rank` column into
+/// the measure slot) and the `dimensions` list (an agent that stuffs it into a
+/// dimension slot).  In both cases the column is ungrounded AND rank-shaped, so
+/// the combined gate rejects it with a typed `SyntheticRankColumn` rejection.
+///
+/// The function is accumulative (NFR1): it appends to `rejections`, never
+/// replaces them.  It is called after all other rules so the accumulation
+/// is complete before return.
+fn check_synthetic_rank_column(
+    mqo: &BoundMqoInput,
+    catalog: &CatalogSnapshot,
+    rejections: &mut Vec<ParamRejection>,
+) {
+    // Pre-build normalized catalog sets for fast O(n) grounding checks.
+    // We re-derive these here rather than accepting pre-built sets so this
+    // function is self-contained (NFR2 determinism; no shared mutable state).
+    let measure_norms: Vec<String> = catalog
+        .measures
+        .iter()
+        .flat_map(|m| {
+            let mut names = vec![normalize(&m.unique_name)];
+            if let Some(ref lbl) = m.label {
+                names.push(normalize(lbl));
+            }
+            names
+        })
+        .collect();
+
+    let level_norms: Vec<String> = catalog
+        .hierarchies
+        .iter()
+        .flat_map(|h| h.levels.iter().map(|l| normalize(l)))
+        .collect();
+
+    let is_grounded = |col: &str| -> bool {
+        let n = normalize(col);
+        measure_norms.contains(&n) || level_norms.contains(&n)
+    };
+
+    // Check measure slots.
+    for mref in &mqo.measures {
+        let col = &mref.unique_name;
+        if is_rank_shaped(col) && !is_grounded(col) {
+            rejections.push(ParamRejection::new(
+                col.clone(),
+                FieldClass::Measure,
+                RejectReason::SyntheticRankColumn {
+                    column: col.clone(),
+                },
+                vec![Suggestion {
+                    name: "drop the rank column".to_string(),
+                    similarity: 1.0,
+                    note: Some(format!(
+                        "column [{col}] is a synthetic rank/row-number artifact: the model \
+                         does not define this column and the question never requested an ordinal. \
+                         \"Top N\" ordering is already expressed by ORDER BY + LIMIT — \
+                         drop [{col}] from the output and rely on the ORDER BY + LIMIT alone."
+                    )),
+                }],
+            ));
+        }
+    }
+
+    // Check dimension slots.
+    for dref in &mqo.dimensions {
+        let col = &dref.unique_name;
+        // Only fire when the dimension itself is ungrounded (a grounded dimension
+        // with a rank-sounding name is legitimately in the catalog).
+        let dim_norm = normalize(col);
+        let dim_grounded = catalog
+            .dimensions
+            .iter()
+            .any(|d| normalize(&d.unique_name) == dim_norm)
+            || is_grounded(col);
+        if is_rank_shaped(col) && !dim_grounded {
+            rejections.push(ParamRejection::new(
+                col.clone(),
+                FieldClass::Dimension,
+                RejectReason::SyntheticRankColumn {
+                    column: col.clone(),
+                },
+                vec![Suggestion {
+                    name: "drop the rank column".to_string(),
+                    similarity: 1.0,
+                    note: Some(format!(
+                        "column [{col}] is a synthetic rank/row-number artifact: the model \
+                         does not define this column and the question never requested an ordinal. \
+                         \"Top N\" ordering is already expressed by ORDER BY + LIMIT — \
+                         drop [{col}] from the output and rely on the ORDER BY + LIMIT alone."
+                    )),
+                }],
+            ));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RULE 7: channel-scope mismatch guard
+// (PRD-mqo-channel-scope-measure-grounding, FR3/FR4/FR5)
+// ---------------------------------------------------------------------------
+
+/// Qualifier / channel-scope tokens stripped to compute the family stem for
+/// channel-sibling matching.  Mirrors the tokens used by the
+/// `mqo-mcp-server` measure-twin grouper so both surfaces agree on what
+/// constitutes a channel qualifier vs. a concept word.
+const CHANNEL_QUALIFIER_TOKENS: &[&str] = &[
+    "web", "store", "catalog", "total", "and", "incl", "inc", "tax", "ship",
+    "amount", "average", "avg",
+];
+
+/// Strip channel/qualifier tokens from `label` to produce the family stem —
+/// the concept words that all channel variants of a measure share.
+/// Returns `None` when nothing concept-bearing remains.
+fn channel_family_stem(label: &str) -> Option<String> {
+    let stem: Vec<String> = label
+        .split_whitespace()
+        .filter(|t| !CHANNEL_QUALIFIER_TOKENS.contains(&t.to_lowercase().as_str()))
+        .map(|t| t.to_lowercase())
+        .collect();
+    if stem.is_empty() { None } else { Some(stem.join(" ")) }
+}
+
+/// RULE 7 — flag an all-channel measure bound when a channel-scoped sibling
+/// exists.
+///
+/// Fires when:
+///   1. A bound measure has `channel_scope` with **more than one** channel group
+///      (it is an all-channel total, not single-channel).
+///   2. The catalog contains another measure whose `channel_scope` has exactly
+///      one channel group that is a subset of the bound measure's channels AND
+///      that sibling shares the same family stem (same base concept, different
+///      channel qualifier).
+///
+/// Does **not** fire when:
+///   - The bound measure's `channel_scope` is absent or empty (no binding known).
+///   - The bound measure has exactly one channel group (already channel-scoped).
+///   - No single-channel sibling with a matching stem exists (FR4: nothing
+///     better to suggest — the all-channel measure is the only option).
+///
+/// The `named_channel` in the rejection is the single-channel group of the
+/// suggested sibling (so the agent knows which channel the sibling covers).
+/// The `suggested_measure` names the sibling (FR5).
+fn check_channel_scope_mismatch(
+    mqo: &BoundMqoInput,
+    catalog: &CatalogSnapshot,
+    rejections: &mut Vec<ParamRejection>,
+) {
+    for mref in &mqo.measures {
+        // Look up this measure in the catalog.
+        let bound_norm = normalize(&mref.unique_name);
+        let Some(bound_cat) = catalog
+            .measures
+            .iter()
+            .find(|m| {
+                normalize(&m.unique_name) == bound_norm
+                    || m.label.as_deref().map(normalize).as_deref() == Some(&bound_norm)
+            })
+        else {
+            // Unmapped — Unmapped rule already fires; don't double-reject here.
+            continue;
+        };
+
+        // Only act when channel_scope is known and has >1 channel (all-channel).
+        let Some(ref scope) = bound_cat.channel_scope else {
+            continue;
+        };
+        if scope.len() <= 1 {
+            // Already single-channel scoped — no mismatch possible.
+            continue;
+        }
+
+        // Compute the family stem of the bound measure to find channel siblings.
+        let bound_display = bound_cat.display_name();
+        let Some(bound_stem) = channel_family_stem(bound_display) else {
+            continue;
+        };
+
+        // Look for a sibling: a different catalog measure whose channel_scope
+        // is exactly 1 channel that is a member of the bound measure's scope
+        // AND whose family stem matches.
+        let scope_set: std::collections::BTreeSet<&str> =
+            scope.iter().map(String::as_str).collect();
+
+        let mut best_sibling: Option<&CatalogMeasure> = None;
+        for candidate in &catalog.measures {
+            // Skip the same measure.
+            if normalize(&candidate.unique_name) == bound_norm {
+                continue;
+            }
+            let Some(ref cand_scope) = candidate.channel_scope else {
+                continue;
+            };
+            // Sibling must be single-channel and that channel must be in the
+            // bound measure's multi-channel set.
+            if cand_scope.len() != 1 {
+                continue;
+            }
+            let cand_channel = &cand_scope[0];
+            if !scope_set.contains(cand_channel.as_str()) {
+                continue;
+            }
+            // Stem must match — same base concept, different channel qualifier.
+            let cand_display = candidate.display_name();
+            let Some(cand_stem) = channel_family_stem(cand_display) else {
+                continue;
+            };
+            if cand_stem != bound_stem {
+                continue;
+            }
+            // Found a valid sibling; prefer the first one (BTreeMap order is
+            // deterministic by unique_name — NFR2).
+            if best_sibling.is_none() {
+                best_sibling = Some(candidate);
+            }
+        }
+
+        if let Some(sibling) = best_sibling {
+            let named_channel = sibling.channel_scope.as_ref()
+                .and_then(|s| s.first())
+                .cloned()
+                .unwrap_or_default();
+            let suggested_name = sibling.display_name().to_string();
+            rejections.push(ParamRejection::new(
+                mref.unique_name.clone(),
+                FieldClass::Measure,
+                RejectReason::ChannelScopeMismatch {
+                    measure: bound_display.to_string(),
+                    named_channel: named_channel.clone(),
+                    suggested_measure: suggested_name.clone(),
+                },
+                vec![Suggestion {
+                    name: suggested_name.clone(),
+                    similarity: 0.9,
+                    note: Some(format!(
+                        "[{bound_display}] aggregates all channels \
+                         ({}); use [{suggested_name}] which is scoped to \
+                         [{named_channel}] only.",
+                        scope.join(", ")
+                    )),
+                }],
+            ));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
@@ -2364,4 +2693,504 @@ mod tests {
             r2
         );
     }
+
+    // ---------------------------------------------------------------------------
+    // RULE 7: channel-scope mismatch guard
+    // (PRD-mqo-channel-scope-measure-grounding, AC3/AC4/AC5/AC6)
+    // ---------------------------------------------------------------------------
+
+    /// Build a minimal catalog with channel-scoped measures matching the
+    /// TPC-DS pattern: `Total Quantity Sold` (all 3 channels) and
+    /// `Store Quantity Sold` (store only).
+    fn channel_scope_catalog() -> CatalogSnapshot {
+        CatalogSnapshot {
+            measures: vec![
+                CatalogMeasure {
+                    unique_name: "tpcds_benchmark_model.total_quantity_sold".into(),
+                    label: Some("Total Quantity Sold".into()),
+                    channel_scope: Some(vec![
+                        "store_sales".into(),
+                        "catalog_sales".into(),
+                        "web_sales".into(),
+                    ]),
+                    ..Default::default()
+                },
+                CatalogMeasure {
+                    unique_name: "tpcds_benchmark_model.store_quantity_sold".into(),
+                    label: Some("Store Quantity Sold".into()),
+                    channel_scope: Some(vec!["store_sales".into()]),
+                    ..Default::default()
+                },
+                CatalogMeasure {
+                    unique_name: "tpcds_benchmark_model.catalog_quantity_sold".into(),
+                    label: Some("Catalog Quantity Sold".into()),
+                    channel_scope: Some(vec!["catalog_sales".into()]),
+                    ..Default::default()
+                },
+            ],
+            dimensions: vec![CatalogDimension {
+                unique_name: "product_dimension".into(),
+                subject_areas: vec![],
+            }],
+            hierarchies: vec![CatalogHierarchy {
+                dimension_unique_name: "product_dimension".into(),
+                hierarchy_unique_name: "product_dimension".into(),
+                levels: vec!["Product Brand Name".into()],
+                level_meta: vec![],
+            }],
+            date_roles: vec![],
+        }
+    }
+
+    /// AC3: guard flags all-channel measure when channel-scoped sibling exists.
+    #[test]
+    fn channel_scope_mismatch_fires_for_all_channel_pick() {
+        let catalog = channel_scope_catalog();
+        // Agent bound the all-channel total
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef {
+                unique_name: "tpcds_benchmark_model.total_quantity_sold".into(),
+                aggregation: None,
+            }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "product_dimension".into(),
+                level: Some("Product Brand Name".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let mismatch = rejections.iter().find(|r| {
+            matches!(r.reason, RejectReason::ChannelScopeMismatch { .. })
+        });
+        assert!(
+            mismatch.is_some(),
+            "ChannelScopeMismatch should fire for all-channel measure with channel sibling, got {:?}",
+            rejections
+        );
+        // AC6: suggestion must name a channel-scoped sibling.
+        if let Some(r) = mismatch {
+            if let RejectReason::ChannelScopeMismatch { ref suggested_measure, ref named_channel, .. } =
+                r.reason
+            {
+                assert!(
+                    !suggested_measure.is_empty(),
+                    "suggested_measure must be named (AC6), got empty"
+                );
+                assert!(
+                    !named_channel.is_empty(),
+                    "named_channel must be set (FR5), got empty"
+                );
+                // The sibling should be a single-channel quantity measure.
+                assert!(
+                    suggested_measure.contains("Quantity Sold"),
+                    "suggested should be a quantity measure, got: {suggested_measure}"
+                );
+            }
+        }
+    }
+
+    /// AC4: guard stays silent when only all-channel measure exists (no sibling).
+    #[test]
+    fn channel_scope_mismatch_silent_when_no_sibling() {
+        // A catalog with only an all-channel measure — no single-channel sibling.
+        let catalog = CatalogSnapshot {
+            measures: vec![CatalogMeasure {
+                unique_name: "tpcds_benchmark_model.total_quantity_sold".into(),
+                label: Some("Total Quantity Sold".into()),
+                channel_scope: Some(vec![
+                    "store_sales".into(),
+                    "catalog_sales".into(),
+                    "web_sales".into(),
+                ]),
+                ..Default::default()
+            }],
+            dimensions: vec![CatalogDimension {
+                unique_name: "product_dimension".into(),
+                subject_areas: vec![],
+            }],
+            hierarchies: vec![],
+            date_roles: vec![],
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef {
+                unique_name: "tpcds_benchmark_model.total_quantity_sold".into(),
+                aggregation: None,
+            }],
+            dimensions: vec![],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let mismatch = rejections.iter().find(|r| {
+            matches!(r.reason, RejectReason::ChannelScopeMismatch { .. })
+        });
+        assert!(
+            mismatch.is_none(),
+            "ChannelScopeMismatch must not fire when no channel sibling exists (FR4), got {:?}",
+            rejections
+        );
+    }
+
+    /// AC5: all-channel question (no channel named, no sibling context) stays silent.
+    /// When the agent binds `Total Quantity Sold` and no filter or dimension context
+    /// implies a single channel, the guard should not fire. Here we test that a
+    /// single-channel measure picked correctly does NOT trigger the rule.
+    #[test]
+    fn channel_scope_mismatch_silent_for_single_channel_pick() {
+        let catalog = channel_scope_catalog();
+        // Agent correctly picked store-scoped measure.
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef {
+                unique_name: "tpcds_benchmark_model.store_quantity_sold".into(),
+                aggregation: None,
+            }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "product_dimension".into(),
+                level: Some("Product Brand Name".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let mismatch = rejections.iter().find(|r| {
+            matches!(r.reason, RejectReason::ChannelScopeMismatch { .. })
+        });
+        assert!(
+            mismatch.is_none(),
+            "ChannelScopeMismatch must not fire when agent correctly picks single-channel measure, got {:?}",
+            rejections
+        );
+    }
+
+    /// Guard is silent when channel_scope is absent (no binding known).
+    #[test]
+    fn channel_scope_mismatch_silent_when_scope_absent() {
+        let catalog = CatalogSnapshot {
+            measures: vec![
+                CatalogMeasure {
+                    unique_name: "some_measure".into(),
+                    label: Some("Some Measure".into()),
+                    // No channel_scope — binding unknown.
+                    channel_scope: None,
+                    ..Default::default()
+                },
+            ],
+            dimensions: vec![],
+            hierarchies: vec![],
+            date_roles: vec![],
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef {
+                unique_name: "some_measure".into(),
+                aggregation: None,
+            }],
+            dimensions: vec![],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        assert!(
+            rejections.iter().all(|r| !matches!(r.reason, RejectReason::ChannelScopeMismatch { .. })),
+            "guard must stay silent when channel_scope is absent (FR4), got {:?}",
+            rejections
+        );
+    }
+    // ── RULE 6: synthetic rank / row-number guard ──────────────────────────
+
+    /// Minimal catalog for RULE6 tests: real measures, a "Net Profit Tier"
+    /// level (guardrail G3), and a catalog-defined "Rank" measure (AC-4).
+    fn rank_guard_catalog() -> CatalogSnapshot {
+        CatalogSnapshot {
+            measures: vec![
+                CatalogMeasure {
+                    unique_name: "Store Number of Employees".into(),
+                    label: Some("Store Number of Employees".into()),
+                    ..Default::default()
+                },
+                CatalogMeasure {
+                    unique_name: "Store Returns Count".into(),
+                    label: Some("Store Returns Count".into()),
+                    ..Default::default()
+                },
+                CatalogMeasure {
+                    unique_name: "Web Sales".into(),
+                    label: Some("Web Sales".into()),
+                    ..Default::default()
+                },
+                // AC-4: a catalog-defined "Rank" measure must not be rejected.
+                CatalogMeasure {
+                    unique_name: "Rank".into(),
+                    label: Some("Rank".into()),
+                    ..Default::default()
+                },
+            ],
+            dimensions: vec![
+                CatalogDimension {
+                    unique_name: "Store".into(),
+                    subject_areas: vec![],
+                },
+                CatalogDimension {
+                    unique_name: "Customer".into(),
+                    subject_areas: vec![],
+                },
+            ],
+            hierarchies: vec![
+                CatalogHierarchy {
+                    dimension_unique_name: "Store".into(),
+                    hierarchy_unique_name: "Store".into(),
+                    levels: vec![
+                        "Store Name".into(),
+                        "Net Profit Tier".into(),
+                        "Gender".into(),
+                    ],
+                    level_meta: vec![],
+                },
+                CatalogHierarchy {
+                    dimension_unique_name: "Customer".into(),
+                    hierarchy_unique_name: "Customer".into(),
+                    levels: vec!["Customer State Name".into()],
+                    level_meta: vec![],
+                },
+            ],
+            date_roles: vec![],
+        }
+    }
+
+    /// AC-1 / G1: ungrounded "Rank" in the measure slot is rejected with SyntheticRankColumn.
+    #[test]
+    fn rule6_ac1_ungrounded_rank_in_measure_rejected() {
+        let catalog = rank_guard_catalog();
+        let catalog_no_rank = CatalogSnapshot {
+            measures: catalog.measures.iter().filter(|m| m.unique_name != "Rank").cloned().collect(),
+            ..catalog.clone()
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![
+                MqoMeasureRef { unique_name: "Store Number of Employees".into(), aggregation: None },
+                MqoMeasureRef { unique_name: "Rank".into(), aggregation: None },
+            ],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "Store".into(),
+                level: Some("Store Name".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog_no_rank);
+        let rank_rej: Vec<_> = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::SyntheticRankColumn { .. }))
+            .collect();
+        assert!(!rank_rej.is_empty(), "ungrounded Rank must be rejected; got: {rejections:?}");
+        if let RejectReason::SyntheticRankColumn { column } = &rank_rej[0].reason {
+            assert_eq!(column, "Rank");
+        }
+    }
+
+    /// AC-1 variant: ungrounded "Ranking" column is rejected.
+    #[test]
+    fn rule6_ac1_ungrounded_ranking_rejected() {
+        let catalog = rank_guard_catalog();
+        let catalog_no_rank = CatalogSnapshot {
+            measures: catalog.measures.iter().filter(|m| m.unique_name != "Rank").cloned().collect(),
+            ..catalog.clone()
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![
+                MqoMeasureRef { unique_name: "Store Returns Count".into(), aggregation: None },
+                MqoMeasureRef { unique_name: "Ranking".into(), aggregation: None },
+            ],
+            dimensions: vec![],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog_no_rank);
+        assert!(
+            rejections.iter().any(|r| matches!(&r.reason,
+                RejectReason::SyntheticRankColumn { column } if column == "Ranking")),
+            "ungrounded Ranking must be rejected; got: {rejections:?}"
+        );
+    }
+
+    /// AC-2 / G4: RULE6 is wired into validate() (not just a direct rule call).
+    #[test]
+    fn rule6_ac2_wired_into_validate() {
+        let catalog = rank_guard_catalog();
+        let catalog_no_rank = CatalogSnapshot {
+            measures: catalog.measures.iter().filter(|m| m.unique_name != "Rank").cloned().collect(),
+            ..catalog.clone()
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Rank".into(), aggregation: None }],
+            dimensions: vec![],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog_no_rank);
+        assert!(
+            rejections.iter().any(|r| matches!(&r.reason, RejectReason::SyntheticRankColumn { .. })),
+            "validate() must surface RULE6 rejection; got: {rejections:?}"
+        );
+    }
+
+    /// AC-3 / G3: real "Net Profit Tier" level (grounded) must NOT be rejected.
+    #[test]
+    fn rule6_ac3_real_tier_level_passes() {
+        let catalog = rank_guard_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![
+                MqoDimensionRef { unique_name: "Store".into(), level: Some("Store Name".into()), ..Default::default() },
+                MqoDimensionRef { unique_name: "Store".into(), level: Some("Net Profit Tier".into()), ..Default::default() },
+                MqoDimensionRef { unique_name: "Store".into(), level: Some("Gender".into()), ..Default::default() },
+            ],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        assert!(
+            rejections.iter().all(|r| !matches!(&r.reason, RejectReason::SyntheticRankColumn { .. })),
+            "real Net Profit Tier level must not be rejected; got: {rejections:?}"
+        );
+    }
+
+    /// AC-4 / FR4: catalog-defined "Rank" measure (grounded) must NOT be rejected.
+    #[test]
+    fn rule6_ac4_grounded_rank_measure_passes() {
+        let catalog = rank_guard_catalog(); // has "Rank" as a real measure
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Rank".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "Store".into(),
+                level: Some("Store Name".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        assert!(
+            rejections.iter().all(|r| !matches!(&r.reason, RejectReason::SyntheticRankColumn { .. })),
+            "grounded Rank measure must not be rejected; got: {rejections:?}"
+        );
+    }
+
+    /// AC-5 / FR5: clean top-N query (no rank column) must not trigger RULE6.
+    #[test]
+    fn rule6_ac5_clean_topn_query_passes() {
+        let catalog = rank_guard_catalog();
+        let catalog_no_rank = CatalogSnapshot {
+            measures: catalog.measures.iter().filter(|m| m.unique_name != "Rank").cloned().collect(),
+            ..catalog.clone()
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Store Number of Employees".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "Store".into(),
+                level: Some("Store Name".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog_no_rank);
+        assert!(
+            rejections.iter().all(|r| !matches!(&r.reason, RejectReason::SyntheticRankColumn { .. })),
+            "clean top-N query must not be rejected; got: {rejections:?}"
+        );
+    }
+
+    /// AC-6 / G2: rejection message names the column and references ORDER BY + LIMIT.
+    #[test]
+    fn rule6_ac6_actionable_message() {
+        let catalog = rank_guard_catalog();
+        let catalog_no_rank = CatalogSnapshot {
+            measures: catalog.measures.iter().filter(|m| m.unique_name != "Rank").cloned().collect(),
+            ..catalog.clone()
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Rank".into(), aggregation: None }],
+            dimensions: vec![],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog_no_rank);
+        let rej = rejections.iter()
+            .find(|r| matches!(&r.reason, RejectReason::SyntheticRankColumn { .. }))
+            .expect("should find a SyntheticRankColumn rejection");
+        let note = rej.suggestions.first().and_then(|s| s.note.as_deref()).unwrap_or("");
+        assert!(note.contains("ORDER BY"), "message must mention ORDER BY; got: {note:?}");
+        assert!(note.contains("LIMIT"), "message must mention LIMIT; got: {note:?}");
+        assert!(note.contains("Rank") || note.contains("[Rank]"), "message must name the column; got: {note:?}");
+    }
+
+    /// AC-7 / FR6: all rank/ordinal patterns rejected when ungrounded; "Store Number" is not matched.
+    #[test]
+    fn rule6_ac7_pattern_coverage() {
+        let catalog = CatalogSnapshot::default();
+        let rank_variants = [
+            "Rank", "rank", "RANK", "Ranking", "Row Number", "row number",
+            "RowNum", "rownum", "RowNumber", "rownumber", "Row No", "row no",
+            "Ordinal", "ordinal", "Position", "position", "Row Rank", "Row Order",
+        ];
+        for variant in &rank_variants {
+            let mqo = BoundMqoInput {
+                measures: vec![MqoMeasureRef { unique_name: (*variant).to_string(), aggregation: None }],
+                dimensions: vec![],
+                filters: vec![],
+            };
+            let rejections = validate(&mqo, &catalog);
+            assert!(
+                rejections.iter().any(|r| matches!(&r.reason, RejectReason::SyntheticRankColumn { .. })),
+                "variant {variant:?} must be rejected as synthetic rank; got: {rejections:?}"
+            );
+        }
+        // "Store Number" must NOT match the rank pattern.
+        let mqo_num = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Store Number".into(), aggregation: None }],
+            dimensions: vec![],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo_num, &catalog);
+        assert!(
+            rejections.iter().all(|r| !matches!(&r.reason, RejectReason::SyntheticRankColumn { .. })),
+            "Store Number must not match rank pattern; got: {rejections:?}"
+        );
+    }
+
+    /// AC-8 / NFR1: SyntheticRankColumn and Unmapped both accumulate (no early exit).
+    #[test]
+    fn rule6_ac8_accumulates_with_other_rules() {
+        let catalog = rank_guard_catalog();
+        let catalog_no_rank = CatalogSnapshot {
+            measures: catalog.measures.iter().filter(|m| m.unique_name != "Rank").cloned().collect(),
+            ..catalog.clone()
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![
+                MqoMeasureRef { unique_name: "Rank".into(), aggregation: None },
+                MqoMeasureRef { unique_name: "NonExistentMeasureXYZ".into(), aggregation: None },
+            ],
+            dimensions: vec![],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog_no_rank);
+        assert!(rejections.iter().any(|r| matches!(&r.reason, RejectReason::SyntheticRankColumn { .. })),
+            "expected SyntheticRankColumn; got: {rejections:?}");
+        assert!(rejections.iter().any(|r| matches!(&r.reason, RejectReason::Unmapped)),
+            "expected Unmapped alongside SyntheticRankColumn; got: {rejections:?}");
+    }
+
+    /// Rank column in the dimension slot is also rejected when ungrounded.
+    #[test]
+    fn rule6_rank_in_dimension_slot_rejected() {
+        let catalog = rank_guard_catalog();
+        let catalog_no_rank = CatalogSnapshot {
+            measures: catalog.measures.iter().filter(|m| m.unique_name != "Rank").cloned().collect(),
+            ..catalog.clone()
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![MqoDimensionRef { unique_name: "Rank".into(), ..Default::default() }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog_no_rank);
+        assert!(
+            rejections.iter().any(|r| matches!(&r.reason, RejectReason::SyntheticRankColumn { .. })),
+            "ungrounded Rank in dimension slot must be rejected; got: {rejections:?}"
+        );
+    }
+
 }
