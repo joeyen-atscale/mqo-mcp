@@ -27,6 +27,50 @@ fn is_four_digit_year(s: &str) -> bool {
     s.bytes().all(|b| b.is_ascii_digit())
 }
 
+/// Normalize a string member value for comparison purposes.
+///
+/// Applied to **both** the filter value and captured domain entries before the
+/// equality check on string-dtype levels (PRD-mqo-string-member-filter-completeness,
+/// FR1–FR4, FR8).
+///
+/// The transformation is:
+/// 1. Trim leading/trailing ASCII whitespace.
+/// 2. Collapse internal whitespace runs to a single ASCII space.
+/// 3. Fold to ASCII lowercase (invariant, non-locale — only ASCII is folded;
+///    non-ASCII chars are preserved, satisfying NFR2).
+/// 4. Fold common equivalent punctuation to a canonical form:
+///    - Curly/typographic single quotes (`\u{2018}`, `\u{2019}`, `\u{02BC}`) → `'`
+///    - Curly/typographic double quotes (`\u{201C}`, `\u{201D}`) → `"`
+///    - En-dash (`\u{2013}`) and em-dash (`\u{2014}`) → `-`
+///
+/// Matching remains **equality** of the normalized forms — not substring, prefix,
+/// or contains (FR3). This function is O(length) and allocation-bounded (NFR4).
+///
+/// An identical copy lives in `mqo-catalog-binder/src/binder.rs` so both
+/// comparison sites use the same rule without a circular crate dependency (FR8, OQ3).
+pub(crate) fn normalize_member_string(s: &str) -> String {
+    // Step 1 & 2: trim + collapse whitespace, then step 3: ASCII lowercase.
+    let collapsed: String = s
+        .split_whitespace()
+        .collect::<Vec<&str>>()
+        .join(" ")
+        .to_ascii_lowercase();
+
+    // Step 4: fold punctuation equivalents.
+    collapsed
+        .chars()
+        .map(|c| match c {
+            // Curly/typographic single quotes → straight apostrophe
+            '\u{2018}' | '\u{2019}' | '\u{02BC}' => '\'',
+            // Curly/typographic double quotes → straight double quote
+            '\u{201C}' | '\u{201D}' => '"',
+            // En-dash and em-dash → hyphen-minus
+            '\u{2013}' | '\u{2014}' => '-',
+            other => other,
+        })
+        .collect()
+}
+
 // ── Local mirror of the relevant CatalogSnapshot subset ──────────────────────
 
 /// Minimal mirror of `ColumnEntry` from `mqo-catalog-binder`.
@@ -334,7 +378,13 @@ impl DaxCatalogContext {
         members: &[String],
         dim_levels: &[String],
     ) -> Option<&str> {
-        let probe = members.first()?.to_lowercase();
+        let probe_raw = members.first()?;
+        // Normalized probe used for string comparisons (trim + collapse whitespace
+        // + ASCII lowercase + punctuation folding). This supersedes the old bare
+        // `to_lowercase()` fast path (PRD-mqo-string-member-filter-completeness FR1-FR4).
+        let probe = normalize_member_string(probe_raw);
+        // Keep a plain lowercase copy for the numeric parse path (unchanged, FR5).
+        let probe_lc = probe_raw.to_lowercase();
         let levels = self.hierarchy_levels.get(hierarchy).or_else(|| {
             let lower = hierarchy.to_lowercase();
             self.hierarchy_levels
@@ -344,7 +394,7 @@ impl DaxCatalogContext {
         })?;
         // Numeric probe: parse the probe as f64 once so we can do dtype-aware
         // comparison for integer/decimal levels without re-parsing per domain value.
-        let probe_f64: Option<f64> = probe.parse::<f64>().ok();
+        let probe_f64: Option<f64> = probe_lc.parse::<f64>().ok();
 
         // Candidates: levels of this hierarchy whose enumerated domain contains the
         // member. Dedup by unique_name — the reverse index can list a level under
@@ -355,9 +405,11 @@ impl DaxCatalogContext {
                 let Some(domain) = self.level_domains.get(*lvl) else {
                     return false;
                 };
-                // Fast path: exact lowercased string match (handles all string levels
-                // and numeric levels where the probe and domain value formats agree).
-                if domain.iter().any(|v| v.to_lowercase() == probe) {
+                // Fast path: normalized string match — handles all string levels and
+                // numeric levels where probe and domain value formats agree after
+                // whitespace/case/punctuation normalization
+                // (PRD-mqo-string-member-filter-completeness FR1-FR4).
+                if domain.iter().any(|v| normalize_member_string(v) == probe) {
                     return true;
                 }
                 // Slow path: dtype-aware numeric comparison.  Only attempted when
@@ -876,5 +928,201 @@ mod date_cross_dimension_tests {
         assert!(!super::is_four_digit_year("20020"));  // 5 digits
         assert!(!super::is_four_digit_year("200x"));   // non-numeric
         assert!(!super::is_four_digit_year(""));
+    }
+}
+
+// ── PRD-mqo-string-member-filter-completeness: normalize_member_string + string
+//    member resolution robustness ───────────────────────────────────────────────
+#[cfg(test)]
+mod string_member_normalization_tests {
+    use super::{normalize_member_string, DaxCatalogContext};
+
+    // ── normalize_member_string unit tests ────────────────────────────────────
+
+    #[test]
+    fn normalize_trims_leading_trailing_whitespace() {
+        assert_eq!(normalize_member_string("  able  "), "able");
+        assert_eq!(normalize_member_string("able "), "able");
+        assert_eq!(normalize_member_string(" able"), "able");
+    }
+
+    #[test]
+    fn normalize_collapses_internal_whitespace() {
+        assert_eq!(normalize_member_string("able  corp"), "able corp");
+        assert_eq!(normalize_member_string("able\t corp"), "able corp");
+        assert_eq!(normalize_member_string("a  b  c"), "a b c");
+    }
+
+    #[test]
+    fn normalize_lowercases_ascii() {
+        assert_eq!(normalize_member_string("ABLE"), "able");
+        assert_eq!(normalize_member_string("Able Corp"), "able corp");
+    }
+
+    #[test]
+    fn normalize_folds_curly_single_quotes() {
+        // U+2018 LEFT SINGLE QUOTATION MARK, U+2019 RIGHT SINGLE QUOTATION MARK
+        assert_eq!(normalize_member_string("\u{2018}able\u{2019}"), "'able'");
+        // U+02BC MODIFIER LETTER APOSTROPHE
+        assert_eq!(normalize_member_string("o\u{02BC}brien"), "o'brien");
+    }
+
+    #[test]
+    fn normalize_folds_curly_double_quotes() {
+        assert_eq!(normalize_member_string("\u{201C}able\u{201D}"), "\"able\"");
+    }
+
+    #[test]
+    fn normalize_folds_en_and_em_dash() {
+        // en-dash U+2013
+        assert_eq!(normalize_member_string("able\u{2013}corp"), "able-corp");
+        // em-dash U+2014
+        assert_eq!(normalize_member_string("able\u{2014}corp"), "able-corp");
+    }
+
+    #[test]
+    fn normalize_preserves_straight_apostrophe() {
+        // Existing apostrophes must be preserved (not folded away).
+        assert_eq!(normalize_member_string("o'brien"), "o'brien");
+    }
+
+    #[test]
+    fn normalize_preserves_hyphen() {
+        assert_eq!(normalize_member_string("able-corp"), "able-corp");
+    }
+
+    #[test]
+    fn normalize_empty_string() {
+        assert_eq!(normalize_member_string(""), "");
+        assert_eq!(normalize_member_string("   "), "");
+    }
+
+    // ── AC-4: no over-match (equality preserved) ──────────────────────────────
+
+    #[test]
+    fn normalize_does_not_produce_substring_match() {
+        // 'able' normalized is "able"; 'able corp', 'unable', 'abel' all normalize
+        // differently — equality must NOT hold.
+        let able = normalize_member_string("able");
+        assert_ne!(normalize_member_string("able corp"), able, "able corp must not match able");
+        assert_ne!(normalize_member_string("unable"), able, "unable must not match able");
+        assert_ne!(normalize_member_string("abel"), able, "abel must not match able");
+    }
+
+    // ── resolve_member_level integration tests ────────────────────────────────
+
+    fn mfg_ctx() -> DaxCatalogContext {
+        // Simulates the able-manufacturer-brands scenario:
+        // domain has "able" (exact), "able " (trailing space), "ABLE" (case variant),
+        // "able  corp" (double internal space), and non-matching entries.
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level",
+           "unique_name":"product_dimension.[Product Manufacturer Name]",
+           "label":"Product Manufacturer Name",
+           "hierarchy":"product_dimension",
+           "level":"Product Manufacturer Name",
+           "domain":["able","able ","ABLE","able  corp","unable","able corp","abel"]}
+        ]}"#;
+        DaxCatalogContext::from_json(json).unwrap()
+    }
+
+    /// AC-1: trailing whitespace in stored domain entry matches exact filter value.
+    #[test]
+    fn trailing_whitespace_domain_entry_matches_filter() {
+        // The catalog has "able " (trailing space); filter probe is "able".
+        // After normalization both become "able" → match.
+        // We test via a catalog where ONLY the trailing-space variant is present.
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level",
+           "unique_name":"product_dimension.[Mfg Name]",
+           "label":"Mfg Name",
+           "hierarchy":"product_dimension",
+           "level":"Mfg Name",
+           "domain":["able "]}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        let got = c.resolve_member_level("product_dimension", &["able".into()], &[]);
+        assert_eq!(got, Some("product_dimension.[Mfg Name]"),
+            "trailing-space domain entry must match normalized filter value");
+    }
+
+    /// AC-2: internal double-space in domain entry matches filter with single space.
+    #[test]
+    fn internal_double_space_domain_entry_matches_filter() {
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level",
+           "unique_name":"product_dimension.[Mfg Name]",
+           "label":"Mfg Name",
+           "hierarchy":"product_dimension",
+           "level":"Mfg Name",
+           "domain":["able  corp"]}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        let got = c.resolve_member_level("product_dimension", &["able corp".into()], &[]);
+        assert_eq!(got, Some("product_dimension.[Mfg Name]"),
+            "double-space domain entry must match single-space filter value");
+    }
+
+    /// AC-5: case-folding is preserved (existing behaviour retained).
+    #[test]
+    fn case_folded_domain_entry_matches_filter() {
+        let c = mfg_ctx();
+        let got = c.resolve_member_level("product_dimension", &["ABLE".into()], &[]);
+        assert_eq!(got, Some("product_dimension.[Product Manufacturer Name]"),
+            "case-only difference must still match (FR4)");
+    }
+
+    /// AC-4 (no over-match): filter 'able' must NOT match 'able corp', 'unable', 'abel'.
+    #[test]
+    fn able_does_not_match_over_specific_or_prefix_entries() {
+        // Build a catalog with ONLY the near-name entries (no exact 'able' or 'able ' entry).
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level",
+           "unique_name":"product_dimension.[Mfg Name]",
+           "label":"Mfg Name",
+           "hierarchy":"product_dimension",
+           "level":"Mfg Name",
+           "domain":["able corp","unable","abel"]}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        let got = c.resolve_member_level("product_dimension", &["able".into()], &[]);
+        assert_eq!(got, None,
+            "filter 'able' must not match 'able corp', 'unable', or 'abel' (FR3 — no over-match)");
+    }
+
+    /// AC-3: curly-quote variant in domain matches straight-quote filter.
+    #[test]
+    fn curly_quote_domain_entry_matches_straight_quote_filter() {
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level",
+           "unique_name":"product_dimension.[Mfg Name]",
+           "label":"Mfg Name",
+           "hierarchy":"product_dimension",
+           "level":"Mfg Name",
+           "domain":["o’brien"]}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        let got = c.resolve_member_level("product_dimension", &["o'brien".into()], &[]);
+        assert_eq!(got, Some("product_dimension.[Mfg Name]"),
+            "curly-quote in domain must match straight-quote filter (FR2)");
+    }
+
+    /// AC-6 (numeric branch unchanged): a decimal probe on an integer/decimal level
+    /// still resolves via the numeric path — normalization must not break it.
+    #[test]
+    fn numeric_path_unchanged_after_string_normalization() {
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level","unique_name":"customer_demographics.[Income Band]","label":"Income Band",
+           "hierarchy":"customer_demographics","level":"Income Band",
+           "domain":["9.00","10.00","20.00"],"value_type":"decimal"},
+          {"kind":"level","unique_name":"customer_demographics.[Income Group]","label":"Income Group",
+           "hierarchy":"customer_demographics","level":"Income Group",
+           "domain":["Low","Medium","High"]}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        // Probe "9" must still match "9.00" via numeric path (FR5).
+        let got = c.resolve_member_level("customer_demographics", &["9".into()], &[]);
+        assert_eq!(got, Some("customer_demographics.[Income Band]"),
+            "numeric path must be unchanged (FR5)");
     }
 }
