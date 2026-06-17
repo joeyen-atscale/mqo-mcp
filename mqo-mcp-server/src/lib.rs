@@ -30,6 +30,7 @@ pub mod catalog_cache;
 pub mod catalog_ingest;
 pub mod chart_tools;
 pub mod cursor;
+pub mod grounding;
 pub mod handle_ops;
 pub mod mcp;
 pub mod model_graph;

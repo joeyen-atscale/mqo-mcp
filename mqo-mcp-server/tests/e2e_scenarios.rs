@@ -90,6 +90,7 @@ fn plain_server() -> Server {
         xmla_model_coords: HashMap::new(),
         max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
         model_graph: None,
+        grounding_store: None,
     }
 }
 

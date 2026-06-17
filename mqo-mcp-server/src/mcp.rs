@@ -18,6 +18,7 @@
 
 use crate::chart_tools;
 use crate::cursor::CursorStore;
+use crate::grounding::GroundingStore;
 use crate::handle_ops::{self, HandleStore};
 use crate::model_graph::ModelGraphStore;
 use crate::pipeline::{self, PipelineError, PipelineOutput, ToolPaths};
@@ -766,6 +767,11 @@ pub struct Server {
     /// expected state until the auto-lift tier (OSL #2) populates the graph at
     /// startup. Tests load a fixture graph directly via `ModelGraphStore::load_turtle`.
     pub model_graph: Option<Box<ModelGraphStore>>,
+    /// BFO grounding store for the `describe_grounding` tool (PRD-swa-grounding-mcp-tool).
+    ///
+    /// `None` → tool returns `grounding_not_available`.  Populated at startup when
+    /// grounding artifacts (aso-ground overlay, OSL #3) are available.
+    pub grounding_store: Option<Box<GroundingStore>>,
 }
 
 /// Default maximum distinct-row estimate for a projection MQO.
@@ -970,6 +976,31 @@ Read-only; results contain only model-metadata IRIs/literals, never warehouse ro
             "inputSchema": crate::model_graph::query_model_graph_input_schema(),
             "annotations": { "readOnlyHint": true }
         }),
+        json!({
+            "name": "describe_grounding",
+            "description": "Return the formal BFO 2020 ontological grounding for a set of named model entities. \
+Given entity names or IRIs, returns each one's BFO category (Generically Dependent Continuant, Role, Quality, …), \
+`aso:` type, how the category was determined (kind-determined / hint-overridden / fallback), and an Aristotelian \
+definition. Use this tool to answer 'what IS this measure ontologically?' before selecting between near-twin entities. \
+Read-only; token-budgeted (default 50 entities, configurable via `max_entities`).\n\n\
+**When to call:** call `describe_grounding` before `query_multidimensional` whenever the question involves \
+entities that might be ambiguous (e.g. 'Store Sales Increase' vs 'Sales Amount') — the BFO category and \
+definition reveal which is the canonical measure and what its additivity constraints are.\n\n\
+**Inputs:** `entities` — array of entity names (matched case-insensitively) or full IRIs. \
+`max_entities` — optional integer cap (1-200; default 50).\n\n\
+**Responses (per entity in `results`):**\n\
+- `status: 'grounded'` — entity found; includes `aso_class`, `bfo_category.iri`, `bfo_category.label`, \
+  `grounding_source`, `aristotelian_definition`, `skos_labels`.\n\
+- `status: 'ungrounded'` — entity not in grounding artifacts; returned with actionable detail.\n\
+- `status: 'ambiguous'` — name matches multiple entities; returned with candidate IRIs.\n\
+- `status: 'error'` — invalid IRI or other input problem.\n\n\
+**Outer response:**\n\
+- `{status: 'ok', results: [...], total_requested, total_returned}` — normal result.\n\
+- `{status: 'grounding_not_available'}` — grounding artifacts not loaded (OSL #3 not deployed).\n\
+- `truncated: true, dropped_entities: [...]` — token budget exceeded; retry with fewer entities.",
+            "inputSchema": crate::grounding::describe_grounding_input_schema(),
+            "annotations": { "readOnlyHint": true }
+        }),
     ]
 }
 
@@ -1058,6 +1089,7 @@ impl Server {
             }
             "compose_dashboard" => Ok(chart_tools::handle_compose_dashboard(&args)),
             "query_model_graph" => Ok(self.query_model_graph(&args)),
+            "describe_grounding" => Ok(self.describe_grounding(&args)),
             "dataset_aggregate"
             | "dataset_filter"
             | "dataset_sort"
@@ -1132,6 +1164,32 @@ impl Server {
                     "detail": "No lifted model graph is available for this model. \
                                The auto-lift tier (OSL #2) has not been deployed on this server. \
                                Live models return this result until auto-lift is integrated."
+                })
+            }
+        };
+        let text = serde_json::to_string(&result).unwrap_or_default();
+        serde_json::json!({
+            "content": [{ "type": "text", "text": text }],
+            "structuredContent": result
+        })
+    }
+
+    // ── Grounding tool ────────────────────────────────────────────────────────
+
+    /// Handle a `describe_grounding` tool call.
+    ///
+    /// Delegates to the in-process [`GroundingStore`]. When `grounding_store` is
+    /// `None` the store's `lookup()` method returns `grounding_not_available`.
+    /// This is the expected state until the aso-ground overlay (OSL #3) lands.
+    fn describe_grounding(&self, args: &Value) -> Value {
+        let result = match &self.grounding_store {
+            Some(store) => store.lookup(args),
+            None => {
+                serde_json::json!({
+                    "status": "grounding_not_available",
+                    "detail": "No grounding artifacts are loaded for this model. \
+                               The aso-ground overlay (OSL #3) has not been deployed on this server. \
+                               Live models return this result until the grounding overlay is integrated."
                 })
             }
         };
@@ -3540,6 +3598,7 @@ mod hierarchy_levels_value_type_tests {
             xmla_model_coords: std::collections::HashMap::new(),
             max_projection_cardinality: DEFAULT_MAX_PROJECTION_CARDINALITY,
             model_graph: None,
+            grounding_store: None,
         }
     }
 
@@ -3639,6 +3698,7 @@ mod hierarchy_levels_value_type_tests {
             xmla_model_coords: std::collections::HashMap::new(),
             max_projection_cardinality: DEFAULT_MAX_PROJECTION_CARDINALITY,
             model_graph: None,
+            grounding_store: None,
         };
         let resp = srv.describe_model(&json!({"model": "test_model"}));
         let hl = resp
@@ -3720,6 +3780,7 @@ mod hierarchy_levels_value_type_tests {
             xmla_model_coords: std::collections::HashMap::new(),
             max_projection_cardinality: DEFAULT_MAX_PROJECTION_CARDINALITY,
             model_graph: None,
+            grounding_store: None,
         };
         let resp = srv.describe_model(&json!({}));
 

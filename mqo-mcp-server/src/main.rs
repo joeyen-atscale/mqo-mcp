@@ -627,6 +627,9 @@ fn main() {
         // Auto-lift tier (OSL #2) not yet deployed; model_graph is populated
         // when the lift pipeline is integrated at server startup.
         model_graph: None,
+        // aso-ground overlay (OSL #3) not yet deployed; grounding_store is populated
+        // when the grounding pipeline is integrated at server startup.
+        grounding_store: None,
     };
 
     serve(&server);
