@@ -14,7 +14,7 @@ use crate::{backend::Backend, error::EngineError};
 /// enlarge what `query_multidimensional` inlines (that is `inline_threshold`).
 pub const DEFAULT_MAX_RESULT_ROWS: usize = 50_000;
 
-/// Upstream PGWire ceiling. The materialization budget must never exceed this —
+/// Upstream `PGWire` ceiling. The materialization budget must never exceed this —
 /// the bridge cannot promise more rows than the engine will deliver (NFR-1).
 pub const MAX_RESULT_ROWS_CEILING: usize = 200_000;
 

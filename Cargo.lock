@@ -2589,6 +2589,7 @@ dependencies = [
 name = "mqo-mcp-server"
 version = "0.45.0"
 dependencies = [
+ "aso-lift",
  "clap",
  "dh-export",
  "dh-ops",
@@ -3514,7 +3515,9 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
+ "futures-util",
  "h2 0.4.15",
  "http 1.4.2",
  "http-body 1.0.1",

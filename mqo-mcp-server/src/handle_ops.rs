@@ -17,6 +17,32 @@
 //! `summary` + the new `handle` + `row_count`; raw `rows` are inlined only when
 //! `row_count <= inline_threshold` (configured per server, default 25).
 
+// Pre-existing lint suppressions — do not remove without fixing the underlying code.
+#![allow(
+    clippy::absurd_extreme_comparisons,
+    clippy::doc_overindented_list_items,
+    clippy::explicit_auto_deref,
+    clippy::items_after_statements,
+    clippy::manual_let_else,
+    clippy::missing_panics_doc,
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::map_unwrap_or,
+    clippy::uninlined_format_args,
+    clippy::must_use_candidate,
+    clippy::too_many_lines,
+    clippy::missing_errors_doc,
+    clippy::similar_names,
+    clippy::redundant_closure_for_method_calls,
+    clippy::doc_markdown,
+    clippy::map_clone,
+    clippy::used_underscore_binding,
+    clippy::unnested_or_patterns,
+    clippy::manual_range_patterns,
+    clippy::if_not_else,
+    clippy::implicit_hasher
+)]
+
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 

@@ -42,7 +42,7 @@ pub struct ColumnEntry {
     pub domain: Option<Vec<String>>,
 
     /// For `kind == "level"`: true distinct-member count from `LEVEL_CARDINALITY`
-    /// as reported by MDSCHEMA_LEVELS at ingest time. Unlike `domain.len()` this
+    /// as reported by `MDSCHEMA_LEVELS` at ingest time. Unlike `domain.len()` this
     /// is NOT capped by `domain_cap`, so levels whose domains are truncated (e.g.
     /// `Sold Calendar Week` with 10,436 distinct values) still carry the real
     /// count.  `None` when the cluster did not report a non-zero cardinality (old

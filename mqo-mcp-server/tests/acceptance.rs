@@ -108,6 +108,8 @@ fn server() -> Server {
         xmla_model_coords: HashMap::new(),
         max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
         model_graph: None,
+            autolift_base_url: None,
+            autolift_cache: None,
     }
 }
 
@@ -328,6 +330,8 @@ fn ac4_drillthrough_mqo_routes_to_mdx() {
         xmla_model_coords: HashMap::new(),
         max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
         model_graph: None,
+            autolift_base_url: None,
+            autolift_cache: None,
     };
     let mqo = valid_mqo(
         vec![json!({ "hierarchy": "time.calendar", "level": "Year" })],
@@ -657,6 +661,8 @@ fn new_ac2_live_mode_routes_through_live_executor() {
         xmla_model_coords: test_coord_map(),
         max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
         model_graph: None,
+            autolift_base_url: None,
+            autolift_cache: None,
     };
     let mqo = valid_mqo(
         vec![json!({ "hierarchy": "time.calendar", "level": "Year" })],
@@ -785,6 +791,8 @@ fn new_ac4_engine_error_surfaces_as_structured_engine_error() {
         xmla_model_coords: test_coord_map(),
         max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
         model_graph: None,
+            autolift_base_url: None,
+            autolift_cache: None,
     };
     let mqo = valid_mqo(
         vec![json!({ "hierarchy": "time.calendar", "level": "Year" })],
@@ -995,6 +1003,8 @@ fn ext5_list_models_with_empty_catalog_returns_empty_array() {
         xmla_model_coords: HashMap::new(),
         max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
         model_graph: None,
+            autolift_base_url: None,
+            autolift_cache: None,
     };
     let result = call_tool(&srv, "list_models", json!({}));
     assert_eq!(result["isError"], json!(false), "{result}");
@@ -1209,6 +1219,8 @@ fn ext13_diff_clusters_missing_cluster_a_returns_error() {
         xmla_model_coords: HashMap::new(),
         max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
         model_graph: None,
+            autolift_base_url: None,
+            autolift_cache: None,
     };
 
     // cluster_a is absent — only cluster_b is provided.
@@ -1271,6 +1283,8 @@ fn ext14_diff_clusters_unknown_cluster_names_returns_error() {
         xmla_model_coords: HashMap::new(),
         max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
         model_graph: None,
+            autolift_base_url: None,
+            autolift_cache: None,
     };
 
     let result = call_tool(
@@ -1348,6 +1362,8 @@ fn ext15_list_clusters_with_registry_returns_cluster_list() {
         xmla_model_coords: HashMap::new(),
         max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
         model_graph: None,
+            autolift_base_url: None,
+            autolift_cache: None,
     };
 
     let result = call_tool(&srv, "list_clusters", json!({}));
@@ -1473,6 +1489,8 @@ fn ext20_backend_override_sql_forces_sql_for_small_query() {
         xmla_model_coords: HashMap::new(),
         max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
         model_graph: None,
+            autolift_base_url: None,
+            autolift_cache: None,
     };
     // Year-level: cardinality 5, normally DAX.
     let mqo = valid_mqo(
@@ -2093,6 +2111,8 @@ fn server_with_cube_map() -> Server {
         xmla_model_coords: coords,
         max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
         model_graph: None,
+            autolift_base_url: None,
+            autolift_cache: None,
     }
 }
 
@@ -2148,6 +2168,8 @@ fn qmg_ac1_list_models_flags_cube_vs_dimension() {
         xmla_model_coords: coords_b,
         max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
         model_graph: None,
+            autolift_base_url: None,
+            autolift_cache: None,
     };
     let result_b = call_tool(&srv_b, "list_models", json!({}));
     assert_eq!(result_b["isError"], json!(false));
@@ -2317,6 +2339,8 @@ fn qmg_ac5_queryable_cube_query_is_unchanged() {
         xmla_model_coords: coords,
         max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
         model_graph: None,
+            autolift_base_url: None,
+            autolift_cache: None,
     };
     let mqo = valid_mqo(
         vec![json!({ "hierarchy": "time.calendar", "level": "Year" })],
@@ -2416,6 +2440,8 @@ fn server_with_domains() -> Server {
         xmla_model_coords: HashMap::new(),
         max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
         model_graph: None,
+            autolift_base_url: None,
+            autolift_cache: None,
     }
 }
 
@@ -2494,6 +2520,8 @@ fn member_locate_ac2_value_in_multiple_levels() {
         xmla_model_coords: HashMap::new(),
         max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
         model_graph: None,
+            autolift_base_url: None,
+            autolift_cache: None,
     };
 
     let result = call_tool(&srv, "search_columns", json!({ "member_value": "SharedValue" }));
