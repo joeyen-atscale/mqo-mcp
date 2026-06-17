@@ -188,6 +188,7 @@ impl Server {
             &BackendCapabilities::all_live(),
             None,
             &HashMap::new(),
+            None, // channel_scope_map: dh-mcp-server has no enriched data
         ) {
             Ok(out) => out,
             Err(e) => return pipeline_err(&e),

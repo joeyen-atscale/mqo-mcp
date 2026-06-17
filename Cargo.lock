@@ -2495,7 +2495,7 @@ dependencies = [
 
 [[package]]
 name = "mqo-dax-compiler"
-version = "0.13.0"
+version = "0.14.0"
 dependencies = [
  "clap",
  "mqo-spec",
@@ -2562,7 +2562,7 @@ dependencies = [
 
 [[package]]
 name = "mqo-mcp-server"
-version = "0.45.0"
+version = "0.46.0"
 dependencies = [
  "aso-ground",
  "aso-lift",
@@ -2581,7 +2581,7 @@ dependencies = [
  "mqo-chart-recommender",
  "mqo-dashboard-composer",
  "mqo-duckdb-handle-store 0.1.0",
- "mqo-param-validator 0.8.0",
+ "mqo-param-validator 0.9.0",
  "mqo-result-profiler",
  "mqo-spec",
  "mqo-vega-emitter",
@@ -2623,7 +2623,7 @@ dependencies = [
 
 [[package]]
 name = "mqo-param-validator"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "serde",
  "serde_json",

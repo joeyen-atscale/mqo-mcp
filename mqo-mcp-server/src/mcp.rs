@@ -58,6 +58,18 @@ pub struct ServerEnrichedData {
     /// Per-measure compatible hierarchies.
     /// Key: measure `unique_name`. Value: JSON array of `{hierarchy_unique_name, level_unique_names}`.
     pub compatible_hierarchies: BTreeMap<String, Value>,
+    /// Per-measure channel scope descriptor derived from `FactBindings` channel groups
+    /// (PRD-mqo-channel-scope-measure-grounding, FR1/FR2).
+    ///
+    /// Key: measure `unique_name` (fully-qualified, e.g. `tpcds_benchmark_model.store_quantity_sold`).
+    /// Value: JSON object `{"channel_groups": [String], "channel_scope_label": String}` where:
+    ///   - `channel_groups` — the fact-table column-group identifiers this measure aggregates.
+    ///   - `channel_scope_label` — human-readable summary: `"store_sales only"`,
+    ///     `"all-channel (store_sales, catalog_sales, web_sales)"`, etc.
+    ///
+    /// Only present for measures that appear in `FactBindings::tpcds_defaults()`.
+    /// Absent bindings → no descriptor, guard silent (OQ4).
+    pub channel_scope_map: BTreeMap<String, Value>,
 }
 
 impl ServerEnrichedData {
@@ -166,9 +178,36 @@ impl ServerEnrichedData {
             })
             .collect();
 
+        // Build per-measure channel scope map from FactBindings::tpcds_defaults()
+        // (PRD-mqo-channel-scope-measure-grounding, FR1/FR2).
+        // Derived once at startup from the existing source of truth; no new hand-authored mapping.
+        let channel_scope_map: BTreeMap<String, Value> = {
+            use mqoguard_column_group_enrichment::FactBindings;
+            let bindings = FactBindings::tpcds_defaults();
+            bindings
+                .measures
+                .into_iter()
+                .map(|(un, groups)| {
+                    let mut groups_sorted: Vec<String> = groups.into_iter().collect();
+                    groups_sorted.sort();
+                    let label = if groups_sorted.len() == 1 {
+                        format!("{} only", groups_sorted[0])
+                    } else {
+                        format!("all-channel ({})", groups_sorted.join(", "))
+                    };
+                    let descriptor = json!({
+                        "channel_groups": groups_sorted,
+                        "channel_scope_label": label
+                    });
+                    (un, descriptor)
+                })
+                .collect()
+        };
+
         Some(Self {
             catalog_json,
             compatible_hierarchies,
+            channel_scope_map,
         })
     }
 }
@@ -1483,7 +1522,8 @@ impl Server {
             })
             .unwrap_or_default();
 
-        // When enriched: annotate each measure with its pre-computed compatible_hierarchies.
+        // When enriched: annotate each measure with its pre-computed compatible_hierarchies
+        // and channel_scope descriptor (PRD-mqo-channel-scope-measure-grounding, FR1/FR2).
         // When not enriched: columns are returned unmodified (FR9 — omitted, never null).
         if let Some(ref enriched) = self.enriched {
             for col in &mut columns {
@@ -1495,6 +1535,12 @@ impl Server {
                     {
                         if let Some(compat) = enriched.compatible_hierarchies.get(&un) {
                             col["compatible_hierarchies"] = compat.clone();
+                        }
+                        // FR1: emit channel_scope descriptor derived from FactBindings.
+                        // Only present when the measure appears in tpcds_defaults().
+                        // Absent for unknown measures → guard stays silent (OQ4).
+                        if let Some(scope) = enriched.channel_scope_map.get(&un) {
+                            col["channel_scope"] = scope.clone();
                         }
                     }
                 }
@@ -2170,6 +2216,7 @@ impl Server {
             &self.capabilities,
             self.enriched.as_ref().map(|e| e.catalog_json.as_str()),
             &self.xmla_model_coords,
+            self.enriched.as_ref().map(|e| &e.channel_scope_map),
         );
         #[allow(clippy::cast_possible_truncation)]
         let latency_ms = start.elapsed().as_millis() as u64;

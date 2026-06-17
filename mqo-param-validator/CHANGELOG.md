@@ -2,6 +2,8 @@
 
 ## v0.9.0 — 2026-06-17
 
+Add RULE7: channel-scope mismatch guard (PRD-mqo-channel-scope-measure-grounding). Fires when the bound measure is an all-channel total and a channel-scoped sibling with the same base concept exists. Guard stays silent when no sibling exists (FR4). `ChannelScopeMismatch { measure, named_channel, suggested_measure }` RejectReason variant added. `channel_scope: Option<Vec<String>>` field added to `CatalogMeasure` (from FactBindings descriptor). `channel_family_stem` helper strips channel/qualifier tokens to detect siblings. 4 new unit tests (AC3/AC4/AC5 + absent-scope).
+
 Add RULE6: synthetic rank/row-number guard. Rejects ungrounded rank/ordinal columns (Rank, Ranking, Row Number, RowNum, Ordinal, Position, etc.) injected by the agent into top-N queries. Grounded catalog objects named "Rank" or "Net Profit Tier" are not rejected (FR4). Fixes three eval corpus cases (store-employee-counts, store-returns-per-product, web-sales-per-customer-state) where spurious Rank column tanked column_jaccard to 0.67. Wired into validate() alongside RULE1-4,7. Add SyntheticRankColumn { column } RejectReason variant with actionable message referencing ORDER BY + LIMIT.
 
 ## v0.7.0 — Binding near-twin dimension rejection (PRD-mqo-validator-near-twin-rejection)

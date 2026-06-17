@@ -350,6 +350,10 @@ pub fn run<S: std::hash::BuildHasher>(
     capabilities: &BackendCapabilities,
     enriched_catalog_json: Option<&str>,
     xmla_model_coords: &HashMap<String, (String, String), S>,
+    // Optional channel scope map from `ServerEnrichedData` for the
+    // `ChannelScopeMismatch` guard (PRD-mqo-channel-scope-measure-grounding).
+    // `None` disables the guard (conservative default for non-TPC-DS models).
+    channel_scope_map: Option<&std::collections::BTreeMap<String, serde_json::Value>>,
 ) -> Result<PipelineOutput, PipelineError> {
     // ── Hard guard: input must be an MQO object, never a raw SQL string. ──
     if query.is_string() {
@@ -379,7 +383,7 @@ pub fn run<S: std::hash::BuildHasher>(
     // by construction — when the validator returns no rejections the query
     // proceeds unchanged. When it rejects, we return a structured pre-execution
     // error naming the suggested entity and do NOT execute.
-    if let Some(rejection) = param_validate(&mqo, catalog) {
+    if let Some(rejection) = param_validate(&mqo, catalog, channel_scope_map) {
         return Err(rejection);
     }
 
@@ -683,7 +687,15 @@ fn apply_capability_downgrade(
 ///   the validator focused on unmapped fields, wrong levels, and packaged-calc
 ///   re-derivation without duplicating the binder's job or risking false
 ///   positives on conformed dims.
-fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError> {
+fn param_validate(
+    mqo: &mqo_spec::Mqo,
+    catalog: &Value,
+    // Optional per-measure channel scope map from `ServerEnrichedData.channel_scope_map`
+    // (PRD-mqo-channel-scope-measure-grounding, FR3). When `None`, the
+    // `ChannelScopeMismatch` guard stays dormant (no false positives on
+    // unenriched catalogs — OQ4 conservative behavior).
+    channel_scope_map: Option<&std::collections::BTreeMap<String, serde_json::Value>>,
+) -> Option<PipelineError> {
     use mqo_param_validator::{
         validate, BoundMqoInput, CatalogHierarchy, CatalogMeasure, CatalogSnapshot,
         LevelDomainMeta, LevelValueType, MqoDimensionRef, MqoFilterRef, MqoMeasureRef,
@@ -720,6 +732,17 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
                     Some(Value::Object(_)) => Some(true),
                     _ => None,
                 };
+                // Derive channel_scope from the map when available
+                // (PRD-mqo-channel-scope-measure-grounding, FR3).
+                let channel_scope: Option<Vec<String>> = channel_scope_map
+                    .and_then(|m| m.get(un))
+                    .and_then(|v| v.get("channel_groups"))
+                    .and_then(serde_json::Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    });
                 // Primary entry under unique_name.
                 measures.push(CatalogMeasure {
                     unique_name: un.to_string(),
@@ -727,6 +750,7 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
                     label: label.clone(),
                     is_calc,
                     semi_additive,
+                    channel_scope: channel_scope.clone(),
                     ..Default::default()
                 });
                 // Alias entry under label when it differs (callers reference the
@@ -739,6 +763,7 @@ fn param_validate(mqo: &mqo_spec::Mqo, catalog: &Value) -> Option<PipelineError>
                             label: Some(l.clone()),
                             is_calc,
                             semi_additive,
+                            channel_scope: channel_scope.clone(),
                             ..Default::default()
                         });
                     }

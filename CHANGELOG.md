@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.46.0] - 2026-06-17
+
+### Added
+- **Channel scope grounding** (`mqo-mcp-server` v0.46.0, `mqo-param-validator` v0.9.0):
+  surfaces channel scope metadata in `describe_model` so the agent can pick the
+  channel-scoped measure (`Store Quantity Sold`) rather than the all-channel total
+  (`Total Quantity Sold`) when the request names a single channel.
+  - **FR1/FR2**: `describe_model` now annotates each measure with
+    `channel_scope: {channel_groups: [...], channel_scope_label: "..."}` derived
+    from `FactBindings::tpcds_defaults()` — the existing source of truth, no new
+    hand-authored mapping.
+  - **FR3/FR4/FR5** (`mqo-param-validator` RULE 7 — `ChannelScopeMismatch`): the
+    validator flags an all-channel measure bound when a single-channel sibling
+    exists with the same base concept. Guard stays silent when no sibling exists
+    (FR4 — nothing better to suggest). Rejection names the channel-scoped sibling
+    so the agent can rebind directly.
+  - **pipeline**: `param_validate` now receives the channel scope map from
+    `ServerEnrichedData` so RULE 7 fires at the pre-execution grounding stage.
+  - **Target**: `store-quantity-sold-per-brand` binds `Store Quantity Sold`
+    instead of `Total Quantity Sold`; per-brand values go from ~25% inflated
+    to exact (`row_recall` baseline 0.0 → 1.0).
+
 ## [0.43.0] - 2026-06-15
 
 ### Fixed
