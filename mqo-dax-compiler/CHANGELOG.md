@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.15.0 — 2026-06-17
+
+String member filter: normalize whitespace/case/punctuation in resolve_member_level and check_member_filters for robust catalog lookup (fixes able-manufacturer-brands 188/246 row undercount)
+
 ## v0.14.0 — 2026-06-17
 
 Fix projection ORDER BY keys emitting as measure refs (XMLA 300s timeout)
