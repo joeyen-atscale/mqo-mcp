@@ -507,6 +507,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "aso-lift"
+version = "0.1.0"
+dependencies = [
+ "aso-tbox",
+ "oxrdf",
+ "oxttl",
+ "quick-xml",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "aso-tbox"
 version = "0.1.0"
 dependencies = [

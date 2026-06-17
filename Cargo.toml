@@ -9,6 +9,7 @@ exclude = []
 members = [
     # ── Ontology / TBox ──────────────────────────────────────────────────────
     "aso-tbox",              # BFO-grounded aso: OWL2-DL vocabulary + embedded TTL + IRI constants
+    "aso-lift",              # Deterministic engine-model XML → RDF lift typed to aso:
 
     # ── Foundation ───────────────────────────────────────────────────────────
     "mqo-spec",              # MQO type system + JSON Schema; everything else depends on this

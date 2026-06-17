@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SYNTHETIC fixture — representative of the engine schema shape per PRD/vision;
+  NOT the production sales-insights-project.xml.
+  Real-XSD validation against an exported model is deferred (see PRD OQ2).
+
+  This fixture covers:
+    - project_2_0 schema version (AC7 guard: schema versions < 2.0 must fail)
+    - 1 cube (SalesInsights)
+    - 2 measures: one fully-additive (Revenue) + one semi-additive (InventoryBalance, LastNonEmpty)
+    - 1 dimension (Date) with a hierarchy (Calendar) containing ordered levels
+    - 1 role-playing keyed-attribute-ref (OrderDate plays the role of the Date dimension)
+    - Element names/captions are mutable; IRI stability is keyed on the XSD id attribute
+-->
+<project id="prj_sales_insights" name="SalesInsights" caption="Sales Insights Project"
+         schema_version="project_2_0">
+
+  <cube id="cube_sales_insights" name="SalesInsights" caption="Sales Insights Cube">
+
+    <!-- ── Measures ────────────────────────────────────────────────────────── -->
+
+    <measure id="meas_revenue" name="Revenue" caption="Total Revenue">
+      <additivity>additive</additivity>
+      <aggregation-function>Sum</aggregation-function>
+    </measure>
+
+    <!--
+      Semi-additive measure: LastNonEmpty aggregation; additive over all dims
+      except time (subspace constraint models the time non-additivity).
+    -->
+    <measure id="meas_inventory_balance" name="InventoryBalance" caption="Inventory Balance">
+      <additivity>semi-additive</additivity>
+      <subspace>Date</subspace>
+      <aggregation-function>LastNonEmpty</aggregation-function>
+    </measure>
+
+    <!-- ── Dimensions ─────────────────────────────────────────────────────── -->
+
+    <dimension id="dim_date" name="Date" caption="Date Dimension">
+      <hierarchy id="hier_calendar" name="Calendar" caption="Calendar Hierarchy">
+        <!-- Ordered from coarsest (level 1) to finest (level 4) -->
+        <level id="lvl_year"    name="Year"    caption="Calendar Year"    order="1" />
+        <level id="lvl_quarter" name="Quarter" caption="Calendar Quarter" order="2" />
+        <level id="lvl_month"   name="Month"   caption="Calendar Month"   order="3" />
+        <level id="lvl_date"    name="Date"    caption="Calendar Date"    order="4" />
+      </hierarchy>
+    </dimension>
+
+    <!-- ── Role-playing reference ──────────────────────────────────────────── -->
+    <!--
+      keyed-attribute-ref: OrderDate plays the role of the Date dimension.
+      ref-path points to the base dimension by its stable id.
+      This should emit an aso:playsRoleOf triple (AC4).
+    -->
+    <keyed-attribute-ref id="rpr_order_date" name="OrderDate" caption="Order Date"
+                         ref-path="dim_date"
+                         multiplicity="many" />
+
+  </cube>
+
+</project>
