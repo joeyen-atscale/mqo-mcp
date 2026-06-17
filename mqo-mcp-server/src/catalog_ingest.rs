@@ -56,6 +56,8 @@ pub struct IngestSummary {
     pub semi_additive_found: usize,
     pub levels_seen: usize,
     pub levels_mapped: usize,
+    /// Levels with cardinality ≤ domain_cap that were eligible for domain capture.
+    pub eligible: usize,
     pub domains_captured: usize,
     pub over_cap: usize,
     pub errored: usize,
@@ -335,7 +337,11 @@ pub fn ingest_live_metadata(
         })
         .unwrap_or_default();
 
-    // Collect levels to fetch (applying over-cap filter and max_levels cap).
+    // Collect levels to fetch.
+    // The cardinality gate (domain_cap) is the primary filter: only levels with
+    // cardinality ≤ domain_cap are eligible. The max_levels cap is a secondary
+    // wall-time guard (default effectively unlimited) so all low-cardinality
+    // levels are captured regardless of their position in the schema.
     // Each entry: (catalog key, level_unique_name).
     let mut to_fetch: Vec<((String, String), String)> = Vec::new();
     for key in &catalog_levels {
@@ -346,8 +352,11 @@ pub fn ingest_live_metadata(
             }
             continue;
         }
+        // Level is eligible (cardinality ≤ domain_cap).
+        summary.eligible += 1;
         if to_fetch.len() >= cfg.max_levels {
-            break;
+            // max_levels cap hit — count remaining eligible levels but don't fetch.
+            continue;
         }
         to_fetch.push((key.clone(), lun.clone()));
     }
@@ -407,6 +416,21 @@ pub fn ingest_live_metadata(
             }
         }
     }
+
+    // Completeness log: how many levels were eligible, captured, skipped-too-large, failed.
+    // Emitted at info level so operators can see domain breadth at startup.
+    let skipped_by_cap = summary.eligible.saturating_sub(summary.domains_captured + summary.errored);
+    eprintln!(
+        "mqo-mcp-server: domain coverage: {} eligible (card ≤ {}), {} captured, \
+         {} skipped-too-large (card > {}), {} skipped-by-level-cap, {} errored",
+        summary.eligible,
+        cfg.domain_cap,
+        summary.domains_captured,
+        summary.over_cap,
+        cfg.domain_cap,
+        skipped_by_cap,
+        summary.errored,
+    );
 
     summary.wall_ms = start.elapsed().as_millis();
     summary
