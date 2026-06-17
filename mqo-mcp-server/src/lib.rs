@@ -26,12 +26,16 @@
 #![deny(clippy::all, clippy::pedantic)]
 #![allow(clippy::module_name_repetitions)]
 
+pub mod autolift;
 pub mod catalog_cache;
 pub mod catalog_ingest;
 pub mod chart_tools;
 pub mod cursor;
+pub mod grounding;
 pub mod handle_ops;
 pub mod mcp;
+pub mod model_graph;
+pub mod ontology_check;
 pub mod pipeline;
 pub mod probe;
 pub mod projection_guard;

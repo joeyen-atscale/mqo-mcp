@@ -1,0 +1,28 @@
+[package]
+name        = "aso-lift"
+version     = "0.1.0"
+edition     = "2021"
+description = "Deterministic engine-model XML → RDF lift typed to the aso: TBox"
+license     = "MIT"
+publish     = false
+
+[[bin]]
+name = "aso-lift"
+path = "src/main.rs"
+
+[dependencies]
+# TBox IRI constants + embedded TTL (path dep — present on the build/osl-atscale-tbox branch)
+aso-tbox   = { path = "../aso-tbox" }
+
+# RDF data model + Turtle/RDF-XML serialisation
+oxrdf  = "0.3"
+oxttl  = "0.2"
+
+# XML parsing (quick-xml already in workspace Cargo.lock via oxttl)
+quick-xml  = { version = "0.37", features = ["serialize"] }
+
+# Error handling
+thiserror  = { workspace = true }
+
+[dev-dependencies]
+# nothing extra needed for integration tests

@@ -1,0 +1,250 @@
+@prefix aso:  <https://ontology.atscale.com/aso/> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix bfo:  <http://purl.obolibrary.org/obo/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dc:   <http://purl.org/dc/terms/> .
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  AtScale Semantic-model Ontology (aso:) — TBox v0.1.0
+#  BFO 2020-grounded OWL2-DL vocabulary for the AtScale OLAP element kinds.
+#
+#  IRI base:  https://ontology.atscale.com/aso/
+#  BFO:       imported by reference (not inlined); see owl:imports below.
+#
+#  Reference: PRD-osl-atscale-tbox (2026-06-15); AtScale data_model_1_0.xsd
+# ─────────────────────────────────────────────────────────────────────────────
+
+<https://ontology.atscale.com/aso/>
+    a owl:Ontology ;
+    owl:imports <http://purl.obolibrary.org/obo/bfo/2020/bfo.owl> ;
+    owl:versionIRI <https://ontology.atscale.com/aso/0.1.0> ;
+    dc:title       "AtScale Semantic-model Ontology (aso:)" ;
+    dc:description "BFO 2020-grounded OWL2-DL vocabulary for the AtScale OLAP element taxonomy." ;
+    dc:version     "0.1.0" ;
+    owl:versionInfo "0.1.0" .
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  BFO upper-class shorthand (used in rdfs:subClassOf axioms)
+#
+#  BFO:0000031 — Generically Dependent Continuant (GDC) — information entities
+#  BFO:0000019 — Quality
+#  BFO:0000023 — Role
+#  BFO:0000008 — Temporal Region
+#  BFO:0000040 — Material Entity
+#  BFO:0000015 — Process
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Object properties
+# ─────────────────────────────────────────────────────────────────────────────
+
+aso:rollsUpTo
+    a owl:ObjectProperty ,
+      owl:TransitiveProperty ;
+    rdfs:label "rolls up to" ;
+    rdfs:comment "A Level rolls up to a parent Level; transitively closes rollup reachability." ;
+    rdfs:domain aso:Level ;
+    rdfs:range  aso:Level .
+
+aso:playsRoleOf
+    a owl:ObjectProperty ;
+    rdfs:label "plays role of" ;
+    rdfs:comment "A RolePlayingReference plays the role of a Dimension; mirrors engine keyed-attribute-ref / ref-path." ;
+    rdfs:domain aso:RolePlayingReference ;
+    rdfs:range  aso:Dimension .
+
+aso:additiveOver
+    a owl:ObjectProperty ;
+    rdfs:label "additive over" ;
+    rdfs:comment "A Measure is additive over a Dimension; absence implies semi-additivity on that axis." ;
+    rdfs:domain aso:Measure ;
+    rdfs:range  aso:Dimension .
+
+aso:hasDimension
+    a owl:ObjectProperty ;
+    rdfs:label "has dimension" ;
+    rdfs:comment "A Cube includes a Dimension in its schema." ;
+    rdfs:domain aso:Cube ;
+    rdfs:range  aso:Dimension .
+
+aso:hasMeasure
+    a owl:ObjectProperty ;
+    rdfs:label "has measure" ;
+    rdfs:comment "A Cube includes a Measure in its schema." ;
+    rdfs:domain aso:Cube ;
+    rdfs:range  aso:Measure .
+
+aso:hasHierarchy
+    a owl:ObjectProperty ;
+    rdfs:label "has hierarchy" ;
+    rdfs:comment "A Dimension organises its Levels through one or more Hierarchies." ;
+    rdfs:domain aso:Dimension ;
+    rdfs:range  aso:Hierarchy .
+
+aso:hasLevel
+    a owl:ObjectProperty ;
+    rdfs:label "has level" ;
+    rdfs:comment "A Hierarchy contains one or more Levels." ;
+    rdfs:domain aso:Hierarchy ;
+    rdfs:range  aso:Level .
+
+aso:hasKey
+    a owl:ObjectProperty ;
+    rdfs:label "has key" ;
+    rdfs:comment "A Level or Attribute has a Key that provides unique identity." ;
+    rdfs:domain aso:Level ;
+    rdfs:range  aso:Key .
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  OLAP element classes — FR1 (must cover ≥12 kinds from data_model_1_0.xsd)
+#  BFO mapping follows FR2 / ousia-atscale established mapping:
+#    Measure         → GDC           BFO:0000031
+#    CalculatedMember→ GDC           BFO:0000031
+#    CalculationGroup→ GDC           BFO:0000031
+#    Key             → Quality       BFO:0000019
+#    Level, Hierarchy→ Role          BFO:0000023
+#    Dimension       → Role          BFO:0000023
+#    Cube, DataSet   → GDC           BFO:0000031
+#    Attribute       → GDC           BFO:0000031
+#    RolePlayingReference → Role     BFO:0000023
+#    Perspective     → GDC           BFO:0000031
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 1. Cube — a GDC: an information artifact describing an analytic subject area
+aso:Cube
+    a owl:Class ;
+    rdfs:subClassOf bfo:BFO_0000031 ;
+    rdfs:label "Cube" ;
+    skos:definition """An AtScale Cube is a generically dependent continuant: an information artifact
+that denotes an analytic subject area by specifying the measures quantifiable over it and the
+dimensions along which those measures may be sliced.""" .
+
+# 2. Measure — a GDC: a numeric information entity quantifying a fact
+aso:Measure
+    a owl:Class ;
+    rdfs:subClassOf bfo:BFO_0000031 ;
+    rdfs:label "Measure" ;
+    skos:definition """An AtScale Measure is a generically dependent continuant: a numeric
+information entity that quantifies an observable fact (revenue, count, duration) within a Cube,
+whose summation behaviour is governed by an additivity rule.""" .
+
+# 3. Dimension — structural role played by a subject-area axis
+aso:Dimension
+    a owl:Class ;
+    rdfs:subClassOf bfo:BFO_0000023 ;
+    rdfs:label "Dimension" ;
+    skos:definition """An AtScale Dimension is a role played by a business concept (customer,
+product, date) that partitions the fact space of a Cube and through which Measures may be
+filtered or grouped.""" .
+
+# 4. Hierarchy — role providing ordered levels of granularity within a Dimension
+aso:Hierarchy
+    a owl:Class ;
+    rdfs:subClassOf bfo:BFO_0000023 ;
+    rdfs:label "Hierarchy" ;
+    skos:definition """An AtScale Hierarchy is a role realised by a Dimension that organises its
+members into an ordered sequence of Levels of decreasing granularity, enabling drill-down and
+rollup navigation.""" .
+
+# 5. Level — role representing a specific granularity step within a Hierarchy
+aso:Level
+    a owl:Class ;
+    rdfs:subClassOf bfo:BFO_0000023 ;
+    rdfs:label "Level" ;
+    skos:definition """An AtScale Level is a role realised within a Hierarchy that represents
+a distinct granularity step (e.g. Year, Quarter, Month) whose members roll up to the next
+coarser Level via aso:rollsUpTo.""" .
+
+# 6. Attribute — a GDC: a descriptive property attached to a Level
+aso:Attribute
+    a owl:Class ;
+    rdfs:subClassOf bfo:BFO_0000031 ;
+    rdfs:label "Attribute" ;
+    skos:definition """An AtScale Attribute is a generically dependent continuant: a descriptive
+information entity attached to a Level that provides additional analytic properties without
+participating in the rollup structure.""" .
+
+# 7. CalculatedMember — a derived GDC expressed as a formula
+aso:CalculatedMember
+    a owl:Class ;
+    rdfs:subClassOf bfo:BFO_0000031 ;
+    rdfs:label "Calculated Member" ;
+    skos:definition """An AtScale CalculatedMember is a generically dependent continuant: a
+derived information entity defined by a calculation expression (MDX/DAX formula) rather than
+a stored aggregation.""" .
+
+# 8. CalculationGroup — a GDC: a named collection of CalculatedMembers
+aso:CalculationGroup
+    a owl:Class ;
+    rdfs:subClassOf bfo:BFO_0000031 ;
+    rdfs:label "Calculation Group" ;
+    skos:definition """An AtScale CalculationGroup is a generically dependent continuant: a
+named collection of CalculatedMembers that share a calculation dimension, enabling dynamic
+measure modification patterns (e.g. time intelligence, currency conversion).""" .
+
+# 9. Key — a quality identifying a member at a Level
+aso:Key
+    a owl:Class ;
+    rdfs:subClassOf bfo:BFO_0000019 ;
+    rdfs:label "Key" ;
+    skos:definition """An AtScale Key is a quality inhering in a Level member that provides
+its unique identity within the Dimension; corresponds to the key-attribute construct in
+data_model_1_0.xsd.""" .
+
+# 10. RolePlayingReference — a role that one Dimension plays within another Cube context
+aso:RolePlayingReference
+    a owl:Class ;
+    rdfs:subClassOf bfo:BFO_0000023 ;
+    rdfs:label "Role-Playing Reference" ;
+    skos:definition """An AtScale RolePlayingReference is a role played by a Dimension that
+appears in a Cube under a different name or interpretation (e.g. 'Order Date' and 'Ship Date'
+both played by the Date Dimension); realised via aso:playsRoleOf.""" .
+
+# 11. DataSet — a GDC: a physical table/view that is the data source for a Cube
+aso:DataSet
+    a owl:Class ;
+    rdfs:subClassOf bfo:BFO_0000031 ;
+    rdfs:label "Data Set" ;
+    skos:definition """An AtScale DataSet is a generically dependent continuant: a reference to
+a physical relational table or view that provides the data substrate over which a Cube's Measures
+and Dimensions are defined.""" .
+
+# 12. Perspective — a curated GDC view of a subset of a Cube's schema
+aso:Perspective
+    a owl:Class ;
+    rdfs:subClassOf bfo:BFO_0000031 ;
+    rdfs:label "Perspective" ;
+    skos:definition """An AtScale Perspective is a generically dependent continuant: a curated
+projection of a Cube that exposes a subset of its Measures and Dimensions to specific consumer
+roles, without altering underlying data.""" .
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Defined / derived classes (FR4, FR6) — additivity modelling
+# ─────────────────────────────────────────────────────────────────────────────
+
+# SemiAdditiveMeasure: a Measure that is NOT universally additive (missing aso:additiveOver
+# for at least one time Dimension — restriction-modelled per FR4).
+aso:SemiAdditiveMeasure
+    a owl:Class ;
+    rdfs:subClassOf aso:Measure ;
+    rdfs:label "Semi-Additive Measure" ;
+    skos:definition """A Measure that is additive over some Dimensions but not all; specifically,
+it must declare aso:additiveOver at least one non-time Dimension, indicating that simple
+aggregation over the time axis yields incorrect results.""" .
+
+# FullyAdditiveMeasure: a Measure that is additive over ALL dimensions.
+aso:FullyAdditiveMeasure
+    a owl:Class ;
+    rdfs:subClassOf aso:Measure ;
+    rdfs:label "Fully Additive Measure" ;
+    skos:definition """A Measure that can be correctly aggregated by simple summation over every
+Dimension in its Cube — the default additivity assumption in OLAP systems.""" .
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Declared classes count: 12 required (FR1) + 2 derived = 14 named classes
+#  Object properties: 8 (rollsUpTo, playsRoleOf, additiveOver, hasDimension,
+#                        hasMeasure, hasHierarchy, hasLevel, hasKey)
+# ─────────────────────────────────────────────────────────────────────────────

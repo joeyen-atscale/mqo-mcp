@@ -29,12 +29,22 @@
 
 #![forbid(unsafe_code)]
 #![deny(clippy::all, clippy::pedantic)]
-#![allow(clippy::module_name_repetitions)]
+#![allow(
+    clippy::module_name_repetitions,
+    // Pre-existing lint suppressions — do not remove without fixing the underlying code.
+    clippy::doc_markdown,
+    clippy::if_not_else,
+    clippy::single_match_else,
+    clippy::struct_excessive_bools,
+    clippy::too_many_lines,
+    clippy::uninlined_format_args,
+)]
 
 use clap::Parser;
 use mcp_cluster_health_monitor::report::OverallStatus;
 use mcp_cluster_registry::ClusterRegistry;
 use mqo_mcp_server::{
+    autolift::AutoliftCache,
     catalog_cache::{
         apply_cached_columns, cardinality_map, default_cache_path, fetch_schema_update,
         ingest_cardinalities_only, load_cache, save_cache, validate_cache, CacheVerdict,
@@ -294,6 +304,27 @@ struct Args {
     /// `LAST_SCHEMA_UPDATE` + cardinality signals cannot detect.
     #[arg(long, default_value_t = false)]
     refresh_catalog: bool,
+
+    /// Base URL for the engine catalog-XML REST endpoint used by the OSL
+    /// auto-lift tier (PRD-osl-live-autolift).
+    ///
+    /// When set, `query_model_graph` fetches `{base_url}/{catalog_id}.xml`
+    /// with an OIDC bearer token, lifts the XML into the in-process RDF triple
+    /// store, and caches the graph keyed on `(catalog_id, LAST_SCHEMA_UPDATE)`.
+    /// On cache hit (same schema version) the stored graph is served without
+    /// re-fetching.
+    ///
+    /// The global mount prefix (e.g. `/api/1.0`) is included in the URL when
+    /// present: `https://<host>/api/1.0/catalogs/{catalogId}.xml`.
+    ///
+    /// Example: `https://mcp-aws.atscaleinternal.com/api/1.0`
+    ///
+    /// When absent (the default), auto-lift is disabled and `query_model_graph`
+    /// returns `model_graph_not_available` for all live models.
+    ///
+    /// Can also be set via the `ATSCALE_CATALOG_XML_BASE` environment variable.
+    #[arg(long, env = "ATSCALE_CATALOG_XML_BASE", value_name = "URL")]
+    autolift_base_url: Option<String>,
 }
 
 fn main() {
@@ -607,6 +638,28 @@ fn main() {
     };
     eprintln!("mqo-mcp-server: projection guard cap: {effective_max_projection}");
 
+    // ── Auto-lift tier (OSL #2) ───────────────────────────────────────────────
+    // Wire the base URL and an empty cache when auto-lift is enabled. The cache
+    // is populated lazily on first OSL tool call per model.
+    //
+    // Resolve the XMLA URL the same way build_engine did so we can derive the
+    // autolift base URL from it when --autolift-base-url is not set.
+    let resolved_xmla_url_for_autolift = {
+        let host = args
+            .endpoint
+            .as_deref()
+            .and_then(|ep| parse_endpoint(ep).ok())
+            .map(|(h, _)| h)
+            .unwrap_or_default();
+        resolve_xmla_url(args.xmla_url.as_deref(), &host)
+    };
+    let (autolift_base_url, autolift_cache) = build_autolift(&args, &resolved_xmla_url_for_autolift);
+    if let Some(ref u) = autolift_base_url {
+        eprintln!("mqo-mcp-server: autolift: enabled (base URL: {u})");
+    } else {
+        eprintln!("mqo-mcp-server: autolift: disabled (no --autolift-base-url and could not derive from --xmla-url)");
+    }
+
     let server = Server {
         catalog,
         stats,
@@ -624,6 +677,17 @@ fn main() {
         enriched,
         xmla_model_coords,
         max_projection_cardinality: effective_max_projection,
+        // Static pre-loaded graph (fixture/test mode). In live mode with
+        // auto-lift, graphs are loaded lazily via autolift_base_url.
+        model_graph: None,
+        // aso-ground overlay (OSL #3) not yet deployed; grounding_store is populated
+        // when the grounding pipeline is integrated at server startup.
+        grounding_store: None,
+        // Ontology check store (OBQC advisory tier): populated when the lift
+        // pipeline is integrated.  Fail-open until then (FR7).
+        ontology_check: None,
+        autolift_base_url,
+        autolift_cache,
     };
 
     serve(&server);
@@ -880,6 +944,42 @@ fn build_oidc_config(
 /// OIDC config builder stays pure and unit-testable.
 fn require_oidc_field(val: Option<String>, flag: &str) -> Result<String, String> {
     val.ok_or_else(|| format!("{flag} is required when --endpoint is set"))
+}
+
+/// Build the auto-lift base URL and cache from CLI args.
+///
+/// Priority order:
+/// 1. Explicit `--autolift-base-url` / `ATSCALE_CATALOG_XML_BASE` (takes
+///    precedence over everything).
+/// 2. Derived from `--xmla-url` (or the URL derived from `--endpoint` host):
+///    strips a trailing `/v1/xmla` or `/xmla` suffix and replaces it with
+///    `/v1/catalogs` so that `GET {base}/{catalogId}.xml` reaches the engine's
+///    catalog REST endpoint without requiring an extra flag.
+/// 3. Neither available → auto-lift disabled (`None, None`).
+///
+/// `resolved_xmla_url` is the XMLA URL already resolved by `build_engine` (may
+/// be empty when derivation from the endpoint was also impossible).
+fn build_autolift(
+    args: &Args,
+    resolved_xmla_url: &str,
+) -> (Option<String>, Option<std::sync::Arc<AutoliftCache>>) {
+    use mqo_mcp_server::autolift::derive_autolift_base_url;
+
+    // 1. Explicit flag wins unconditionally.
+    if let Some(url) = &args.autolift_base_url {
+        let trimmed = url.trim().to_string();
+        if !trimmed.is_empty() {
+            return (Some(trimmed), Some(std::sync::Arc::new(AutoliftCache::new())));
+        }
+    }
+
+    // 2. Derive from the resolved XMLA URL.
+    if let Some(derived) = derive_autolift_base_url(resolved_xmla_url) {
+        return (Some(derived), Some(std::sync::Arc::new(AutoliftCache::new())));
+    }
+
+    // 3. Disabled.
+    (None, None)
 }
 
 /// Drive the server loop: read JSON-RPC from stdin, write responses to stdout.
@@ -1301,5 +1401,58 @@ mod tests {
         // The secret VALUE must never be stored in the config struct.
         let dbg = format!("{cfg:?}");
         assert!(!dbg.contains("topsecret-value"), "secret value leaked: {dbg}");
+    }
+
+    // ── build_autolift: URL derivation ────────────────────────────────────────
+
+    /// Explicit --autolift-base-url always wins over xmla-url derivation.
+    #[test]
+    fn build_autolift_explicit_flag_wins_over_derivation() {
+        let args = args_from(&["--autolift-base-url", "https://explicit.example.com/api/1.0"]);
+        let xmla_url = "https://mcp-aws.atscaleinternal.com/v1/xmla";
+        let (base, cache) = build_autolift(&args, xmla_url);
+        assert_eq!(
+            base.as_deref(),
+            Some("https://explicit.example.com/api/1.0"),
+            "explicit flag must win over xmla_url derivation"
+        );
+        assert!(cache.is_some(), "cache must be Some when base URL is set");
+    }
+
+    /// When --autolift-base-url is absent, derive from --xmla-url.
+    #[test]
+    fn build_autolift_derives_from_xmla_url_when_no_explicit_flag() {
+        let args = args_from(&[]);
+        let xmla_url = "https://mcp-aws.atscaleinternal.com/v1/xmla";
+        let (base, cache) = build_autolift(&args, xmla_url);
+        assert_eq!(
+            base.as_deref(),
+            Some("https://mcp-aws.atscaleinternal.com/v1/catalogs"),
+            "must derive /v1/catalogs from /v1/xmla"
+        );
+        assert!(cache.is_some(), "cache must be Some when derivation succeeds");
+    }
+
+    /// Neither explicit flag nor derivable xmla_url → autolift disabled.
+    #[test]
+    fn build_autolift_disabled_when_neither_flag_nor_xmla_url() {
+        let args = args_from(&[]);
+        let (base, cache) = build_autolift(&args, "");
+        assert!(base.is_none(), "must be None when no URL available");
+        assert!(cache.is_none(), "cache must be None when disabled");
+    }
+
+    /// Empty explicit flag falls through to xmla_url derivation (not to disabled).
+    #[test]
+    fn build_autolift_empty_explicit_falls_through_to_derivation() {
+        // An empty --autolift-base-url is treated as "not set" (same as None).
+        let args = args_from(&["--autolift-base-url", "   "]);
+        let xmla_url = "https://mcp-aws.atscaleinternal.com/v1/xmla";
+        let (base, _cache) = build_autolift(&args, xmla_url);
+        assert_eq!(
+            base.as_deref(),
+            Some("https://mcp-aws.atscaleinternal.com/v1/catalogs"),
+            "whitespace-only explicit flag must fall through to derivation"
+        );
     }
 }

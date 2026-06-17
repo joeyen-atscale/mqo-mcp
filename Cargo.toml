@@ -7,6 +7,11 @@ resolver = "2"
 exclude = []
 
 members = [
+    # ── Ontology / TBox ──────────────────────────────────────────────────────
+    "aso-tbox",              # BFO-grounded aso: OWL2-DL vocabulary + embedded TTL + IRI constants
+    "aso-lift",              # Deterministic engine-model XML → RDF lift typed to aso:
+    "aso-ground",            # Deterministic kind-driven BFO 2020 grounding overlay over the lifted graph
+
     # ── Foundation ───────────────────────────────────────────────────────────
     "mqo-spec",              # MQO type system + JSON Schema; everything else depends on this
     "mqo-auth-bridge",       # Engine trait + LiveExecutor (PGWire/XMLA) + FixtureEngine
