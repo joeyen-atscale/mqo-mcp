@@ -37,6 +37,7 @@ members = [
 
     # ── Related CLIs / harnesses ──────────────────────────────────────────
     "mqo-from-sql",          # AtScale SQL → BoundMqo JSON (golden-case generator)
+    "mqo-pg-query",          # Verbatim PgSql executor over OIDC+PGWire (gold-oracle CLI)
     "mqo-vs-sql-bench",      # MQO vs text-to-SQL accuracy benchmark
     "mqo-bench-history",     # Longitudinal regression tracker for mqo-bench runs
     "mqo-backend-live-harness",
