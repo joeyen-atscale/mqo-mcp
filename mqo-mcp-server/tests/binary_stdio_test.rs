@@ -2,7 +2,7 @@
 //! JSON-RPC 2.0 over stdin/stdout.
 //!
 //! AC8   `binary_initialize_handshake` — serverInfo.name == "mqo-mcp-server"
-//! AC9   `binary_tools_list_returns_fourteen_tools` — exactly 14 tools present
+//! AC9   `binary_tools_list_returns_fourteen_tools` — exactly 26 tools present
 //! AC10  `binary_full_nlq_chain_revenue_by_year` — fleet-gated full chain
 //! AC11  `binary_malformed_jsonrpc_returns_parse_error` — error code -32700
 
@@ -185,7 +185,7 @@ fn binary_tools_list_returns_fourteen_tools() {
         .and_then(Value::as_array)
         .expect("tools array present");
 
-    assert_eq!(tools.len(), 25, "AC9: expected 25 tools (24 prior + query_model_graph), got {}", tools.len());
+    assert_eq!(tools.len(), 26, "AC9: expected 26 tools (25 prior + describe_grounding), got {}", tools.len());
 
     let tool_names: Vec<&str> = tools
         .iter()

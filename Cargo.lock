@@ -2589,6 +2589,7 @@ dependencies = [
 name = "mqo-mcp-server"
 version = "0.45.0"
 dependencies = [
+ "aso-ground",
  "clap",
  "dh-export",
  "dh-ops",
