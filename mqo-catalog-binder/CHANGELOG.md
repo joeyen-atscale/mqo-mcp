@@ -1,5 +1,37 @@
 # Changelog
 
+## v0.5.0 — 2026-06-17
+
+Qualifier-aware alias resolution for level and measure binding
+(PRD-mqo-catalog-label-alias-resolution).
+
+`resolve_level` and `resolve_measure` now include a constrained alias fallback
+(FR1/FR2) after exact case-insensitive match fails:
+
+- **FR1 — Qualifier-prefix alias:** if a candidate label equals a canonical
+  level/measure label with one or more leading words stripped (e.g. `Floor Space`
+  → `Store Floor Space`), the binder resolves to the canonical entry.
+- **FR2 — Type-suffix alias:** if a candidate label equals a canonical label with a
+  trailing closed-set type word stripped (`Name`, `Description`, `Code`; e.g.
+  `Customer State` → `Customer State Name`), the binder resolves to the canonical
+  entry. Only fires for canonical labels of ≥ 3 tokens (avoids stripping single-word
+  qualifiers into bare tokens).
+- **FR3 — Canonical label emitted:** alias binds return the `ColumnEntry` for the
+  canonical entry, so the result column carries the canonical unique_name and label
+  (not the agent's shortened input).
+- **FR4 — Ambiguity decline:** if an aliased candidate matches more than one canonical
+  entry, `alias_resolve` returns `Err(candidates)` (all matches), surfacing as
+  `BindResult::Ambiguous` — never a silent pick.
+- **FR5 — Exact match wins unchanged:** exact case-insensitive match is always
+  attempted first; the alias layer runs only on exact-match failure. All
+  pre-existing exact-match fixtures are byte-identical.
+- **FR6 — Measure alias parity:** the same alias layer applies to `resolve_measure`
+  via label matching for measures with qualifier/type-suffix structure.
+
+No new catalog fields required (V1: structural derivation only). No signature changes.
+9 new unit tests covering AC1–AC8 plus the full bind integration path. Zero regressions
+on the 33-test suite (lib) + 21 integration tests + 12 acceptance tests.
+
 ## v0.4.0 — 2026-06-12
 
 Member-filter domain check (PRD-mqo-binder-no-silent-member-grounding). `bind()`
