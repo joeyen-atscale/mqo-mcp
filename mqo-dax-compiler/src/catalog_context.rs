@@ -84,12 +84,12 @@ pub struct DaxCatalogContext {
 
     /// `level unique_name → physical table name` for every non-measure column.
     ///
-    /// AtScale's XMLA tabular model creates one table per *hierarchy*, named by
+    /// `AtScale`'s XMLA tabular model creates one table per *hierarchy*, named by
     /// the hierarchy prefix of the level's `unique_name`
     /// (e.g. `ship_mode.[Carrier]` → `ship_mode`, `ship_mode.[Ship Mode Type]`
     /// → `ship_mode`). Used by [`crate::codegen::compile_grounded`] to emit
     /// `'<hierarchy>'[<label>]` column refs per level, instead of grounding
-    /// every column to the single global `table_name` (which is the PGWire
+    /// every column to the single global `table_name` (which is the `PGWire`
     /// *database* name, `atscale_catalogs`, and invalid as a DAX table).
     ///
     /// Keyed by `unique_name`. A bare display label is NOT a key here — callers
@@ -363,7 +363,7 @@ impl DaxCatalogContext {
                 // Slow path: dtype-aware numeric comparison.  Only attempted when
                 // (a) this level's dtype is "integer" or "decimal" AND
                 // (b) the probe parsed as f64 successfully.
-                let dtype = self.level_dtypes.get(*lvl).map(String::as_str).unwrap_or("string");
+                let dtype = self.level_dtypes.get(*lvl).map_or("string", String::as_str);
                 if matches!(dtype, "integer" | "decimal") {
                     if let Some(pf) = probe_f64 {
                         return domain.iter().any(|v| {
@@ -784,10 +784,10 @@ mod date_cross_dimension_tests {
     use super::DaxCatalogContext;
 
     /// Build a catalog that has:
-    /// - sold_date_dimensions hierarchy with a Sold Calendar Year level (domain: years)
+    /// - `sold_date_dimensions` hierarchy with a Sold Calendar Year level (domain: years)
     ///   and a Sold Date Key level (domain: contains a 2002-prefixed token to test
     ///   that year-level preference wins over date-key level).
-    /// - store_dimension hierarchy with a Store Name level (domain: store names).
+    /// - `store_dimension` hierarchy with a Store Name level (domain: store names).
     fn date_and_store_ctx() -> DaxCatalogContext {
         let json = r#"{"catalog":"atscale_catalogs","columns":[
           {"kind":"level","unique_name":"sold_date_dimensions.[Sold Calendar Year]","label":"Sold Calendar Year","hierarchy":"sold_date_dimensions","level":"Year","domain":["1998","1999","2000","2001","2002","2003"]},
@@ -865,7 +865,7 @@ mod date_cross_dimension_tests {
         assert_eq!(got, None);
     }
 
-    /// is_four_digit_year helper covers boundary cases.
+    /// `is_four_digit_year` helper covers boundary cases.
     #[test]
     fn is_four_digit_year_helper() {
         assert!(super::is_four_digit_year("2002"));
