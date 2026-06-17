@@ -1656,3 +1656,251 @@ mod projection_grounding_tests {
         assert!(dax.contains("'Ship Mode'[Carrier]"), "space-bearing table must be quoted, got: {dax}");
     }
 }
+
+// ── PRD-mqo-date-member-cross-dimension-filter: combined filter integration ──
+#[cfg(test)]
+mod date_cross_dimension_codegen_tests {
+    use super::compile_grounded;
+    use crate::catalog_context::DaxCatalogContext;
+    use crate::input::{BoundDimensionInput, BoundMeasureInput, BoundMqoInput};
+    use mqo_spec::{Filter, Mqo};
+
+    /// Catalog with:
+    /// - sold_date_dimensions: Sold Calendar Year (domain: years) + Sold Date Key (no year-exact domain)
+    /// - store_dimension: Store Name (domain: store names) + Gender (domain: F, M)
+    /// - measure: Net Profit
+    fn tpcds_combined_ctx() -> DaxCatalogContext {
+        let json = r#"{
+            "catalog": "atscale_catalogs",
+            "columns": [
+                {"unique_name":"sold_date_dimensions.[Sold Calendar Year]","label":"Sold Calendar Year","kind":"level","hierarchy":"sold_date_dimensions","level":"Year","domain":["1998","1999","2000","2001","2002","2003"]},
+                {"unique_name":"sold_date_dimensions.[Sold Date Key]","label":"Sold Date Key","kind":"level","hierarchy":"sold_date_dimensions","level":"Date Key","domain":["20020101","20020102","20011231"]},
+                {"unique_name":"store_dimension.[Store Name]","label":"Store Name","kind":"level","hierarchy":"store_dimension","level":"Store Name","domain":["ese","bar","baz"]},
+                {"unique_name":"store_dimension.[Gender]","label":"Gender","kind":"level","hierarchy":"store_dimension","level":"Gender","domain":["F","M"]},
+                {"unique_name":"tpcds.net_profit","label":"Net Profit","kind":"measure"}
+            ]
+        }"#;
+        DaxCatalogContext::from_json(json).unwrap()
+    }
+
+    /// Build a BoundMqoInput with two Member filters and optional group-by dimensions.
+    fn bound_two_filters(
+        f1_hierarchy: &str,
+        f1_member: &str,
+        f2_hierarchy: &str,
+        f2_member: &str,
+        dim_unique_names: &[&str],
+    ) -> BoundMqoInput {
+        BoundMqoInput {
+            mqo: Mqo {
+                model: "tpcds".to_string(),
+                measures: vec![],
+                dimensions: dim_unique_names
+                    .iter()
+                    .map(|u| mqo_spec::LevelSelection {
+                        hierarchy: u.split('.').next().unwrap_or("").to_string(),
+                        level: (*u).to_string(),
+                    })
+                    .collect(),
+                filters: vec![
+                    Filter::Member {
+                        hierarchy: f1_hierarchy.to_string(),
+                        members: vec![f1_member.to_string()],
+                    },
+                    Filter::Member {
+                        hierarchy: f2_hierarchy.to_string(),
+                        members: vec![f2_member.to_string()],
+                    },
+                ],
+                limit: None,
+                order: None,
+                time_intelligence: vec![],
+                non_empty: false,
+                projection: false,
+            },
+            measures: vec![BoundMeasureInput {
+                unique_name: "tpcds.net_profit".to_string(),
+                is_calc: false,
+                semi_additive: false,
+                required_dimension: None,
+                trigger_hierarchies: vec![],
+            }],
+            dimensions: dim_unique_names
+                .iter()
+                .map(|u| BoundDimensionInput {
+                    unique_name: (*u).to_string(),
+                    hierarchy: u.split('.').next().unwrap_or("").to_string(),
+                })
+                .collect(),
+            calc_group_members: vec![],
+        }
+    }
+
+    /// AC1 (FR1): Combined date-year filter + store-name filter — both legs bind.
+    /// Verifies `customers-ese-store-2001` style query.
+    #[test]
+    fn ac1_combined_date_and_store_name_filter_both_legs_bind() {
+        let ctx = tpcds_combined_ctx();
+        let bound = bound_two_filters(
+            "sold_date_dimensions", "2001",
+            "store_dimension", "ese",
+            &[],
+        );
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        // Date leg must bind to the year level (not Sold Date Key).
+        assert!(
+            dax.contains("[Sold Calendar Year]"),
+            "date leg must bind to Sold Calendar Year, got: {dax}"
+        );
+        // Non-date leg must bind to Store Name.
+        assert!(
+            dax.contains("[Store Name]"),
+            "non-date leg must bind to Store Name, got: {dax}"
+        );
+        // Both filter predicates must appear in ONE SUMMARIZECOLUMNS.
+        assert!(
+            dax.contains("SUMMARIZECOLUMNS"),
+            "must emit SUMMARIZECOLUMNS, got: {dax}"
+        );
+        assert_eq!(
+            dax.matches("KEEPFILTERS").count(),
+            2,
+            "must emit exactly two KEEPFILTERS (one per filter leg), got: {dax}"
+        );
+    }
+
+    /// AC2 (FR2): Year member resolves to year level, not date-key level.
+    /// A date-key level in the catalog does NOT steal the year binding.
+    #[test]
+    fn ac2_year_2002_binds_to_year_level_not_date_key() {
+        let ctx = tpcds_combined_ctx();
+        let bound = bound_two_filters(
+            "sold_date_dimensions", "2002",
+            "store_dimension", "ese",
+            &[],
+        );
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        assert!(
+            dax.contains("[Sold Calendar Year]"),
+            "2002 must bind to Sold Calendar Year, got: {dax}"
+        );
+        assert!(
+            !dax.contains("[Sold Date Key]"),
+            "2002 must NOT bind to Sold Date Key, got: {dax}"
+        );
+    }
+
+    /// AC3 (FR6): Year as filter + Store/Gender as group-by dimensions.
+    /// Verifies `net-profit-tier-by-store-gender-2002` style query.
+    #[test]
+    fn ac3_year_filter_plus_store_gender_groupby() {
+        let ctx = tpcds_combined_ctx();
+        // Year is a filter; Store Name and Gender are group-by dimensions.
+        let mut bound = BoundMqoInput {
+            mqo: Mqo {
+                model: "tpcds".to_string(),
+                measures: vec![],
+                dimensions: vec![
+                    mqo_spec::LevelSelection {
+                        hierarchy: "store_dimension".to_string(),
+                        level: "store_dimension.[Store Name]".to_string(),
+                    },
+                    mqo_spec::LevelSelection {
+                        hierarchy: "store_dimension".to_string(),
+                        level: "store_dimension.[Gender]".to_string(),
+                    },
+                ],
+                filters: vec![Filter::Member {
+                    hierarchy: "sold_date_dimensions".to_string(),
+                    members: vec!["2002".to_string()],
+                }],
+                limit: None,
+                order: None,
+                time_intelligence: vec![],
+                non_empty: false,
+                projection: false,
+            },
+            measures: vec![BoundMeasureInput {
+                unique_name: "tpcds.net_profit".to_string(),
+                is_calc: false,
+                semi_additive: false,
+                required_dimension: None,
+                trigger_hierarchies: vec![],
+            }],
+            dimensions: vec![
+                BoundDimensionInput {
+                    unique_name: "store_dimension.[Store Name]".to_string(),
+                    hierarchy: "store_dimension".to_string(),
+                },
+                BoundDimensionInput {
+                    unique_name: "store_dimension.[Gender]".to_string(),
+                    hierarchy: "store_dimension".to_string(),
+                },
+            ],
+            calc_group_members: vec![],
+        };
+        let _ = &mut bound; // suppress warning
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        // Year filter must appear.
+        assert!(
+            dax.contains("[Sold Calendar Year]"),
+            "date filter must reference year level, got: {dax}"
+        );
+        // Group-by dimensions must appear.
+        assert!(
+            dax.contains("[Store Name]"),
+            "Store Name group-by must appear, got: {dax}"
+        );
+        assert!(
+            dax.contains("[Gender]"),
+            "Gender group-by must appear, got: {dax}"
+        );
+        // The year must appear as a FILTER, not only as a group-by column.
+        assert!(
+            dax.contains("KEEPFILTERS"),
+            "year must be expressed as a KEEPFILTERS filter, got: {dax}"
+        );
+        // SUMMARIZECOLUMNS must be present.
+        assert!(
+            dax.contains("SUMMARIZECOLUMNS"),
+            "must emit SUMMARIZECOLUMNS, got: {dax}"
+        );
+    }
+
+    /// AC4 (FR3): Date leg unresolvable → decline naming the date filter.
+    /// When the year member can't be matched, the whole query declines.
+    #[test]
+    fn ac4_date_leg_unresolvable_declines_loud() {
+        let ctx = tpcds_combined_ctx();
+        // "9999" is not in any domain.
+        let bound = bound_two_filters(
+            "sold_date_dimensions", "9999",
+            "store_dimension", "ese",
+            &[],
+        );
+        let err = compile_grounded(&bound, Some(&ctx)).unwrap_err();
+        assert!(
+            matches!(err, crate::DaxCompileError::UngroundedMemberFilter { ref hierarchy, .. }
+                if hierarchy == "sold_date_dimensions"),
+            "should decline naming the date filter hierarchy, got: {err:?}"
+        );
+    }
+
+    /// AC5 (FR3): Non-date leg unresolvable → decline naming the non-date filter.
+    #[test]
+    fn ac5_nondate_leg_unresolvable_declines_loud() {
+        let ctx = tpcds_combined_ctx();
+        // "unknown_store" is not in any domain.
+        let bound = bound_two_filters(
+            "sold_date_dimensions", "2002",
+            "store_dimension", "unknown_store",
+            &[],
+        );
+        let err = compile_grounded(&bound, Some(&ctx)).unwrap_err();
+        assert!(
+            matches!(err, crate::DaxCompileError::UngroundedMemberFilter { ref hierarchy, .. }
+                if hierarchy == "store_dimension"),
+            "should decline naming the non-date filter hierarchy, got: {err:?}"
+        );
+    }
+}

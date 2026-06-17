@@ -13,6 +13,20 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
+// ── Free helpers ──────────────────────────────────────────────────────────────
+
+/// Return `true` when `s` looks like a 4-digit calendar year (1000–9999).
+///
+/// Used by [`DaxCatalogContext::resolve_member_level`] to decide whether to
+/// apply year-level preference (FR2 of PRD-mqo-date-member-cross-dimension-filter).
+/// Only the numeric range is checked; no calendar validity check.
+fn is_four_digit_year(s: &str) -> bool {
+    if s.len() != 4 {
+        return false;
+    }
+    s.bytes().all(|b| b.is_ascii_digit())
+}
+
 // ── Local mirror of the relevant CatalogSnapshot subset ──────────────────────
 
 /// Minimal mirror of `ColumnEntry` from `mqo-catalog-binder`.
@@ -306,9 +320,13 @@ impl DaxCatalogContext {
     /// member is ambiguous (its value appears in more than one level's domain,
     /// e.g. "M" in both Gender and Marital Status), a level that the query also
     /// groups by wins (you filter the attribute you're breaking out). Resolution:
+    /// (0) for 4-digit year members on a date hierarchy, a level whose label
+    ///     contains "year" (case-insensitive) is preferred over date-key/week-key
+    ///     levels — deterministic year-level preference (FR2 of
+    ///     PRD-mqo-date-member-cross-dimension-filter);
     /// (1) a candidate level (domain contains the member) that is also a query
-    /// dimension; else (2) the sole candidate if exactly one; else `None`
-    /// (ambiguous with no signal) → caller falls back to first-level.
+    ///     dimension; else (2) the sole candidate if exactly one; else `None`
+    ///     (ambiguous with no signal) → caller falls back to first-level.
     #[must_use]
     pub fn resolve_member_level(
         &self,
@@ -359,6 +377,33 @@ impl DaxCatalogContext {
             .collect();
         candidates.sort();
         candidates.dedup();
+
+        // (0) FR2 — year-level preference for 4-digit year members.
+        // When a member looks like a 4-digit year (1000–9999) and there is at
+        // least one candidate whose display label contains "year" (case-insensitive),
+        // prefer those "year-label" candidates over any other date-key/week-key
+        // candidates. This prevents "2002" from binding to a date-key level whose
+        // domain happens to contain a 2002-prefixed token (e.g., "20020131").
+        if is_four_digit_year(&probe) && candidates.len() > 1 {
+            let year_candidates: Vec<&String> = candidates
+                .iter()
+                .copied()
+                .filter(|lvl| self.level_label_contains_year(lvl))
+                .collect();
+            if !year_candidates.is_empty() {
+                // Among the year-label candidates, apply the normal rules:
+                // (1) prefer one the query also groups by; (2) sole candidate.
+                if let Some(c) = year_candidates.iter().find(|c| dim_levels.iter().any(|d| d == **c)) {
+                    return Some(c.as_str());
+                }
+                if year_candidates.len() == 1 {
+                    return Some(year_candidates[0].as_str());
+                }
+                // Multiple year-label candidates, no dim signal — fall through to
+                // the normal disambiguation below using the full candidate set.
+            }
+        }
+
         // (1) prefer a candidate the query also groups by (disambiguates "M").
         if let Some(c) = candidates.iter().find(|c| dim_levels.iter().any(|d| d == **c)) {
             return Some(c.as_str());
@@ -369,6 +414,15 @@ impl DaxCatalogContext {
         }
         // (≥2 candidates, none a dimension) ambiguous → no guess; caller falls back.
         None
+    }
+
+    /// Return `true` when the display label of `level_unique_name` contains the
+    /// word "year" (case-insensitive). Used by the year-level preference logic in
+    /// [`Self::resolve_member_level`] (FR2).
+    fn level_label_contains_year(&self, level_unique_name: &str) -> bool {
+        self.labels
+            .get(level_unique_name)
+            .is_some_and(|label| label.to_lowercase().contains("year"))
     }
 
     /// Resolve a bare display label back to its level unique-name.
@@ -721,5 +775,106 @@ mod member_grounding_tests {
         );
         // String type is not stored (only non-string dtypes are recorded).
         assert!(!c.level_dtypes.contains_key("customer_demographics.[Income Group]"));
+    }
+}
+
+// ── PRD-mqo-date-member-cross-dimension-filter: year-level preference (FR2) ─
+#[cfg(test)]
+mod date_cross_dimension_tests {
+    use super::DaxCatalogContext;
+
+    /// Build a catalog that has:
+    /// - sold_date_dimensions hierarchy with a Sold Calendar Year level (domain: years)
+    ///   and a Sold Date Key level (domain: contains a 2002-prefixed token to test
+    ///   that year-level preference wins over date-key level).
+    /// - store_dimension hierarchy with a Store Name level (domain: store names).
+    fn date_and_store_ctx() -> DaxCatalogContext {
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level","unique_name":"sold_date_dimensions.[Sold Calendar Year]","label":"Sold Calendar Year","hierarchy":"sold_date_dimensions","level":"Year","domain":["1998","1999","2000","2001","2002","2003"]},
+          {"kind":"level","unique_name":"sold_date_dimensions.[Sold Date Key]","label":"Sold Date Key","hierarchy":"sold_date_dimensions","level":"Date Key","domain":["20020101","20020102","20020103","20011231"]},
+          {"kind":"level","unique_name":"store_dimension.[Store Name]","label":"Store Name","hierarchy":"store_dimension","level":"Store Name","domain":["ese","bar","baz"]},
+          {"kind":"measure","unique_name":"tpcds.net_profit","label":"Net Profit"}
+        ]}"#;
+        DaxCatalogContext::from_json(json).unwrap()
+    }
+
+    /// FR2: A 4-digit year member "2002" binds to the Sold Calendar Year level,
+    /// NOT to the Sold Date Key level whose domain contains "20020101" etc.
+    /// (The domain match on the date key is not a 4-digit year exact match, but
+    /// we verify year-label preference even if the exact probe only matches the
+    /// year level here.)
+    #[test]
+    fn year_member_binds_to_year_level_not_date_key() {
+        let c = date_and_store_ctx();
+        let got = c.resolve_member_level("sold_date_dimensions", &["2002".into()], &[]);
+        assert_eq!(
+            got,
+            Some("sold_date_dimensions.[Sold Calendar Year]"),
+            "year member must bind to the year level, not a date-key level"
+        );
+    }
+
+    /// FR2: Even without an exact domain match on the date-key level (since "2002"
+    /// != "20020101"), this verifies the year-label preference when two levels both
+    /// have "2002" in domain (simulating an integer year appearing in a date key domain).
+    #[test]
+    fn year_member_prefers_year_label_level_when_ambiguous() {
+        // Both levels have "2002" in their domain.
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level","unique_name":"sold_date_dimensions.[Sold Calendar Year]","label":"Sold Calendar Year","hierarchy":"sold_date_dimensions","level":"Year","domain":["2001","2002","2003"]},
+          {"kind":"level","unique_name":"sold_date_dimensions.[Sold Week Key]","label":"Sold Week Key","hierarchy":"sold_date_dimensions","level":"Week Key","domain":["200147","2002","200201"]},
+          {"kind":"measure","unique_name":"tpcds.m","label":"M"}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        // "2002" is in both domains — year-label preference must pick Sold Calendar Year.
+        let got = c.resolve_member_level("sold_date_dimensions", &["2002".into()], &[]);
+        assert_eq!(
+            got,
+            Some("sold_date_dimensions.[Sold Calendar Year]"),
+            "year member must prefer the year-label level over week-key level"
+        );
+    }
+
+    /// FR2: A non-year member (store name "ese") resolves via its own domain
+    /// independently — year-level preference does NOT apply.
+    #[test]
+    fn non_year_member_resolves_via_domain_independently() {
+        let c = date_and_store_ctx();
+        let got = c.resolve_member_level("store_dimension", &["ese".into()], &[]);
+        assert_eq!(
+            got,
+            Some("store_dimension.[Store Name]"),
+            "non-year member must resolve via its level domain"
+        );
+    }
+
+    /// FR2: A 3-digit or 5-digit string that is NOT a 4-digit year does not
+    /// trigger year-level preference.
+    #[test]
+    fn non_four_digit_string_does_not_trigger_year_preference() {
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level","unique_name":"dim.[Year]","label":"Sold Calendar Year","hierarchy":"dim","level":"Year","domain":["20020","30000"]},
+          {"kind":"level","unique_name":"dim.[Key]","label":"Key","hierarchy":"dim","level":"Key","domain":["20020","99999"]},
+          {"kind":"measure","unique_name":"tpcds.m","label":"M"}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        // "20020" is 5 digits — year-level preference does not apply;
+        // normal disambiguation fires (ambiguous → None).
+        let got = c.resolve_member_level("dim", &["20020".into()], &[]);
+        // Ambiguous (both candidates, no dim signal) → None.
+        assert_eq!(got, None);
+    }
+
+    /// is_four_digit_year helper covers boundary cases.
+    #[test]
+    fn is_four_digit_year_helper() {
+        assert!(super::is_four_digit_year("2002"));
+        assert!(super::is_four_digit_year("1998"));
+        assert!(super::is_four_digit_year("9999"));
+        assert!(super::is_four_digit_year("1000"));
+        assert!(!super::is_four_digit_year("200"));    // 3 digits
+        assert!(!super::is_four_digit_year("20020"));  // 5 digits
+        assert!(!super::is_four_digit_year("200x"));   // non-numeric
+        assert!(!super::is_four_digit_year(""));
     }
 }
