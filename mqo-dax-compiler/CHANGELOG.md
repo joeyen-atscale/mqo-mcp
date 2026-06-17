@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.14.0 — 2026-06-17
+
+Fix projection ORDER BY keys emitting as measure refs (XMLA 300s timeout)
+
+Previously, compile_grounded called measure_dax_ref_ctx() on dimension order
+keys for measureless projection queries, producing invalid DAX that XMLA could
+not resolve. The three Cycle-2 timeout cases (customer-vehicle-count-income-
+band-9, customers-ese-store-2001, customer-details-new-jersey) each burned the
+full 300s budget.
+
+Changes:
+- projection_topn_sort_args(): resolves all declared order keys as grounded
+  dim-level column refs (level_col_ref_grounded), building a multi-key TOPN
+  sort-arg list honoring each key's direction.
+- append_order_by(): skips trailing ORDER BY for projection+limit (TOPN already
+  sorts); uses dim refs for unbounded projection ORDER BY.
+- sort_dir_str(): extracted SortDirection match.
+- 6 new regression tests in projection_orderby_tests module.
+- Pre-existing clippy::pedantic violations fixed in catalog_context.rs and
+  codegen.rs test modules.
+
 ## v0.13.0 — 2026-06-14
 
 Engine-validation gate (PRD-mqo-dax-engine-validation-gate): compile-time validation rejects DAX containing an `/* ungrounded */` marker or an unquoted space-bearing table identifier, naming the offending token, so a malformed-DAX regression fails the build instead of the customer's query. A CI corpus fixture (`tests/projection_gate.rs`) pins the pre-fix malformed DAX as a rejected regression case and confirms 0 false rejections on the measure-query suite. Opt-in `MQO_DAX_ENGINE_CHECK` engine-parse stub logs `engine-check-skipped` when unset.
