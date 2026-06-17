@@ -120,8 +120,10 @@ struct Args {
     catalog_domain_cap: usize,
 
     /// Max number of levels probed during live domain ingestion (bounds startup
-    /// wall-time on wide models).
-    #[arg(long, default_value_t = 200)]
+    /// wall-time on wide models). Default is effectively unlimited — all levels
+    /// with cardinality ≤ domain_cap are captured; only high-cardinality levels
+    /// are skipped. Set to a small value to cap wall-time on unusually wide models.
+    #[arg(long, default_value_t = usize::MAX)]
     catalog_max_levels: usize,
 
     /// Max number of MDSCHEMA_MEMBERS Discover requests in flight simultaneously
