@@ -28,7 +28,7 @@
     clippy::used_underscore_binding, clippy::absurd_extreme_comparisons, clippy::type_complexity
 )]
 
-use crate::autolift::{try_autolift, AutoliftCache};
+use crate::autolift::{ensure_graph, graph_to_turtle, AutoliftCache};
 use crate::catalog_cache::fetch_schema_update;
 use crate::chart_tools;
 use crate::cursor::CursorStore;
@@ -1241,62 +1241,45 @@ impl Server {
     /// execute the query against it.  Returns `model_graph_not_available` when
     /// auto-lift is disabled, the executor is not live, or the lift fails.
     fn ensure_autolift_and_query(&self, args: &Value) -> Value {
-        // Auto-lift requires: a configured base URL, a live executor, and a cache.
-        let (base_url, executor, cache) =
-            match (&self.autolift_base_url, &self.engine, &self.autolift_cache) {
-                (Some(u), ServerEngine::Live(ex), Some(c)) => (u, ex.as_ref(), c),
-                _ => {
-                    return serde_json::json!({
-                        "status": "model_graph_not_available",
-                        "detail": "No lifted model graph is available. \
-                                   Auto-lift is disabled (--autolift-base-url not configured) \
-                                   or this server is in fixture mode."
-                    });
-                }
-            };
+        // Use the shared helper. If it returns None we give a more specific
+        // error message based on which prerequisite is missing.
+        if matches!(
+            (&self.autolift_base_url, &self.engine, &self.autolift_cache),
+            (None, _, _) | (_, ServerEngine::Fixture, _) | (_, _, None)
+        ) {
+            return serde_json::json!({
+                "status": "model_graph_not_available",
+                "detail": "No lifted model graph is available. \
+                           Auto-lift is disabled (--autolift-base-url not configured) \
+                           or this server is in fixture mode."
+            });
+        }
 
-        // Resolve the target model: optional `model` param in the args, else
-        // the first discovered XMLA model.
         let model_name: Option<&str> = args.get("model").and_then(Value::as_str);
-        let Some((catalog_id, cube)) = self.resolve_autolift_coords(model_name) else {
+        if self.resolve_autolift_coords(model_name).is_none() {
             return serde_json::json!({
                 "status": "model_graph_not_available",
                 "detail": "Cannot resolve XMLA catalog ID for the requested model. \
                            Ensure --xmla-catalog-map or live XMLA discovery is configured."
             });
-        };
-
-        // Fetch LAST_SCHEMA_UPDATE for cache key (returns "none" on failure).
-        let schema_update = fetch_schema_update(executor, &catalog_id, &cube)
-            .unwrap_or_else(|| "none".to_string());
-
-        // Cache lookup.
-        if let Some(graph) = cache.get(&catalog_id, &schema_update) {
-            let store = ModelGraphStore::from_graph(graph);
-            return store.query(args);
         }
 
-        // Cache miss → fetch + lift.
-        eprintln!(
-            "mqo-mcp-server: autolift: cache miss for {catalog_id} \
-             (schema_update={schema_update}); lifting…"
-        );
-        match try_autolift(&catalog_id, base_url, executor) {
-            Some(graph) => {
-                cache.insert(&catalog_id, &schema_update, graph.clone());
-                let store = ModelGraphStore::from_graph(graph);
-                store.query(args)
-            }
-            None => {
-                serde_json::json!({
-                    "status": "model_graph_not_available",
-                    "detail": format!(
-                        "Auto-lift failed for model '{catalog_id}'. \
-                         The engine XML endpoint may be unreachable, or the XML could not be parsed. \
-                         Check that --autolift-base-url points to the engine catalog REST API."
-                    )
-                })
-            }
+        if let Some(graph) = self.try_ensure_graph_for_model(args) {
+            let store = ModelGraphStore::from_graph(graph);
+            store.query(args)
+        } else {
+            let catalog_id = self
+                .resolve_autolift_coords(model_name)
+                .map(|(c, _)| c)
+                .unwrap_or_else(|| "unknown".to_string());
+            serde_json::json!({
+                "status": "model_graph_not_available",
+                "detail": format!(
+                    "Auto-lift failed for model '{catalog_id}'. \
+                     The engine XML endpoint may be unreachable, or the XML could not be parsed. \
+                     Check that --autolift-base-url points to the engine catalog REST API."
+                )
+            })
         }
     }
 
@@ -1315,25 +1298,70 @@ impl Server {
         coords
     }
 
+    /// Shared auto-lift entry point for all three OSL tools.
+    ///
+    /// Resolves the XMLA catalog coordinates for the model named in `args`
+    /// (falls back to the first discovered model), fetches `LAST_SCHEMA_UPDATE`,
+    /// then delegates to [`ensure_graph`] which handles the cache-hit / cache-
+    /// miss / try_autolift path.
+    ///
+    /// Returns `None` when auto-lift is disabled, the executor is not live, or
+    /// the lift fails.  All callers fall back to "not available" on `None`.
+    fn try_ensure_graph_for_model(&self, args: &Value) -> Option<oxrdf::Graph> {
+        let (base_url, executor, cache) =
+            match (&self.autolift_base_url, &self.engine, &self.autolift_cache) {
+                (Some(u), ServerEngine::Live(ex), Some(c)) => (u, ex.as_ref(), c),
+                _ => return None,
+            };
+
+        let model_name: Option<&str> = args.get("model").and_then(Value::as_str);
+        let (catalog_id, cube) = self.resolve_autolift_coords(model_name)?;
+
+        let schema_update = fetch_schema_update(executor, &catalog_id, &cube)
+            .unwrap_or_else(|| "none".to_string());
+
+        ensure_graph(&catalog_id, &schema_update, base_url, executor, cache)
+    }
+
     // ── Grounding tool ────────────────────────────────────────────────────────
 
     /// Handle a `describe_grounding` tool call.
     ///
-    /// Delegates to the in-process [`GroundingStore`]. When `grounding_store` is
-    /// `None` the store's `lookup()` method returns `grounding_not_available`.
-    /// This is the expected state until the aso-ground overlay (OSL #3) lands.
-    // TODO: wire try_autolift into describe_grounding to fetch the graph lazily (same as query_model_graph).
+    /// Priority order:
+    ///   1. If `grounding_store` is pre-loaded (fixture/test), use it directly.
+    ///   2. If auto-lift is enabled, call `ensure_graph` to fetch+lift the model
+    ///      XML, then build a transient `GroundingStore` from the graph and call
+    ///      `lookup()` against it.
+    ///   3. Otherwise return `grounding_not_available`.
     fn describe_grounding(&self, args: &Value) -> Value {
-        let result = match &self.grounding_store {
-            Some(store) => store.lookup(args),
-            None => {
-                serde_json::json!({
-                    "status": "grounding_not_available",
-                    "detail": "No grounding artifacts are loaded for this model. \
-                               The aso-ground overlay (OSL #3) has not been deployed on this server. \
-                               Live models return this result until the grounding overlay is integrated."
-                })
+        let result = if let Some(store) = &self.grounding_store {
+            // Path 1: pre-loaded store.
+            store.lookup(args)
+        } else if let Some(graph) = self.try_ensure_graph_for_model(args) {
+            // Path 2: auto-lift succeeded — build a transient GroundingStore.
+            let turtle = graph_to_turtle(&graph);
+            let mut store = GroundingStore::new();
+            match store.load_turtle(&turtle) {
+                Ok(_) => store.lookup(args),
+                Err(e) => {
+                    eprintln!("mqo-mcp-server: describe_grounding: grounding error: {e}");
+                    serde_json::json!({
+                        "status": "grounding_not_available",
+                        "detail": format!(
+                            "Auto-lifted graph could not be grounded: {e}. \
+                             The graph was fetched but aso-ground returned an error."
+                        )
+                    })
+                }
             }
+        } else {
+            // Path 3: not available.
+            serde_json::json!({
+                "status": "grounding_not_available",
+                "detail": "No grounding artifacts are loaded for this model. \
+                           The aso-ground overlay (OSL #3) has not been deployed on this server. \
+                           Live models return this result until the grounding overlay is integrated."
+            })
         };
         let text = serde_json::to_string(&result).unwrap_or_default();
         serde_json::json!({
@@ -1346,19 +1374,32 @@ impl Server {
 
     /// Handle a `validate_query_ontology` tool call.
     ///
-    /// Runs the advisory ontology-based query check against the loaded `aso:`
-    /// graph.  When `ontology_check` is `None`, delegates to an empty
-    /// [`OntologyCheckStore`] which returns a single `info` finding (fail-open,
-    /// FR7).
-    // TODO: wire try_autolift into validate_query_ontology to fetch the graph lazily (same as query_model_graph).
+    /// Priority order:
+    ///   1. If `ontology_check` is pre-loaded (fixture/test), use it directly.
+    ///   2. If auto-lift is enabled, call `ensure_graph` to fetch+lift the model
+    ///      XML, then build a transient `OntologyCheckStore` from the graph and
+    ///      run the check against it.
+    ///   3. Otherwise delegate to an empty store (fail-open: single `info`
+    ///      finding, `conforms: true`).
     fn validate_query_ontology(&self, args: &Value) -> Value {
-        let result = match &self.ontology_check {
-            Some(store) => store.check(args),
-            None => {
-                // No store configured — create a default (no-graph) store and
-                // check through it so the fail-open logic is consistent.
-                OntologyCheckStore::new().check(args)
+        let result = if let Some(store) = &self.ontology_check {
+            // Path 1: pre-loaded store.
+            store.check(args)
+        } else if let Some(graph) = self.try_ensure_graph_for_model(args) {
+            // Path 2: auto-lift succeeded — build a transient OntologyCheckStore.
+            let mut store = OntologyCheckStore::new();
+            let turtle = graph_to_turtle(&graph);
+            match store.load_turtle(&turtle) {
+                Ok(_) => store.check(args),
+                Err(e) => {
+                    eprintln!("mqo-mcp-server: validate_query_ontology: graph load error: {e}");
+                    // Fail-open: parse error means we cannot validate; return info.
+                    OntologyCheckStore::new().check(args)
+                }
             }
+        } else {
+            // Path 3: not available — fail-open per FR7.
+            OntologyCheckStore::new().check(args)
         };
         let text = serde_json::to_string(&result).unwrap_or_default();
         serde_json::json!({
@@ -4056,6 +4097,183 @@ mod hierarchy_levels_value_type_tests {
         assert!(
             desc.contains("count measure"),
             "tool description must contrast genuine count measures: {desc}"
+        );
+    }
+}
+
+// ── Autolift wiring tests (describe_grounding + validate_query_ontology) ─────
+
+#[cfg(test)]
+mod autolift_wiring_tests {
+    //! Tests that `describe_grounding` and `validate_query_ontology` attempt
+    //! autolift on a cache-miss and fall back to "not available" when disabled.
+    //!
+    //! We cannot mock `try_autolift` (it does a real HTTP call), so instead:
+    //!  - "disabled" tests: autolift_base_url=None, engine=Fixture → must return
+    //!    the not-available / fail-open response without a network call.
+    //!  - "enabled but lift fails" tests: autolift_base_url=Some(...), engine=Fixture
+    //!    → try_ensure_graph_for_model returns None (Fixture engine) → fallback.
+    //!
+    //! This covers the "autolift off" and "autolift on but fails" contract.  The
+    //! "autolift succeeds" path is covered by integration / live tests.
+
+    use super::*;
+    use crate::cursor::CursorStore;
+    use crate::handle_ops::HandleStore;
+    use std::sync::Arc;
+
+    fn minimal_server_fixture() -> Server {
+        Server {
+            catalog: serde_json::json!({"columns": []}),
+            stats: serde_json::json!({}),
+            tools: crate::pipeline::ToolPaths::resolve(None),
+            row_threshold: 1000,
+            engine: ServerEngine::Fixture,
+            backend_override: None,
+            capabilities: crate::probe::BackendCapabilities::all_live(),
+            registry: None,
+            health_cache: None,
+            handle_store: Some(HandleStore::new()),
+            cursor_store: Some(Arc::new(CursorStore::new(600))),
+            page_size: crate::cursor::DEFAULT_PAGE_SIZE,
+            inline_threshold: crate::handle_ops::INLINE_THRESHOLD,
+            enriched: None,
+            xmla_model_coords: std::collections::HashMap::new(),
+            max_projection_cardinality: DEFAULT_MAX_PROJECTION_CARDINALITY,
+            model_graph: None,
+            grounding_store: None,
+            ontology_check: None,
+            autolift_base_url: None,
+            autolift_cache: None,
+        }
+    }
+
+    // ── describe_grounding: autolift disabled → grounding_not_available ───────
+
+    #[test]
+    fn describe_grounding_falls_back_when_autolift_disabled() {
+        let srv = minimal_server_fixture();
+        let resp = srv.handle(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "describe_grounding",
+                "arguments": { "entities": ["Revenue"] }
+            }
+        }));
+        let resp = resp.expect("handle must return a response");
+        let structured = resp
+            .get("result")
+            .and_then(|r| r.get("structuredContent"));
+        let status = structured
+            .and_then(|s| s.get("status"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert_eq!(
+            status, "grounding_not_available",
+            "describe_grounding must return grounding_not_available when autolift is disabled: {resp}"
+        );
+    }
+
+    // ── describe_grounding: autolift enabled but Fixture engine → fallback ────
+
+    #[test]
+    fn describe_grounding_falls_back_when_autolift_enabled_but_fixture_engine() {
+        // autolift_base_url is set but engine is Fixture → try_ensure_graph returns None.
+        let mut srv = minimal_server_fixture();
+        srv.autolift_base_url = Some("https://mcp-aws.atscaleinternal.com/v1/catalogs".to_string());
+        srv.autolift_cache = Some(Arc::new(crate::autolift::AutoliftCache::new()));
+
+        let resp = srv.handle(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": "describe_grounding",
+                "arguments": { "entities": ["Revenue"] }
+            }
+        }));
+        let resp = resp.expect("handle must return a response");
+        let structured = resp
+            .get("result")
+            .and_then(|r| r.get("structuredContent"));
+        let status = structured
+            .and_then(|s| s.get("status"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        assert_eq!(
+            status, "grounding_not_available",
+            "describe_grounding must fallback when Fixture engine: {resp}"
+        );
+    }
+
+    // ── validate_query_ontology: disabled → fail-open (conforms=true, info) ───
+
+    #[test]
+    fn validate_query_ontology_failopen_when_autolift_disabled() {
+        let srv = minimal_server_fixture();
+        let resp = srv.handle(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_query_ontology",
+                "arguments": { "measures": ["Revenue"], "dimensions": ["Brand"] }
+            }
+        }));
+        let resp = resp.expect("handle must return a response");
+        let structured = resp
+            .get("result")
+            .and_then(|r| r.get("structuredContent"));
+        let conforms = structured
+            .and_then(|s| s.get("conforms"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        assert!(
+            conforms,
+            "validate_query_ontology must fail-open (conforms=true) when disabled: {resp}"
+        );
+        let findings = structured
+            .and_then(|s| s.get("findings"))
+            .and_then(Value::as_array)
+            .expect("findings must be an array");
+        assert_eq!(findings.len(), 1, "must have exactly one info finding: {findings:?}");
+        assert_eq!(
+            findings[0].get("severity").and_then(Value::as_str),
+            Some("info"),
+            "finding must be info severity: {findings:?}"
+        );
+    }
+
+    // ── validate_query_ontology: enabled but Fixture engine → fail-open ───────
+
+    #[test]
+    fn validate_query_ontology_failopen_when_autolift_enabled_but_fixture_engine() {
+        let mut srv = minimal_server_fixture();
+        srv.autolift_base_url = Some("https://mcp-aws.atscaleinternal.com/v1/catalogs".to_string());
+        srv.autolift_cache = Some(Arc::new(crate::autolift::AutoliftCache::new()));
+
+        let resp = srv.handle(&serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "validate_query_ontology",
+                "arguments": { "measures": ["Revenue"], "dimensions": [] }
+            }
+        }));
+        let resp = resp.expect("handle must return a response");
+        let structured = resp
+            .get("result")
+            .and_then(|r| r.get("structuredContent"));
+        let conforms = structured
+            .and_then(|s| s.get("conforms"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        assert!(
+            conforms,
+            "validate_query_ontology must fail-open when Fixture engine + enabled: {resp}"
         );
     }
 }

@@ -30,7 +30,7 @@
 use mqo_auth_bridge::LiveExecutor;
 use oxrdf::Graph;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  Cache
@@ -163,6 +163,91 @@ pub fn try_autolift(
     }
 }
 
+/// Shared helper: ensure a lifted `oxrdf::Graph` is available for `(catalog_id,
+/// schema_update)`.
+///
+/// Checks the `cache` first; on a miss calls [`try_autolift`] and populates the
+/// cache before returning.  Returns `None` when auto-lift is disabled (no
+/// `base_url`) or when the fetch/lift fails.
+///
+/// This is the single point called by all three OSL tools (`query_model_graph`,
+/// `describe_grounding`, `validate_query_ontology`) so cache-population logic is
+/// not duplicated.
+#[must_use]
+pub fn ensure_graph(
+    catalog_id: &str,
+    schema_update: &str,
+    base_url: &str,
+    executor: &LiveExecutor,
+    cache: &Arc<AutoliftCache>,
+) -> Option<Graph> {
+    // Cache hit — serve without re-lifting.
+    if let Some(graph) = cache.get(catalog_id, schema_update) {
+        return Some(graph);
+    }
+
+    // Cache miss → fetch + lift + insert.
+    eprintln!(
+        "mqo-mcp-server: autolift: cache miss for {catalog_id} \
+         (schema_update={schema_update}); lifting…"
+    );
+    let graph = try_autolift(catalog_id, base_url, executor)?;
+    cache.insert(catalog_id, schema_update, graph.clone());
+    Some(graph)
+}
+
+/// Serialize an `oxrdf::Graph` to a Turtle string.
+///
+/// Used when a downstream consumer (e.g. `aso-ground`) needs a Turtle string
+/// rather than a `Graph` object directly.
+///
+/// # Panics
+///
+/// Panics if the `oxttl::TurtleSerializer` fails to finish — in practice this
+/// cannot happen with an in-memory writer.
+#[must_use]
+pub fn graph_to_turtle(graph: &Graph) -> String {
+    use oxrdf::Triple;
+    use oxttl::TurtleSerializer;
+    let mut buf: Vec<u8> = Vec::new();
+    let mut ser = TurtleSerializer::new().for_writer(&mut buf);
+    // Collect into owned Triples; sort for determinism.
+    let mut triples: Vec<Triple> = graph.iter().map(oxrdf::TripleRef::into_owned).collect();
+    triples.sort_by_key(|t| (t.subject.to_string(), t.predicate.to_string(), t.object.to_string()));
+    for triple in &triples {
+        let _ = ser.serialize_triple(triple.as_ref());
+    }
+    ser.finish().expect("TurtleSerializer finish should not fail");
+    String::from_utf8(buf).unwrap_or_default()
+}
+
+/// Derive an autolift base URL from a resolved XMLA URL.
+///
+/// Replaces a trailing `/v1/xmla` (or `.../xmla`) suffix with `/v1/catalogs`.
+///
+/// Examples:
+/// - `https://mcp-aws.atscaleinternal.com/v1/xmla` → `https://mcp-aws.atscaleinternal.com/v1/catalogs`
+/// - `https://mcp-aws.atscaleinternal.com/xmla` → `https://mcp-aws.atscaleinternal.com/v1/catalogs`
+///
+/// Returns `None` when `xmla_url` is empty or does not contain a recognizable
+/// XMLA suffix (autolift stays disabled).
+#[must_use]
+pub fn derive_autolift_base_url(xmla_url: &str) -> Option<String> {
+    let url = xmla_url.trim();
+    if url.is_empty() {
+        return None;
+    }
+    // Strip trailing `/v1/xmla` first (most specific pattern).
+    if let Some(base) = url.strip_suffix("/v1/xmla") {
+        return Some(format!("{base}/v1/catalogs"));
+    }
+    // Strip trailing `/xmla` (the bare suffix without the version prefix).
+    if let Some(base) = url.strip_suffix("/xmla") {
+        return Some(format!("{base}/v1/catalogs"));
+    }
+    None
+}
+
 /// Perform a blocking `GET {url}` with a bearer token and return the response
 /// body on HTTP 200. Returns `None` on non-200, connection error, or empty body.
 fn fetch_xml_blocking(url: &str, bearer_token: &str, catalog_id: &str) -> Option<String> {
@@ -237,6 +322,70 @@ fn turtle_to_graph(turtle: &str) -> Result<Graph, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── URL derivation tests ──────────────────────────────────────────────────
+
+    /// Derive from the canonical `/v1/xmla` path used on mcp-aws.
+    #[test]
+    fn derive_from_v1_xmla_suffix() {
+        let result = derive_autolift_base_url("https://mcp-aws.atscaleinternal.com/v1/xmla");
+        assert_eq!(
+            result.as_deref(),
+            Some("https://mcp-aws.atscaleinternal.com/v1/catalogs"),
+            "must replace /v1/xmla with /v1/catalogs"
+        );
+    }
+
+    /// Derive from a bare `/xmla` suffix (no version prefix).
+    #[test]
+    fn derive_from_bare_xmla_suffix() {
+        let result = derive_autolift_base_url("https://example.com/xmla");
+        assert_eq!(
+            result.as_deref(),
+            Some("https://example.com/v1/catalogs"),
+            "must replace /xmla with /v1/catalogs"
+        );
+    }
+
+    /// Explicit `--autolift-base-url` always wins (caller must prefer explicit over derived).
+    /// The derivation is only invoked when there is no explicit flag — this test
+    /// verifies `derive_autolift_base_url` itself returns the correct value; the
+    /// override logic is in `build_autolift` (main.rs tests).
+    #[test]
+    fn explicit_override_is_returned_unchanged() {
+        // If an explicit URL is passed directly (not through derive), no stripping occurs.
+        // The caller's build_autolift function is responsible for the precedence.
+        // Here we just verify derive doesn't mangle an already-correct base URL.
+        let result = derive_autolift_base_url("https://mcp-aws.atscaleinternal.com/v1/catalogs");
+        // `/v1/catalogs` has neither /v1/xmla nor /xmla → None (no derivation possible)
+        assert!(
+            result.is_none(),
+            "a catalogs URL is not an XMLA URL; derive must return None: {result:?}"
+        );
+    }
+
+    /// Empty xmla_url → disabled (returns None).
+    #[test]
+    fn empty_xmla_url_returns_none() {
+        assert!(
+            derive_autolift_base_url("").is_none(),
+            "empty URL must return None"
+        );
+        assert!(
+            derive_autolift_base_url("   ").is_none(),
+            "whitespace-only URL must return None"
+        );
+    }
+
+    /// Unrecognized suffix → disabled.
+    #[test]
+    fn unrecognized_suffix_returns_none() {
+        let result = derive_autolift_base_url("https://example.com/some/other/path");
+        assert!(
+            result.is_none(),
+            "unrecognized path must return None: {result:?}"
+        );
+    }
 
     // ── AC1: autolift disabled → cache empty, not available ───────────────────
     // (Tested via Server::query_model_graph in integration tests in mcp; here

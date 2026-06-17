@@ -640,12 +640,24 @@ fn main() {
 
     // ── Auto-lift tier (OSL #2) ───────────────────────────────────────────────
     // Wire the base URL and an empty cache when auto-lift is enabled. The cache
-    // is populated lazily on first `query_model_graph` call per model.
-    let (autolift_base_url, autolift_cache) = build_autolift(&args);
+    // is populated lazily on first OSL tool call per model.
+    //
+    // Resolve the XMLA URL the same way build_engine did so we can derive the
+    // autolift base URL from it when --autolift-base-url is not set.
+    let resolved_xmla_url_for_autolift = {
+        let host = args
+            .endpoint
+            .as_deref()
+            .and_then(|ep| parse_endpoint(ep).ok())
+            .map(|(h, _)| h)
+            .unwrap_or_default();
+        resolve_xmla_url(args.xmla_url.as_deref(), &host)
+    };
+    let (autolift_base_url, autolift_cache) = build_autolift(&args, &resolved_xmla_url_for_autolift);
     if let Some(ref u) = autolift_base_url {
         eprintln!("mqo-mcp-server: autolift: enabled (base URL: {u})");
     } else {
-        eprintln!("mqo-mcp-server: autolift: disabled (--autolift-base-url not set)");
+        eprintln!("mqo-mcp-server: autolift: disabled (no --autolift-base-url and could not derive from --xmla-url)");
     }
 
     let server = Server {
@@ -936,19 +948,38 @@ fn require_oidc_field(val: Option<String>, flag: &str) -> Result<String, String>
 
 /// Build the auto-lift base URL and cache from CLI args.
 ///
-/// Returns `(None, None)` when auto-lift is disabled (no `--autolift-base-url`).
-/// Returns `(Some(url), Some(cache))` when enabled.
-fn build_autolift(args: &Args) -> (Option<String>, Option<std::sync::Arc<AutoliftCache>>) {
-    match &args.autolift_base_url {
-        Some(url) => {
-            let trimmed = url.trim().to_string();
-            if trimmed.is_empty() {
-                return (None, None);
-            }
-            (Some(trimmed), Some(std::sync::Arc::new(AutoliftCache::new())))
+/// Priority order:
+/// 1. Explicit `--autolift-base-url` / `ATSCALE_CATALOG_XML_BASE` (takes
+///    precedence over everything).
+/// 2. Derived from `--xmla-url` (or the URL derived from `--endpoint` host):
+///    strips a trailing `/v1/xmla` or `/xmla` suffix and replaces it with
+///    `/v1/catalogs` so that `GET {base}/{catalogId}.xml` reaches the engine's
+///    catalog REST endpoint without requiring an extra flag.
+/// 3. Neither available → auto-lift disabled (`None, None`).
+///
+/// `resolved_xmla_url` is the XMLA URL already resolved by `build_engine` (may
+/// be empty when derivation from the endpoint was also impossible).
+fn build_autolift(
+    args: &Args,
+    resolved_xmla_url: &str,
+) -> (Option<String>, Option<std::sync::Arc<AutoliftCache>>) {
+    use mqo_mcp_server::autolift::derive_autolift_base_url;
+
+    // 1. Explicit flag wins unconditionally.
+    if let Some(url) = &args.autolift_base_url {
+        let trimmed = url.trim().to_string();
+        if !trimmed.is_empty() {
+            return (Some(trimmed), Some(std::sync::Arc::new(AutoliftCache::new())));
         }
-        None => (None, None),
     }
+
+    // 2. Derive from the resolved XMLA URL.
+    if let Some(derived) = derive_autolift_base_url(resolved_xmla_url) {
+        return (Some(derived), Some(std::sync::Arc::new(AutoliftCache::new())));
+    }
+
+    // 3. Disabled.
+    (None, None)
 }
 
 /// Drive the server loop: read JSON-RPC from stdin, write responses to stdout.
@@ -1370,5 +1401,58 @@ mod tests {
         // The secret VALUE must never be stored in the config struct.
         let dbg = format!("{cfg:?}");
         assert!(!dbg.contains("topsecret-value"), "secret value leaked: {dbg}");
+    }
+
+    // ── build_autolift: URL derivation ────────────────────────────────────────
+
+    /// Explicit --autolift-base-url always wins over xmla-url derivation.
+    #[test]
+    fn build_autolift_explicit_flag_wins_over_derivation() {
+        let args = args_from(&["--autolift-base-url", "https://explicit.example.com/api/1.0"]);
+        let xmla_url = "https://mcp-aws.atscaleinternal.com/v1/xmla";
+        let (base, cache) = build_autolift(&args, xmla_url);
+        assert_eq!(
+            base.as_deref(),
+            Some("https://explicit.example.com/api/1.0"),
+            "explicit flag must win over xmla_url derivation"
+        );
+        assert!(cache.is_some(), "cache must be Some when base URL is set");
+    }
+
+    /// When --autolift-base-url is absent, derive from --xmla-url.
+    #[test]
+    fn build_autolift_derives_from_xmla_url_when_no_explicit_flag() {
+        let args = args_from(&[]);
+        let xmla_url = "https://mcp-aws.atscaleinternal.com/v1/xmla";
+        let (base, cache) = build_autolift(&args, xmla_url);
+        assert_eq!(
+            base.as_deref(),
+            Some("https://mcp-aws.atscaleinternal.com/v1/catalogs"),
+            "must derive /v1/catalogs from /v1/xmla"
+        );
+        assert!(cache.is_some(), "cache must be Some when derivation succeeds");
+    }
+
+    /// Neither explicit flag nor derivable xmla_url → autolift disabled.
+    #[test]
+    fn build_autolift_disabled_when_neither_flag_nor_xmla_url() {
+        let args = args_from(&[]);
+        let (base, cache) = build_autolift(&args, "");
+        assert!(base.is_none(), "must be None when no URL available");
+        assert!(cache.is_none(), "cache must be None when disabled");
+    }
+
+    /// Empty explicit flag falls through to xmla_url derivation (not to disabled).
+    #[test]
+    fn build_autolift_empty_explicit_falls_through_to_derivation() {
+        // An empty --autolift-base-url is treated as "not set" (same as None).
+        let args = args_from(&["--autolift-base-url", "   "]);
+        let xmla_url = "https://mcp-aws.atscaleinternal.com/v1/xmla";
+        let (base, _cache) = build_autolift(&args, xmla_url);
+        assert_eq!(
+            base.as_deref(),
+            Some("https://mcp-aws.atscaleinternal.com/v1/catalogs"),
+            "whitespace-only explicit flag must fall through to derivation"
+        );
     }
 }
