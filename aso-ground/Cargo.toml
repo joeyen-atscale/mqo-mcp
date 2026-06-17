@@ -1,0 +1,27 @@
+[package]
+name        = "aso-ground"
+version     = "0.1.0"
+edition     = "2021"
+description = "Deterministic kind-driven BFO 2020 grounding overlay over the aso-lift RDF graph"
+license     = "MIT"
+publish     = false
+
+[[bin]]
+name = "aso-ground"
+path = "src/main.rs"
+
+[dependencies]
+# Workspace crates
+aso-tbox = { path = "../aso-tbox" }
+aso-lift  = { path = "../aso-lift" }
+
+# RDF data model + Turtle serialisation
+oxrdf  = "0.3"
+oxttl  = "0.2"
+
+# Error handling + CLI
+thiserror = { workspace = true }
+clap      = { workspace = true }
+
+[dev-dependencies]
+# nothing extra needed

@@ -507,6 +507,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "aso-ground"
+version = "0.1.0"
+dependencies = [
+ "aso-lift",
+ "aso-tbox",
+ "clap",
+ "oxrdf",
+ "oxttl",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "aso-lift"
 version = "0.1.0"
 dependencies = [
