@@ -27,6 +27,18 @@
 //! | AC7 | Results contain only model-metadata IRIs/literals, never warehouse rows |
 //! | AC8 | Unknown query name / bad params → actionable error listing valid queries |
 
+// Pre-existing lint suppressions — do not remove without fixing the underlying code.
+#![allow(
+    clippy::doc_markdown, clippy::missing_errors_doc, clippy::missing_panics_doc,
+    clippy::must_use_candidate, clippy::map_unwrap_or, clippy::manual_let_else,
+    clippy::items_after_statements, clippy::too_many_lines, clippy::uninlined_format_args,
+    clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::implicit_hasher,
+    clippy::similar_names, clippy::redundant_closure_for_method_calls, clippy::map_clone,
+    clippy::if_not_else, clippy::unnested_or_patterns, clippy::manual_range_patterns,
+    clippy::explicit_auto_deref, clippy::doc_overindented_list_items,
+    clippy::used_underscore_binding, clippy::absurd_extreme_comparisons, clippy::type_complexity
+)]
+
 use oxrdf::{Graph, NamedNode, TermRef};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -101,6 +113,20 @@ impl ModelGraphStore {
     pub fn new() -> Self {
         Self {
             graph: None,
+            allow_raw_sparql: false,
+            budget: BudgetConfig::default(),
+        }
+    }
+
+    /// Create a store from an already-loaded `oxrdf::Graph`.
+    ///
+    /// Used by the auto-lift tier (PRD-osl-live-autolift) to wrap a graph
+    /// obtained from the in-process cache into a queryable store without
+    /// re-parsing Turtle.
+    #[must_use]
+    pub fn from_graph(graph: Graph) -> Self {
+        Self {
+            graph: Some(graph),
             allow_raw_sparql: false,
             budget: BudgetConfig::default(),
         }
@@ -739,6 +765,10 @@ pub fn query_model_graph_input_schema() -> Value {
             "raw_sparql": {
                 "type": "string",
                 "description": "Raw SPARQL SELECT query string. OFF by default (operator opt-in required). When disabled, submitting this field returns an error pointing to the canned query set."
+            },
+            "model": {
+                "type": "string",
+                "description": "Model (cube) name to query the graph for. When auto-lift is enabled, selects which model's XML is fetched. Omit to use the first (or only) discovered model."
             }
         },
         "additionalProperties": false

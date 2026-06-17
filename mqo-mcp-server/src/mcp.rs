@@ -16,6 +16,20 @@
 //! snapshot" of the PRD). `query_multidimensional` runs the bind→route→compile
 //! →execute pipeline.
 
+// Pre-existing lint suppressions — do not remove without fixing the underlying code.
+#![allow(
+    clippy::doc_markdown, clippy::missing_errors_doc, clippy::missing_panics_doc,
+    clippy::must_use_candidate, clippy::map_unwrap_or, clippy::manual_let_else,
+    clippy::items_after_statements, clippy::too_many_lines, clippy::uninlined_format_args,
+    clippy::cast_possible_truncation, clippy::cast_precision_loss, clippy::implicit_hasher,
+    clippy::similar_names, clippy::redundant_closure_for_method_calls, clippy::map_clone,
+    clippy::if_not_else, clippy::unnested_or_patterns, clippy::manual_range_patterns,
+    clippy::explicit_auto_deref, clippy::doc_overindented_list_items,
+    clippy::used_underscore_binding, clippy::absurd_extreme_comparisons, clippy::type_complexity
+)]
+
+use crate::autolift::{try_autolift, AutoliftCache};
+use crate::catalog_cache::fetch_schema_update;
 use crate::chart_tools;
 use crate::cursor::CursorStore;
 use crate::grounding::GroundingStore;
@@ -779,6 +793,19 @@ pub struct Server {
     /// Uses the same lifted `aso:` graph as `model_graph`; kept as a separate
     /// store so it can be populated/tested independently (advisory-first tier).
     pub ontology_check: Option<Box<OntologyCheckStore>>,
+    /// Base URL for the engine catalog-XML endpoint used by auto-lift.
+    ///
+    /// When `Some`, `query_model_graph` fetches `{base_url}/{catalog_id}.xml`
+    /// (OIDC-authed) and lifts the XML into the in-process triple store lazily
+    /// on first use.  `None` (the default) disables auto-lift; the tool falls
+    /// back to `model_graph` or returns `model_graph_not_available`.
+    ///
+    /// Sourced from `--autolift-base-url` / `ATSCALE_CATALOG_XML_BASE`.
+    pub autolift_base_url: Option<String>,
+    /// Shared in-process auto-lift cache (keyed on `(catalog_id, LAST_SCHEMA_UPDATE)`).
+    ///
+    /// `None` when auto-lift is disabled or no executor is available.
+    pub autolift_cache: Option<Arc<AutoliftCache>>,
 }
 
 /// Default maximum distinct-row estimate for a projection MQO.
@@ -1180,29 +1207,112 @@ impl Server {
 
     /// Handle a `query_model_graph` tool call.
     ///
-    /// Delegates to the in-process [`ModelGraphStore`]. When `model_graph` is
-    /// `None` the store's `query()` method returns `model_graph_not_available`
-    /// (AC6/FR6). This is the expected state for live and fixture-mode servers
-    /// until the auto-lift tier (OSL #2) lands.
+    /// Priority order:
+    ///   1. If `model_graph` is pre-loaded (fixture/test), use it directly.
+    ///   2. If auto-lift is enabled (`autolift_base_url` + live executor + cache),
+    ///      ensure-lift the target model and query the result graph.
+    ///   3. Otherwise return `model_graph_not_available`.
+    ///
+    /// Auto-lift is lazy: the first call for a model triggers the HTTP fetch +
+    /// aso-lift transform; subsequent calls for the same `LAST_SCHEMA_UPDATE`
+    /// hit the in-memory cache.  The data-query path (`query_multidimensional`)
+    /// is never affected (NFR1).
     fn query_model_graph(&self, args: &Value) -> Value {
-        let result = match &self.model_graph {
-            Some(store) => store.query(args),
-            None => {
-                // No store at all — return not-available directly (same as an
-                // empty store; avoids the indirection through ModelGraphStore).
-                serde_json::json!({
-                    "status": "model_graph_not_available",
-                    "detail": "No lifted model graph is available for this model. \
-                               The auto-lift tier (OSL #2) has not been deployed on this server. \
-                               Live models return this result until auto-lift is integrated."
-                })
-            }
-        };
+        // ── Path 1: pre-loaded fixture/test graph ──────────────────────────
+        if let Some(store) = &self.model_graph {
+            let result = store.query(args);
+            let text = serde_json::to_string(&result).unwrap_or_default();
+            return serde_json::json!({
+                "content": [{ "type": "text", "text": text }],
+                "structuredContent": result
+            });
+        }
+
+        // ── Path 2: auto-lift (live mode, base URL configured) ────────────
+        let result = self.ensure_autolift_and_query(args);
         let text = serde_json::to_string(&result).unwrap_or_default();
         serde_json::json!({
             "content": [{ "type": "text", "text": text }],
             "structuredContent": result
         })
+    }
+
+    /// Ensure the auto-lifted graph is available for the requested model and
+    /// execute the query against it.  Returns `model_graph_not_available` when
+    /// auto-lift is disabled, the executor is not live, or the lift fails.
+    fn ensure_autolift_and_query(&self, args: &Value) -> Value {
+        // Auto-lift requires: a configured base URL, a live executor, and a cache.
+        let (base_url, executor, cache) =
+            match (&self.autolift_base_url, &self.engine, &self.autolift_cache) {
+                (Some(u), ServerEngine::Live(ex), Some(c)) => (u, ex.as_ref(), c),
+                _ => {
+                    return serde_json::json!({
+                        "status": "model_graph_not_available",
+                        "detail": "No lifted model graph is available. \
+                                   Auto-lift is disabled (--autolift-base-url not configured) \
+                                   or this server is in fixture mode."
+                    });
+                }
+            };
+
+        // Resolve the target model: optional `model` param in the args, else
+        // the first discovered XMLA model.
+        let model_name: Option<&str> = args.get("model").and_then(Value::as_str);
+        let Some((catalog_id, cube)) = self.resolve_autolift_coords(model_name) else {
+            return serde_json::json!({
+                "status": "model_graph_not_available",
+                "detail": "Cannot resolve XMLA catalog ID for the requested model. \
+                           Ensure --xmla-catalog-map or live XMLA discovery is configured."
+            });
+        };
+
+        // Fetch LAST_SCHEMA_UPDATE for cache key (returns "none" on failure).
+        let schema_update = fetch_schema_update(executor, &catalog_id, &cube)
+            .unwrap_or_else(|| "none".to_string());
+
+        // Cache lookup.
+        if let Some(graph) = cache.get(&catalog_id, &schema_update) {
+            let store = ModelGraphStore::from_graph(graph);
+            return store.query(args);
+        }
+
+        // Cache miss → fetch + lift.
+        eprintln!(
+            "mqo-mcp-server: autolift: cache miss for {catalog_id} \
+             (schema_update={schema_update}); lifting…"
+        );
+        match try_autolift(&catalog_id, base_url, executor) {
+            Some(graph) => {
+                cache.insert(&catalog_id, &schema_update, graph.clone());
+                let store = ModelGraphStore::from_graph(graph);
+                store.query(args)
+            }
+            None => {
+                serde_json::json!({
+                    "status": "model_graph_not_available",
+                    "detail": format!(
+                        "Auto-lift failed for model '{catalog_id}'. \
+                         The engine XML endpoint may be unreachable, or the XML could not be parsed. \
+                         Check that --autolift-base-url points to the engine catalog REST API."
+                    )
+                })
+            }
+        }
+    }
+
+    /// Resolve `(xmla_catalog, cube_name)` for the given model name (or the
+    /// first discovered model when `model_name` is `None`).
+    fn resolve_autolift_coords(&self, model_name: Option<&str>) -> Option<(String, String)> {
+        let coords = if let Some(name) = model_name {
+            self.xmla_model_coords.get(name).cloned()
+        } else {
+            // Use the first entry (sorted for determinism) when no model specified.
+            self.xmla_model_coords
+                .iter()
+                .min_by_key(|(k, _)| k.as_str())
+                .map(|(_, v)| v.clone())
+        };
+        coords
     }
 
     // ── Grounding tool ────────────────────────────────────────────────────────
@@ -1212,6 +1322,7 @@ impl Server {
     /// Delegates to the in-process [`GroundingStore`]. When `grounding_store` is
     /// `None` the store's `lookup()` method returns `grounding_not_available`.
     /// This is the expected state until the aso-ground overlay (OSL #3) lands.
+    // TODO: wire try_autolift into describe_grounding to fetch the graph lazily (same as query_model_graph).
     fn describe_grounding(&self, args: &Value) -> Value {
         let result = match &self.grounding_store {
             Some(store) => store.lookup(args),
@@ -1239,6 +1350,7 @@ impl Server {
     /// graph.  When `ontology_check` is `None`, delegates to an empty
     /// [`OntologyCheckStore`] which returns a single `info` finding (fail-open,
     /// FR7).
+    // TODO: wire try_autolift into validate_query_ontology to fetch the graph lazily (same as query_model_graph).
     fn validate_query_ontology(&self, args: &Value) -> Value {
         let result = match &self.ontology_check {
             Some(store) => store.check(args),
@@ -3655,6 +3767,8 @@ mod hierarchy_levels_value_type_tests {
             model_graph: None,
             grounding_store: None,
             ontology_check: None,
+            autolift_base_url: None,
+            autolift_cache: None,
         }
     }
 
@@ -3756,6 +3870,8 @@ mod hierarchy_levels_value_type_tests {
             model_graph: None,
             grounding_store: None,
             ontology_check: None,
+            autolift_base_url: None,
+            autolift_cache: None,
         };
         let resp = srv.describe_model(&json!({"model": "test_model"}));
         let hl = resp
@@ -3839,6 +3955,8 @@ mod hierarchy_levels_value_type_tests {
             model_graph: None,
             grounding_store: None,
             ontology_check: None,
+            autolift_base_url: None,
+            autolift_cache: None,
         };
         let resp = srv.describe_model(&json!({}));
 

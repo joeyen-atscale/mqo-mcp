@@ -126,6 +126,8 @@ fn enriched_server() -> Server {
         model_graph: None,
         grounding_store: None,
         ontology_check: None,
+            autolift_base_url: None,
+            autolift_cache: None,
     }
 }
 
@@ -151,6 +153,8 @@ fn plain_server() -> Server {
         model_graph: None,
         grounding_store: None,
         ontology_check: None,
+            autolift_base_url: None,
+            autolift_cache: None,
     }
 }
 

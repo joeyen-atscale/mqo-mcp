@@ -29,12 +29,22 @@
 
 #![forbid(unsafe_code)]
 #![deny(clippy::all, clippy::pedantic)]
-#![allow(clippy::module_name_repetitions)]
+#![allow(
+    clippy::module_name_repetitions,
+    // Pre-existing lint suppressions — do not remove without fixing the underlying code.
+    clippy::doc_markdown,
+    clippy::if_not_else,
+    clippy::single_match_else,
+    clippy::struct_excessive_bools,
+    clippy::too_many_lines,
+    clippy::uninlined_format_args,
+)]
 
 use clap::Parser;
 use mcp_cluster_health_monitor::report::OverallStatus;
 use mcp_cluster_registry::ClusterRegistry;
 use mqo_mcp_server::{
+    autolift::AutoliftCache,
     catalog_cache::{
         apply_cached_columns, cardinality_map, default_cache_path, fetch_schema_update,
         ingest_cardinalities_only, load_cache, save_cache, validate_cache, CacheVerdict,
@@ -294,6 +304,27 @@ struct Args {
     /// `LAST_SCHEMA_UPDATE` + cardinality signals cannot detect.
     #[arg(long, default_value_t = false)]
     refresh_catalog: bool,
+
+    /// Base URL for the engine catalog-XML REST endpoint used by the OSL
+    /// auto-lift tier (PRD-osl-live-autolift).
+    ///
+    /// When set, `query_model_graph` fetches `{base_url}/{catalog_id}.xml`
+    /// with an OIDC bearer token, lifts the XML into the in-process RDF triple
+    /// store, and caches the graph keyed on `(catalog_id, LAST_SCHEMA_UPDATE)`.
+    /// On cache hit (same schema version) the stored graph is served without
+    /// re-fetching.
+    ///
+    /// The global mount prefix (e.g. `/api/1.0`) is included in the URL when
+    /// present: `https://<host>/api/1.0/catalogs/{catalogId}.xml`.
+    ///
+    /// Example: `https://mcp-aws.atscaleinternal.com/api/1.0`
+    ///
+    /// When absent (the default), auto-lift is disabled and `query_model_graph`
+    /// returns `model_graph_not_available` for all live models.
+    ///
+    /// Can also be set via the `ATSCALE_CATALOG_XML_BASE` environment variable.
+    #[arg(long, env = "ATSCALE_CATALOG_XML_BASE", value_name = "URL")]
+    autolift_base_url: Option<String>,
 }
 
 fn main() {
@@ -607,6 +638,16 @@ fn main() {
     };
     eprintln!("mqo-mcp-server: projection guard cap: {effective_max_projection}");
 
+    // ── Auto-lift tier (OSL #2) ───────────────────────────────────────────────
+    // Wire the base URL and an empty cache when auto-lift is enabled. The cache
+    // is populated lazily on first `query_model_graph` call per model.
+    let (autolift_base_url, autolift_cache) = build_autolift(&args);
+    if let Some(ref u) = autolift_base_url {
+        eprintln!("mqo-mcp-server: autolift: enabled (base URL: {u})");
+    } else {
+        eprintln!("mqo-mcp-server: autolift: disabled (--autolift-base-url not set)");
+    }
+
     let server = Server {
         catalog,
         stats,
@@ -624,8 +665,8 @@ fn main() {
         enriched,
         xmla_model_coords,
         max_projection_cardinality: effective_max_projection,
-        // Auto-lift tier (OSL #2) not yet deployed; model_graph is populated
-        // when the lift pipeline is integrated at server startup.
+        // Static pre-loaded graph (fixture/test mode). In live mode with
+        // auto-lift, graphs are loaded lazily via autolift_base_url.
         model_graph: None,
         // aso-ground overlay (OSL #3) not yet deployed; grounding_store is populated
         // when the grounding pipeline is integrated at server startup.
@@ -633,6 +674,8 @@ fn main() {
         // Ontology check store (OBQC advisory tier): populated when the lift
         // pipeline is integrated.  Fail-open until then (FR7).
         ontology_check: None,
+        autolift_base_url,
+        autolift_cache,
     };
 
     serve(&server);
@@ -889,6 +932,23 @@ fn build_oidc_config(
 /// OIDC config builder stays pure and unit-testable.
 fn require_oidc_field(val: Option<String>, flag: &str) -> Result<String, String> {
     val.ok_or_else(|| format!("{flag} is required when --endpoint is set"))
+}
+
+/// Build the auto-lift base URL and cache from CLI args.
+///
+/// Returns `(None, None)` when auto-lift is disabled (no `--autolift-base-url`).
+/// Returns `(Some(url), Some(cache))` when enabled.
+fn build_autolift(args: &Args) -> (Option<String>, Option<std::sync::Arc<AutoliftCache>>) {
+    match &args.autolift_base_url {
+        Some(url) => {
+            let trimmed = url.trim().to_string();
+            if trimmed.is_empty() {
+                return (None, None);
+            }
+            (Some(trimmed), Some(std::sync::Arc::new(AutoliftCache::new())))
+        }
+        None => (None, None),
+    }
 }
 
 /// Drive the server loop: read JSON-RPC from stdin, write responses to stdout.

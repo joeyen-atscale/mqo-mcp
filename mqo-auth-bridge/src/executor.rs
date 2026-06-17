@@ -70,6 +70,7 @@ pub trait RowSource: Send + Sync {
     /// # Errors
     ///
     /// Returns [`EngineError`] on connection or query failure.
+    #[allow(clippy::too_many_arguments)]
     fn pgwire_query(
         &self,
         host: &str,
@@ -85,6 +86,7 @@ pub trait RowSource: Send + Sync {
     /// # Errors
     ///
     /// Returns [`EngineError`] on HTTP or parse failure.
+    #[allow(clippy::too_many_arguments)]
     fn xmla_query(
         &self,
         xmla_url: &str,
@@ -401,10 +403,12 @@ async fn xmla_discover_rows(
         xmla_escape(cube)
     );
     if let Some(l) = level {
-        restrictions.push_str(&format!(
+        use std::fmt::Write as _;
+        let _ = write!(
+            restrictions,
             "<LEVEL_UNIQUE_NAME>{}</LEVEL_UNIQUE_NAME>",
             xmla_escape(l)
-        ));
+        );
     }
     let body = format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
@@ -554,6 +558,11 @@ impl LiveExecutor {
     /// Used by live catalog ingestion (PRD-mqo-live-catalog-ingestion):
     /// `MDSCHEMA_MEASURES` / `MDSCHEMA_LEVELS` for the column metadata, and
     /// `MDSCHEMA_MEMBERS` (with `level`) for a low-cardinality level's domain.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the token fetch fails, the HTTP request
+    /// fails, or the XMLA response cannot be parsed.
     pub fn discover_mdschema(
         &self,
         request_type: &str,
@@ -588,16 +597,23 @@ impl LiveExecutor {
         }
     }
 
-    /// Fetch MDSCHEMA_MEMBERS for multiple levels concurrently.
+    /// Fetch `MDSCHEMA_MEMBERS` for multiple levels concurrently.
     ///
     /// Fetches the bearer token **once**, then fans out up to `concurrency`
     /// simultaneous `xmla_discover_rows` calls using `buffer_unordered`.
     /// Returns a `Vec` of `(key, Result<rows>)` in completion order; the caller
-    /// is responsible for ordering / BTreeMap insertion.
+    /// is responsible for ordering / `BTreeMap` insertion.
     ///
     /// Per-level errors are returned as `Err` entries (fail-open); the batch
     /// never aborts on a single failure. `concurrency == 1` serializes the
     /// fetches exactly like the old loop.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] when the token fetch fails or the Tokio runtime
+    /// cannot be acquired.  Per-level errors are returned as `Err` in the
+    /// result `Vec`, not as the outer `Err`.
+    #[allow(clippy::type_complexity)]
     pub fn discover_members_batch(
         &self,
         levels: &[((String, String), String)],

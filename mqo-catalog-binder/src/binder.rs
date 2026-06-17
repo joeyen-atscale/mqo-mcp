@@ -327,7 +327,7 @@ fn all_level_captions(snapshot: &CatalogSnapshot) -> std::collections::HashSet<S
         .columns
         .iter()
         .filter(|c| c.kind == "level")
-        .filter_map(|c| c.level.as_deref().or_else(|| if c.label.is_empty() { None } else { Some(c.label.as_str()) }))
+        .filter_map(|c| c.level.as_deref().or(if c.label.is_empty() { None } else { Some(c.label.as_str()) }))
         .map(str::to_string)
         .collect()
 }
@@ -402,6 +402,7 @@ fn hierarchy_canonical_families(
 /// carry an explicit hierarchy). `Member` filters (no level pin) are unaffected.
 ///
 /// Returns a list of `CrossHierarchyFilterError`; empty means no issue.
+#[allow(clippy::too_many_lines)]
 fn check_cross_hierarchy_member_level_filters(
     mqo: &Mqo,
     snapshot: &CatalogSnapshot,
@@ -522,23 +523,18 @@ fn check_cross_hierarchy_member_level_filters(
 
             let detail = if let Some(ref co) = co_resolving_hier {
                 format!(
-                    "filter level `{}` is on near-twin hierarchy `{}` but the projected level \
-                     is on `{}`; these hierarchies share attribute family `{}` and cannot \
-                     co-resolve across hierarchy boundaries — use hierarchy `{}` for both \
-                     the filter and the projection",
-                    filter_level_un, filter_hier, proj_hier, report_family, co
+                    "filter level `{filter_level_un}` is on near-twin hierarchy `{filter_hier}` but the projected level \
+                     is on `{proj_hier}`; these hierarchies share attribute family `{report_family}` and cannot \
+                     co-resolve across hierarchy boundaries — use hierarchy `{co}` for both \
+                     the filter and the projection"
                 )
             } else {
+                let candidates = candidate_hierarchies.join(", ");
                 format!(
-                    "filter level `{}` is on near-twin hierarchy `{}` but the projected level \
-                     is on `{}`; these hierarchies share attribute family `{}` and cannot \
+                    "filter level `{filter_level_un}` is on near-twin hierarchy `{filter_hier}` but the projected level \
+                     is on `{proj_hier}`; these hierarchies share attribute family `{report_family}` and cannot \
                      co-resolve across hierarchy boundaries — candidate co-resolving \
-                     hierarchies: {}",
-                    filter_level_un,
-                    filter_hier,
-                    proj_hier,
-                    report_family,
-                    candidate_hierarchies.join(", ")
+                     hierarchies: {candidates}"
                 )
             };
 

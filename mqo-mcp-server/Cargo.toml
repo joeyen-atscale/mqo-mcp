@@ -37,10 +37,10 @@ mqo-chart-recommender = { path = "../mqo-chart-recommender", default-features = 
 mqo-vega-emitter = { path = "../mqo-vega-emitter" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 thiserror = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "rt", "net", "time", "macros"] }
-reqwest = { version = "0.12", features = ["json", "native-tls"] }
+reqwest = { version = "0.12", features = ["json", "native-tls", "blocking"] }
 mqoguard-column-group-enrichment = { path = "../mqoguard-column-group-enrichment" }
 mqoguard-compatibility-matrix = { path = "../mqoguard-compatibility-matrix" }
 mqoguard-filter-bind-report = { path = "../mqoguard-filter-bind-report" }
@@ -53,6 +53,8 @@ oxrdf  = "0.3"
 oxttl  = "0.2"
 # BFO grounding overlay for describe_grounding tool (PRD-swa-grounding-mcp-tool).
 aso-ground = { path = "../aso-ground" }
+# aso-lift: engine-model XML → RDF lift (auto-lift tier, PRD-osl-live-autolift).
+aso-lift = { path = "../aso-lift" }
 
 [dev-dependencies]
 tempfile = "3"
