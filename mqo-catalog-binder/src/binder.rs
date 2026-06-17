@@ -152,11 +152,98 @@ pub enum BindResult {
 
 // ── Resolution helpers ────────────────────────────────────────────────────────
 
+// ── Alias layer (FR1/FR2/FR3/FR4/FR5) ────────────────────────────────────────
+
+/// Closed set of trailing type words stripped by the suffix-alias layer (FR2).
+/// Excludes `Number` (risks colliding with real "Store Number" → "Store"; OQ1).
+const TYPE_SUFFIX_WORDS: &[&str] = &["Name", "Description", "Code"];
+
+/// Attempt alias resolution for a candidate label against a slice of entries
+/// (all sharing `kind == "measure"` or `kind == "level"` as appropriate).
+///
+/// Strategy (FR1 + FR2, design option (b) from PRD):
+/// For each canonical entry:
+/// - FR1 (qualifier-prefix): strip each leading whitespace-delimited word from the
+///   canonical label and compare the remainder to the candidate. This is open-ended
+///   on the qualifier vocabulary (any leading word counts), which is correct for the
+///   TPC-DS pattern where qualifier words match dimension names ("Store", "Customer",
+///   "Warehouse", etc.) but need not be enumerated ahead of time.
+/// - FR2 (type-suffix): strip each word from the closed `TYPE_SUFFIX_WORDS` set from
+///   the canonical label's trailing position and compare.
+///
+/// Both checks are constrained: minimum 2-word canonical label for prefix stripping,
+/// minimum 3-word canonical label for suffix stripping (to avoid degenerating to a
+/// single token). A candidate may match only ONE canonical label (FR4 — ambiguity
+/// guard): if multiple canonicals alias to the same candidate, return Err with all.
+///
+/// FR5: caller must call this only after exact match has already failed.
+/// FR4: multi-match → `Err(candidates)` with >1 entries.
+fn alias_resolve<'a>(
+    candidate_lc: &str,
+    entries: &[&'a ColumnEntry],
+) -> Result<&'a ColumnEntry, Vec<&'a ColumnEntry>> {
+    let mut matches: Vec<&'a ColumnEntry> = Vec::new();
+
+    'outer: for &entry in entries {
+        let canon_label = &entry.label;
+        if canon_label.is_empty() {
+            continue;
+        }
+        let canon_lc = canon_label.to_lowercase();
+
+        // Already exact-matched by caller — skip to avoid re-matching.
+        if canon_lc == candidate_lc {
+            continue;
+        }
+
+        let tokens: Vec<&str> = canon_label.split_whitespace().collect();
+
+        // FR1 (qualifier-prefix): strip the first N leading words (N ≥ 1) and compare
+        // the remainder to the candidate. Requires ≥ 2 words in canonical label so the
+        // stripped form is non-empty.
+        if tokens.len() >= 2 {
+            for i in 1..tokens.len() {
+                let suffix = tokens[i..].join(" ");
+                if suffix.to_lowercase() == candidate_lc {
+                    matches.push(entry);
+                    continue 'outer;
+                }
+            }
+        }
+
+        // FR2 (type-suffix): strip one trailing type word from the closed set and compare.
+        // Requires ≥ 3 words so the stripped form has ≥ 2 tokens (avoids stripping a label
+        // down to a single bare word like "Store" from "Store Name").
+        if tokens.len() >= 3 {
+            for &suffix in TYPE_SUFFIX_WORDS {
+                let suffix_with_space = format!(" {suffix}");
+                if let Some(stripped) = canon_label.strip_suffix(suffix_with_space.as_str()) {
+                    if stripped.to_lowercase() == candidate_lc {
+                        matches.push(entry);
+                        continue 'outer;
+                    }
+                }
+            }
+        }
+    }
+
+    match matches.len() {
+        1 => Ok(matches[0]),
+        0 => Err(vec![]),
+        _ => Err(matches),
+    }
+}
+
 /// Resolve a label (or `unique_name`) against the column list for measures.
 ///
 /// Returns:
 ///   `Ok(entry)` — exactly one match
 ///   `Err(candidates)` — zero (empty vec) or multiple matches
+///
+/// Resolution order (FR5):
+///   1. Exact `unique_name` match (case-insensitive)
+///   2. Exact `label` match (case-insensitive)
+///   3. Alias layer (qualifier-prefix / type-suffix strip; FR1/FR2) — fallback only
 fn resolve_measure<'a>(
     label: &str,
     columns: &'a [ColumnEntry],
@@ -183,14 +270,23 @@ fn resolve_measure<'a>(
         .collect();
 
     match by_label.len() {
-        1 => Ok(by_label[0]),
-        0 => Err(vec![]),
-        _ => Err(by_label),
+        1 => return Ok(by_label[0]),
+        0 => {} // fall through to alias layer
+        _ => return Err(by_label),
     }
+
+    // Third (FR1/FR2/FR5): alias fallback — exact match already failed above.
+    let all_measures: Vec<&ColumnEntry> = columns.iter().filter(|c| c.kind == "measure").collect();
+    alias_resolve(&key, &all_measures)
 }
 
 /// Resolve a dimension level selection against the column list.
 /// Matches by hierarchy (exact, case-insensitive) + level name (case-insensitive).
+///
+/// Resolution order (FR5):
+///   1. Exact hierarchy + level name match (case-insensitive)
+///   2. Alias layer on the level name (qualifier-prefix / type-suffix strip; FR1/FR2)
+///      within the same hierarchy — fallback only after exact match fails.
 fn resolve_level<'a>(
     sel: &LevelSelection,
     columns: &'a [ColumnEntry],
@@ -198,6 +294,7 @@ fn resolve_level<'a>(
     let hier_key = sel.hierarchy.to_lowercase();
     let level_key = sel.level.to_lowercase();
 
+    // Exact match (hierarchy + level, case-insensitive).
     let candidates: Vec<&ColumnEntry> = columns
         .iter()
         .filter(|c| {
@@ -212,10 +309,28 @@ fn resolve_level<'a>(
         .collect();
 
     match candidates.len() {
-        1 => Ok(candidates[0]),
-        0 => Err(vec![]),
-        _ => Err(candidates),
+        1 => return Ok(candidates[0]),
+        0 => {} // fall through to alias layer
+        _ => return Err(candidates),
     }
+
+    // Alias fallback (FR1/FR2/FR5): exact match failed; try alias resolution
+    // within the same hierarchy.
+    let hier_entries: Vec<&ColumnEntry> = columns
+        .iter()
+        .filter(|c| {
+            c.kind == "level"
+                && c.hierarchy
+                    .as_deref()
+                    .is_some_and(|h| h.to_lowercase() == hier_key)
+        })
+        .collect();
+
+    if hier_entries.is_empty() {
+        return Err(vec![]); // Hierarchy unknown — not an alias problem.
+    }
+
+    alias_resolve(&level_key, &hier_entries)
 }
 
 // ── Member-filter domain check ────────────────────────────────────────────────
@@ -1754,5 +1869,229 @@ mod binder_unit_tests {
             matches!(bind(&mqo, &snapshot), BindResult::Bound(_)),
             "same-hierarchy filter+projection must bind without cross-hierarchy decline"
         );
+    }
+
+    // ── Alias-layer unit tests (FR1/FR2/FR3/FR4/FR5/G3/G4/G5 / AC1–AC8) ────────
+
+    /// Build a CatalogSnapshot with a store_dimension hierarchy carrying
+    /// "Store Floor Space" as the canonical level label (qualifier "Store").
+    fn store_floor_space_snapshot() -> CatalogSnapshot {
+        CatalogSnapshot {
+            columns: vec![
+                make_measure("store.total_sales", "Total Store Sales"),
+                make_level(
+                    "store_dimension.[Store Floor Space]",
+                    "Store Floor Space",
+                    "store_dimension",
+                    "Store Floor Space",
+                ),
+            ],
+            ..CatalogSnapshot::default()
+        }
+    }
+
+    /// Build a CatalogSnapshot with a customer_dimension carrying
+    /// "Customer State Name" as the canonical level label (type suffix "Name").
+    fn customer_state_name_snapshot() -> CatalogSnapshot {
+        CatalogSnapshot {
+            columns: vec![
+                make_measure("customer.sales", "Customer Sales"),
+                make_level(
+                    "customer_dimension.[Customer State Name]",
+                    "Customer State Name",
+                    "customer_dimension",
+                    "Customer State Name",
+                ),
+            ],
+            ..CatalogSnapshot::default()
+        }
+    }
+
+    /// **AC1 / FR1 / G1**: "Floor Space" → "Store Floor Space" (qualifier-prefix alias).
+    /// The level field in the MQO is the short form; the bound unique_name must be
+    /// the canonical one.
+    #[test]
+    fn alias_qualifier_prefix_resolves_floor_space() {
+        let snapshot = store_floor_space_snapshot();
+        let sel = LevelSelection {
+            hierarchy: "store_dimension".to_string(),
+            level: "Floor Space".to_string(), // short form — exact match fails
+        };
+        let result = resolve_level(&sel, &snapshot.columns);
+        assert!(result.is_ok(), "alias must bind Floor Space → Store Floor Space; got: {result:?}");
+        assert_eq!(
+            result.unwrap().unique_name,
+            "store_dimension.[Store Floor Space]",
+            "must resolve to canonical unique_name"
+        );
+    }
+
+    /// **AC2 / FR2 / G2**: "Customer State" → "Customer State Name" (type-suffix alias).
+    #[test]
+    fn alias_type_suffix_resolves_customer_state() {
+        let snapshot = customer_state_name_snapshot();
+        let sel = LevelSelection {
+            hierarchy: "customer_dimension".to_string(),
+            level: "Customer State".to_string(), // missing " Name" suffix
+        };
+        let result = resolve_level(&sel, &snapshot.columns);
+        assert!(result.is_ok(), "alias must bind Customer State → Customer State Name; got: {result:?}");
+        assert_eq!(
+            result.unwrap().unique_name,
+            "customer_dimension.[Customer State Name]"
+        );
+    }
+
+    /// **AC3 / G3**: alias bind returns the canonical `ColumnEntry`, so the emitted
+    /// unique_name carries the canonical label (not the input short form).
+    #[test]
+    fn alias_bind_emits_canonical_label() {
+        let snapshot = store_floor_space_snapshot();
+        let result = resolve_level(
+            &LevelSelection {
+                hierarchy: "store_dimension".to_string(),
+                level: "Floor Space".to_string(),
+            },
+            &snapshot.columns,
+        );
+        // The returned entry must carry the canonical label.
+        let entry = result.expect("alias must bind");
+        assert_eq!(entry.label, "Store Floor Space", "canonical label must be emitted");
+    }
+
+    /// **AC4 / G5 / FR5**: exact match wins and is unchanged — alias layer not consulted.
+    #[test]
+    fn exact_match_wins_over_alias() {
+        let snapshot = store_floor_space_snapshot();
+        // Exact match on the canonical name.
+        let result = resolve_level(
+            &LevelSelection {
+                hierarchy: "store_dimension".to_string(),
+                level: "Store Floor Space".to_string(),
+            },
+            &snapshot.columns,
+        );
+        assert!(result.is_ok(), "exact canonical label must bind directly");
+        assert_eq!(result.unwrap().unique_name, "store_dimension.[Store Floor Space]");
+    }
+
+    /// **AC5 / G4 / FR4**: ambiguous alias → Err with >1 candidates (not a silent pick).
+    /// Scenario: catalog has "Store State" and "Customer State" in the SAME hierarchy
+    /// (contrived but exercises the ambiguity path), and candidate is "State".
+    #[test]
+    fn alias_ambiguous_declines() {
+        // Two levels in the same hierarchy whose canonical labels both strip to "State"
+        // via the type-suffix rule ("Store State Name" → "Store State" vs "Customer State Name"
+        // → "Customer State" — these DON'T collide). Instead, use the qualifier-prefix rule:
+        // "Store State" and "Warehouse State" both strip "Store" / "Warehouse" prefix to get
+        // "State" — but those are DIFFERENT qualifier prefixes. They don't alias the SAME
+        // candidate. So we need two canonicals that both alias to the same candidate.
+        //
+        // Easiest scenario: two canonicals "Store Name" and "Warehouse Name" in the same
+        // hierarchy — both strip "Name" suffix → "Store" and "Warehouse" respectively
+        // (not the same). Correct ambiguity: "Store Floor Space" and "Customer Floor Space"
+        // in the same hierarchy — both strip qualifier prefix → "Floor Space" = same candidate.
+        let snapshot = CatalogSnapshot {
+            columns: vec![
+                make_level(
+                    "mixed_dim.[Store Floor Space]",
+                    "Store Floor Space",
+                    "mixed_dimension",
+                    "Store Floor Space",
+                ),
+                make_level(
+                    "mixed_dim.[Warehouse Floor Space]",
+                    "Warehouse Floor Space",
+                    "mixed_dimension",
+                    "Warehouse Floor Space",
+                ),
+            ],
+            ..CatalogSnapshot::default()
+        };
+        let sel = LevelSelection {
+            hierarchy: "mixed_dimension".to_string(),
+            level: "Floor Space".to_string(), // ambiguous: matches both
+        };
+        let result = resolve_level(&sel, &snapshot.columns);
+        // Must be Err with multiple candidates, NOT Ok.
+        assert!(result.is_err(), "ambiguous alias must return Err, got: {result:?}");
+        let candidates = result.unwrap_err();
+        assert_eq!(candidates.len(), 2, "must list both candidates for ambiguous alias");
+    }
+
+    /// **AC6 / NG1**: a typo ("Custmer State") must NOT bind via the alias layer.
+    #[test]
+    fn typo_does_not_alias_bind() {
+        let snapshot = customer_state_name_snapshot();
+        let sel = LevelSelection {
+            hierarchy: "customer_dimension".to_string(),
+            level: "Custmer State".to_string(), // typo — not a prefix/suffix transform
+        };
+        let result = resolve_level(&sel, &snapshot.columns);
+        assert!(result.is_err(), "typo must not bind via alias");
+        let candidates = result.unwrap_err();
+        assert!(candidates.is_empty(), "typo must yield empty not-found Err, got: {candidates:?}");
+    }
+
+    /// **AC7 / FR6**: measure alias resolves "Floor Space" → "Store Floor Space"
+    /// when the measure is labeled "Store Floor Space".
+    #[test]
+    fn alias_measure_qualifier_prefix_resolves() {
+        let snapshot = CatalogSnapshot {
+            columns: vec![
+                make_measure("store.floor_space", "Store Floor Space"),
+            ],
+            ..CatalogSnapshot::default()
+        };
+        let result = resolve_measure("Floor Space", &snapshot.columns);
+        assert!(result.is_ok(), "measure alias must bind Floor Space → Store Floor Space; got: {result:?}");
+        assert_eq!(result.unwrap().unique_name, "store.floor_space");
+    }
+
+    /// **AC8 / G5**: existing exact-match measure binding unchanged.
+    #[test]
+    fn exact_measure_binding_unchanged_by_alias() {
+        let snapshot = CatalogSnapshot {
+            columns: vec![
+                make_measure("store.floor_space", "Store Floor Space"),
+            ],
+            ..CatalogSnapshot::default()
+        };
+        // Exact label match must still win.
+        let result = resolve_measure("Store Floor Space", &snapshot.columns);
+        assert!(result.is_ok(), "exact measure label must bind directly");
+        assert_eq!(result.unwrap().unique_name, "store.floor_space");
+    }
+
+    /// **Full bind integration**: "Floor Space" level in an MQO resolves and
+    /// the bound unique_name is the canonical "store_dimension.[Store Floor Space]".
+    #[test]
+    fn bind_level_alias_integration() {
+        let snapshot = store_floor_space_snapshot();
+        let mqo = Mqo {
+            model: "store".to_string(),
+            measures: vec![MeasureRef { unique_name: "Total Store Sales".to_string() }],
+            dimensions: vec![LevelSelection {
+                hierarchy: "store_dimension".to_string(),
+                level: "Floor Space".to_string(), // alias input
+            }],
+            filters: vec![],
+            time_intelligence: vec![],
+            order: None,
+            limit: None,
+            non_empty: false,
+            projection: false,
+        };
+        match bind(&mqo, &snapshot) {
+            BindResult::Bound(b) => {
+                assert_eq!(b.dimensions.len(), 1);
+                assert_eq!(
+                    b.dimensions[0].unique_name,
+                    "store_dimension.[Store Floor Space]",
+                    "bound dimension must carry canonical unique_name"
+                );
+            }
+            other => panic!("expected Bound, got {other:?}"),
+        }
     }
 }
