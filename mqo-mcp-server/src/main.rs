@@ -627,6 +627,9 @@ fn main() {
         // Auto-lift tier (OSL #2) not yet deployed; model_graph is populated
         // when the lift pipeline is integrated at server startup.
         model_graph: None,
+        // Ontology check store (OBQC advisory tier): populated when the lift
+        // pipeline is integrated.  Fail-open until then (FR7).
+        ontology_check: None,
     };
 
     serve(&server);
