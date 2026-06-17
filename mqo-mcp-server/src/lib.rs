@@ -34,6 +34,7 @@ pub mod grounding;
 pub mod handle_ops;
 pub mod mcp;
 pub mod model_graph;
+pub mod ontology_check;
 pub mod pipeline;
 pub mod probe;
 pub mod projection_guard;

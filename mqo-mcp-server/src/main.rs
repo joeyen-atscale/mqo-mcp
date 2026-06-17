@@ -630,6 +630,9 @@ fn main() {
         // aso-ground overlay (OSL #3) not yet deployed; grounding_store is populated
         // when the grounding pipeline is integrated at server startup.
         grounding_store: None,
+        // Ontology check store (OBQC advisory tier): populated when the lift
+        // pipeline is integrated.  Fail-open until then (FR7).
+        ontology_check: None,
     };
 
     serve(&server);

@@ -21,6 +21,7 @@ use crate::cursor::CursorStore;
 use crate::grounding::GroundingStore;
 use crate::handle_ops::{self, HandleStore};
 use crate::model_graph::ModelGraphStore;
+use crate::ontology_check::OntologyCheckStore;
 use crate::pipeline::{self, PipelineError, PipelineOutput, ToolPaths};
 use crate::probe::BackendCapabilities;
 use crate::projection_guard::check_projection_cardinality;
@@ -772,6 +773,12 @@ pub struct Server {
     /// `None` → tool returns `grounding_not_available`.  Populated at startup when
     /// grounding artifacts (aso-ground overlay, OSL #3) are available.
     pub grounding_store: Option<Box<GroundingStore>>,
+    /// Ontology-based query check store for the `validate_query_ontology` tool.
+    ///
+    /// `None` → tool returns a single `info` finding (fail-open per FR7).
+    /// Uses the same lifted `aso:` graph as `model_graph`; kept as a separate
+    /// store so it can be populated/tested independently (advisory-first tier).
+    pub ontology_check: Option<Box<OntologyCheckStore>>,
 }
 
 /// Default maximum distinct-row estimate for a projection MQO.
@@ -1001,6 +1008,29 @@ definition reveal which is the canonical measure and what its additivity constra
             "inputSchema": crate::grounding::describe_grounding_input_schema(),
             "annotations": { "readOnlyHint": true }
         }),
+        json!({
+            "name": "validate_query_ontology",
+            "description": "Advisory pre-execution ontology check: validate a proposed MQO against the \
+loaded aso: model graph before execution. Returns a structured findings array so the agent can \
+self-correct in one retry rather than executing a semantically invalid query.\n\n\
+**Use this BEFORE `query_multidimensional`** when unsure whether the referenced measures/dimensions \
+are ontologically valid for this model.\n\n\
+**Checks performed (v1):**\n\
+- `entity_existence` — every referenced measure/dimension must appear in the aso: graph.\n\
+- `type_mismatch` — entities must be used in the role their aso: type permits \
+  (e.g. a Hierarchy cannot be used as a measure).\n\
+- `semi_additive_sum_over_time` — a SemiAdditiveMeasure combined with a time/date dimension \
+  produces a warning (summing semi-additive measures over time yields semantically incorrect results).\n\n\
+**Response shape:**\n\
+`{conforms: bool, findings: [{rule_id, severity, entity, message}]}`\n\
+- `conforms: true` + empty findings → ontologically valid.\n\
+- `conforms: false` → at least one `error` severity finding; fix before executing.\n\
+- `severity: warning` or `info` → advisory only; does not block execution in warn mode.\n\n\
+**Fail-open:** when no ontology graph is loaded, returns `conforms: true` with a single \
+`info` finding (`ontology_graph_not_available`). The query may proceed.",
+            "inputSchema": crate::ontology_check::validate_query_ontology_input_schema(),
+            "annotations": { "readOnlyHint": true }
+        }),
     ]
 }
 
@@ -1090,6 +1120,7 @@ impl Server {
             "compose_dashboard" => Ok(chart_tools::handle_compose_dashboard(&args)),
             "query_model_graph" => Ok(self.query_model_graph(&args)),
             "describe_grounding" => Ok(self.describe_grounding(&args)),
+            "validate_query_ontology" => Ok(self.validate_query_ontology(&args)),
             "dataset_aggregate"
             | "dataset_filter"
             | "dataset_sort"
@@ -1191,6 +1222,30 @@ impl Server {
                                The aso-ground overlay (OSL #3) has not been deployed on this server. \
                                Live models return this result until the grounding overlay is integrated."
                 })
+            }
+        };
+        let text = serde_json::to_string(&result).unwrap_or_default();
+        serde_json::json!({
+            "content": [{ "type": "text", "text": text }],
+            "structuredContent": result
+        })
+    }
+
+    // ── Ontology check tool ───────────────────────────────────────────────────
+
+    /// Handle a `validate_query_ontology` tool call.
+    ///
+    /// Runs the advisory ontology-based query check against the loaded `aso:`
+    /// graph.  When `ontology_check` is `None`, delegates to an empty
+    /// [`OntologyCheckStore`] which returns a single `info` finding (fail-open,
+    /// FR7).
+    fn validate_query_ontology(&self, args: &Value) -> Value {
+        let result = match &self.ontology_check {
+            Some(store) => store.check(args),
+            None => {
+                // No store configured — create a default (no-graph) store and
+                // check through it so the fail-open logic is consistent.
+                OntologyCheckStore::new().check(args)
             }
         };
         let text = serde_json::to_string(&result).unwrap_or_default();
@@ -3599,6 +3654,7 @@ mod hierarchy_levels_value_type_tests {
             max_projection_cardinality: DEFAULT_MAX_PROJECTION_CARDINALITY,
             model_graph: None,
             grounding_store: None,
+            ontology_check: None,
         }
     }
 
@@ -3699,6 +3755,7 @@ mod hierarchy_levels_value_type_tests {
             max_projection_cardinality: DEFAULT_MAX_PROJECTION_CARDINALITY,
             model_graph: None,
             grounding_store: None,
+            ontology_check: None,
         };
         let resp = srv.describe_model(&json!({"model": "test_model"}));
         let hl = resp
@@ -3781,6 +3838,7 @@ mod hierarchy_levels_value_type_tests {
             max_projection_cardinality: DEFAULT_MAX_PROJECTION_CARDINALITY,
             model_graph: None,
             grounding_store: None,
+            ontology_check: None,
         };
         let resp = srv.describe_model(&json!({}));
 
