@@ -220,6 +220,36 @@ fn resolve_level<'a>(
 
 // ── Member-filter domain check ────────────────────────────────────────────────
 
+/// Normalize a string member value for comparison purposes.
+///
+/// Applied to **both** the filter value and captured domain entries before the
+/// equality check on string-dtype levels (PRD-mqo-string-member-filter-completeness,
+/// FR1–FR4, FR8).
+///
+/// Rules: (1) trim + collapse internal whitespace runs to a single space,
+/// (2) ASCII lowercase (locale-invariant, NFR2), (3) fold curly/typographic
+/// single quotes to `'`, double quotes to `"`, and en/em-dash to `-`.
+///
+/// Matching stays **equality** of normalized forms — not substring/prefix/contains (FR3).
+/// An identical copy lives in `mqo-dax-compiler/src/catalog_context.rs` so both
+/// sites agree without a circular crate dependency (FR8, OQ3).
+fn normalize_member_string(s: &str) -> String {
+    let collapsed: String = s
+        .split_whitespace()
+        .collect::<Vec<&str>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    collapsed
+        .chars()
+        .map(|c| match c {
+            '\u{2018}' | '\u{2019}' | '\u{02BC}' => '\'',
+            '\u{201C}' | '\u{201D}' => '"',
+            '\u{2013}' | '\u{2014}' => '-',
+            other => other,
+        })
+        .collect()
+}
+
 /// Attempt to resolve each `Filter::Member` value against the hierarchy's
 /// enumerated level domains. Conservative: fires ONLY when ALL level columns
 /// in the hierarchy carry a non-empty `domain` (if any level lacks one, a
@@ -271,7 +301,10 @@ fn check_member_filters(
             .collect();
 
         for member in members {
-            let member_norm = member.to_lowercase();
+            // Use normalized comparison (trim + collapse whitespace + ASCII lowercase
+            // + punctuation folding) so format-only differences do not cause false
+            // unbound errors (PRD-mqo-string-member-filter-completeness FR1-FR4, FR8).
+            let member_norm = normalize_member_string(member);
 
             let matching: Vec<String> = hier_levels
                 .iter()
@@ -280,7 +313,7 @@ fn check_member_filters(
                         .as_ref()
                         .unwrap()
                         .iter()
-                        .any(|d| d.to_lowercase() == member_norm)
+                        .any(|d| normalize_member_string(d) == member_norm)
                 })
                 .filter_map(|c| c.level.clone())
                 .collect();
@@ -1754,5 +1787,54 @@ mod binder_unit_tests {
             matches!(bind(&mqo, &snapshot), BindResult::Bound(_)),
             "same-hierarchy filter+projection must bind without cross-hierarchy decline"
         );
+    }
+}
+
+// ── PRD-mqo-string-member-filter-completeness: normalize_member_string unit tests ──
+#[cfg(test)]
+mod normalize_member_string_tests {
+    use super::normalize_member_string;
+
+    #[test]
+    fn trims_leading_trailing_whitespace() {
+        assert_eq!(normalize_member_string("  able  "), "able");
+        assert_eq!(normalize_member_string("able "), "able");
+    }
+
+    #[test]
+    fn collapses_internal_whitespace() {
+        assert_eq!(normalize_member_string("able  corp"), "able corp");
+        assert_eq!(normalize_member_string("a\tb"), "a b");
+    }
+
+    #[test]
+    fn lowercases_ascii() {
+        assert_eq!(normalize_member_string("ABLE"), "able");
+        assert_eq!(normalize_member_string("Able Corp"), "able corp");
+    }
+
+    #[test]
+    fn folds_curly_single_quotes() {
+        assert_eq!(normalize_member_string("\u{2018}able\u{2019}"), "'able'");
+        assert_eq!(normalize_member_string("o\u{02BC}brien"), "o'brien");
+    }
+
+    #[test]
+    fn folds_curly_double_quotes() {
+        assert_eq!(normalize_member_string("\u{201C}able\u{201D}"), "\"able\"");
+    }
+
+    #[test]
+    fn folds_en_em_dash() {
+        assert_eq!(normalize_member_string("able\u{2013}corp"), "able-corp");
+        assert_eq!(normalize_member_string("able\u{2014}corp"), "able-corp");
+    }
+
+    #[test]
+    fn no_over_match_for_similar_names() {
+        let able = normalize_member_string("able");
+        assert_ne!(normalize_member_string("able corp"), able);
+        assert_ne!(normalize_member_string("unable"), able);
+        assert_ne!(normalize_member_string("abel"), able);
     }
 }
