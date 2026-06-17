@@ -147,18 +147,12 @@ pub fn compile_grounded(
         let by_ref = measure_dax_ref_ctx(&by_measure, ctx);
         format!("TOPN({n}, {inner}, {by_ref}, DESC)")
     } else if let Some(limit) = bound.mqo.limit {
-        // Apply limit TOPN.
-        // TOPN wraps the inner table; we need a sort col for TOPN.
-        // For projection MQOs sort by the first dimension; for regular queries
-        // sort by the first measure (existing behaviour).
+        // Apply limit TOPN. For projections, sort by declared order keys (FR1/FR2).
+        // For regular queries, sort by first measure (existing behaviour).
         if bound.mqo.is_projection() {
-            // Projection: sort by first dimension level column. Grounding already
-            // succeeded for this level in group_by_cols above, so it resolves here.
-            let first_dim_ref = match bound.dimensions.first() {
-                Some(d) => level_col_ref_grounded(&d.unique_name, ctx)?,
-                None => "1".to_string(),
-            };
-            format!("TOPN({limit}, {inner}, {first_dim_ref}, ASC)")
+            let sort_args =
+                projection_topn_sort_args(bound, ctx)?;
+            format!("TOPN({limit}, {inner}, {sort_args})")
         } else {
             let first_measure_ref = measure_dax_ref_ctx(&bound.measures[0].unique_name, ctx);
             format!("TOPN({limit}, {inner}, {first_measure_ref}, DESC)")
@@ -169,27 +163,102 @@ pub fn compile_grounded(
 
     let mut dax = format!("EVALUATE\n{inner}");
 
-    // Append ORDER BY.
-    if let Some(order_keys) = &bound.mqo.order {
-        if !order_keys.is_empty() {
-            let order_parts: Vec<String> = order_keys
-                .iter()
-                .map(|ok| {
-                    let dir = match ok.direction {
-                        SortDirection::Asc => "ASC",
-                        SortDirection::Desc => "DESC",
-                    };
-                    format!("{} {dir}", measure_dax_ref_ctx(&ok.key, ctx))
-                })
-                .collect();
-            write!(dax, "\nORDER BY {}", order_parts.join(", ")).expect("String write is infallible");
-        }
-    }
+    // Append ORDER BY (skipped for projection+limit: TOPN already sorts, FR3).
+    append_order_by(&mut dax, bound, ctx)?;
 
     Ok(dax)
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
+
+/// Build the TOPN sort-arg string for a projection MQO with a limit.
+///
+/// When the MQO declares `order` keys, resolves each key as a dimension-level
+/// reference (`level_col_ref_grounded`) with its declared direction (FR1/FR2).
+/// When no order keys are declared, falls back to sorting by the first
+/// projected dimension ASC (preserves existing behaviour for unordered bounded
+/// projections).
+///
+/// # Errors
+///
+/// Returns [`DaxCompileError::UngroundableLevel`] when an order key cannot be
+/// resolved to a grounded dimension-level column (FR6).
+fn projection_topn_sort_args(
+    bound: &BoundMqoInput,
+    ctx: Option<&DaxCatalogContext>,
+) -> Result<String, DaxCompileError> {
+    if let Some(order_keys) = &bound.mqo.order {
+        if !order_keys.is_empty() {
+            let mut args: Vec<String> = Vec::new();
+            for ok in order_keys {
+                let col_ref = level_col_ref_grounded(&ok.key, ctx)?;
+                let dir = sort_dir_str(&ok.direction);
+                args.push(format!("{col_ref}, {dir}"));
+            }
+            return Ok(args.join(", "));
+        }
+    }
+    // No order keys declared — fall back to first dim ASC.
+    let first_dim_ref = match bound.dimensions.first() {
+        Some(d) => level_col_ref_grounded(&d.unique_name, ctx)?,
+        None => "1".to_string(),
+    };
+    Ok(format!("{first_dim_ref}, ASC"))
+}
+
+/// Append an `ORDER BY` clause to `dax` when the MQO declares order keys.
+///
+/// Skipped entirely for projection+limit queries: the TOPN expression already
+/// encodes the sort (FR3), and re-emitting it as `ORDER BY` would use
+/// `measure_dax_ref_ctx` on dimension keys — the root-cause bug this PRD fixes.
+///
+/// For projection-without-limit and for all measure-bearing queries the ORDER
+/// BY clause is appended. Projection keys are resolved as dimension-level
+/// references (FR1); measure keys use `measure_dax_ref_ctx` (existing path).
+///
+/// # Errors
+///
+/// Returns [`DaxCompileError::UngroundableLevel`] when a projection order key
+/// cannot be grounded (FR6).
+fn append_order_by(
+    dax: &mut String,
+    bound: &BoundMqoInput,
+    ctx: Option<&DaxCatalogContext>,
+) -> Result<(), DaxCompileError> {
+    let Some(order_keys) = &bound.mqo.order else {
+        return Ok(());
+    };
+    if order_keys.is_empty() {
+        return Ok(());
+    }
+    // Projection with a limit: TOPN already sorts — skip ORDER BY (FR3).
+    if bound.mqo.is_projection() && bound.mqo.limit.is_some() {
+        return Ok(());
+    }
+    let order_parts: Result<Vec<String>, DaxCompileError> = order_keys
+        .iter()
+        .map(|ok| {
+            let dir = sort_dir_str(&ok.direction);
+            if bound.mqo.is_projection() {
+                // FR1: resolve as dimension-level reference.
+                let col_ref = level_col_ref_grounded(&ok.key, ctx)?;
+                Ok(format!("{col_ref} {dir}"))
+            } else {
+                Ok(format!("{} {dir}", measure_dax_ref_ctx(&ok.key, ctx)))
+            }
+        })
+        .collect();
+    write!(dax, "\nORDER BY {}", order_parts?.join(", ")).expect("String write is infallible");
+    Ok(())
+}
+
+/// Return the DAX direction keyword for a [`SortDirection`].
+fn sort_dir_str(dir: &SortDirection) -> &'static str {
+    match dir {
+        SortDirection::Asc => "ASC",
+        SortDirection::Desc => "DESC",
+    }
+}
 
 /// Resolve the date column reference for time-intelligence function calls.
 ///
@@ -741,7 +810,7 @@ fn level_col_ref_ctx(unique_name: &str, ctx: Option<&DaxCatalogContext>) -> Stri
 
 /// Single-quote a DAX table identifier (FR-3).
 ///
-/// AtScale XMLA accepts (and we always emit) single-quoted table names so that
+/// `AtScale` XMLA accepts (and we always emit) single-quoted table names so that
 /// hierarchy names containing spaces or DAX-reserved characters are valid
 /// (`'Ship Mode'[Carrier]`). An embedded apostrophe is doubled per DAX escaping.
 fn quote_table_ident(table: &str) -> String {
@@ -974,8 +1043,8 @@ mod tests {
         assert!(dax.contains("NOT("), "expected NOT-IN, got {dax}");
     }
 
-    /// Filter::Group OR compiles to a single FILTER with `||` over both columns
-    /// (real OR semantics, PRD-mqo-filter-predicate-grammar — not the AND stub).
+    /// `Filter::Group` OR compiles to a single FILTER with `||` over both columns
+    /// (real OR semantics, `PRD-mqo-filter-predicate-grammar` — not the AND stub).
     #[test]
     fn group_or_emits_disjunctive_predicate() {
         let ctx = demographics_ctx(true);
@@ -1073,8 +1142,8 @@ mod tests {
 
     /// Range filter with a bare display label → resolves via reverse lookup.
     ///
-    /// fixture_ctx() has: unique_name "inventory_date_dimension.calendar.[Inventory Calendar Month]"
-    /// → label "Inventory Calendar Month", per-level table "inventory_date_dimension".
+    /// `fixture_ctx()` has: `unique_name` "inventory\_date\_dimension.calendar.\[Inventory Calendar Month\]"
+    /// → label "Inventory Calendar Month", per-level table "inventory\_date\_dimension".
     #[test]
     fn range_filter_bare_label_resolves() {
         let ctx = fixture_ctx();
@@ -1114,7 +1183,7 @@ mod tests {
         );
     }
 
-    /// Range filter with an unknown level and a context → UngroundedRangeFilter.
+    /// Range filter with an unknown level and a context → `UngroundedRangeFilter`.
     #[test]
     fn range_filter_unknown_level_fails_loud() {
         let ctx = fixture_ctx();
@@ -1481,7 +1550,7 @@ mod tests {
         );
     }
 
-    /// Non-projection measureless MQO still returns EmptyMeasures.
+    /// Non-projection measureless MQO still returns `EmptyMeasures`.
     #[test]
     fn non_projection_measureless_returns_empty_measures_error() {
         let bound = BoundMqoInput {
@@ -1514,6 +1583,253 @@ mod tests {
     }
 }
 
+// ── PRD-mqo-projection-orderby-dimension-key: projection ORDER BY regression ────
+#[cfg(test)]
+mod projection_orderby_tests {
+    use super::compile_grounded;
+    use crate::catalog_context::DaxCatalogContext;
+    use crate::input::{BoundDimensionInput, BoundMeasureInput, BoundMqoInput};
+    use mqo_spec::{Mqo, OrderKey, SortDirection};
+
+    /// Catalog with customer dimension levels used by the three timeout cases.
+    fn customer_ctx() -> DaxCatalogContext {
+        let json = r#"{
+            "catalog": "atscale_catalogs",
+            "columns": [
+                {"unique_name":"customer_name_dimension.[Customer First Name]","label":"Customer First Name","kind":"level","hierarchy":"customer_name_dimension","level":"Customer First Name"},
+                {"unique_name":"customer_demographics.[Gender]","label":"Gender","kind":"level","hierarchy":"customer_demographics","level":"Gender"},
+                {"unique_name":"customer_demographics.[Income Band]","label":"Income Band","kind":"level","hierarchy":"customer_demographics","level":"Income Band"},
+                {"unique_name":"customer_demographics.[Vehicle Count]","label":"Vehicle Count","kind":"level","hierarchy":"customer_demographics","level":"Vehicle Count"},
+                {"unique_name":"customer_demographics.[Buy Potential]","label":"Buy Potential","kind":"level","hierarchy":"customer_demographics","level":"Buy Potential"},
+                {"unique_name":"customer_demographics.[Customer ID]","label":"Customer ID","kind":"level","hierarchy":"customer_demographics","level":"Customer ID"}
+            ]
+        }"#;
+        DaxCatalogContext::from_json(json).unwrap()
+    }
+
+    /// Build a projection `BoundMqoInput` from a list of (unique\_name, hierarchy)
+    /// dim pairs, with optional order keys and limit.
+    fn proj_with_order(
+        dims: &[(&str, &str)],
+        order: Vec<OrderKey>,
+        limit: Option<u64>,
+    ) -> BoundMqoInput {
+        BoundMqoInput {
+            mqo: Mqo {
+                model: "tpcds".into(),
+                measures: vec![],
+                dimensions: dims
+                    .iter()
+                    .map(|(u, h)| mqo_spec::LevelSelection {
+                        hierarchy: (*h).to_string(),
+                        level: (*u).to_string(),
+                    })
+                    .collect(),
+                filters: vec![],
+                limit,
+                order: if order.is_empty() { None } else { Some(order) },
+                time_intelligence: vec![],
+                non_empty: false,
+                projection: true,
+            },
+            measures: vec![],
+            dimensions: dims
+                .iter()
+                .map(|(u, h)| BoundDimensionInput {
+                    unique_name: (*u).to_string(),
+                    hierarchy: (*h).to_string(),
+                })
+                .collect(),
+            calc_group_members: vec![],
+        }
+    }
+
+    /// AC1 / FR1: a projection with ORDER BY + LIMIT must emit TOPN with a
+    /// dimension-level reference — NOT a measure reference like `[Customer First Name]`.
+    /// Previously, `measure_dax_ref_ctx` was called on the order key, producing a bare
+    /// measure ref that XMLA could not resolve (300s hang).
+    #[test]
+    fn projection_orderby_limit_emits_topn_with_dim_ref_not_measure_ref() {
+        let ctx = customer_ctx();
+        let bound = proj_with_order(
+            &[("customer_name_dimension.[Customer First Name]", "customer_name_dimension")],
+            vec![OrderKey {
+                key: "customer_name_dimension.[Customer First Name]".to_string(),
+                direction: SortDirection::Asc,
+            }],
+            Some(20),
+        );
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+
+        // Must contain TOPN (limit applied via TOPN).
+        assert!(dax.contains("TOPN(20,"), "expected TOPN(20, ...), got: {dax}");
+
+        // The sort expression must be the grounded dim-level column ref, not a bare [Label].
+        // A bare measure ref looks like `[Customer First Name]` (no table prefix).
+        // The correct dim ref looks like `'customer_name_dimension'[Customer First Name]`.
+        assert!(
+            dax.contains("'customer_name_dimension'[Customer First Name]"),
+            "TOPN must sort by grounded dim-level ref, got: {dax}"
+        );
+
+        // Must NOT contain a bare measure reference `[Customer First Name]` (the bug).
+        // The presence of the grounded ref above means the bare ref check must allow
+        // the table-qualified form but not a standalone [label].
+        // We strip the table-qualified occurrences and check the remainder.
+        let stripped = dax.replace("'customer_name_dimension'[Customer First Name]", "REPLACED");
+        assert!(
+            !stripped.contains("[Customer First Name]"),
+            "bare measure ref must not appear in projection ORDER BY, got: {dax}"
+        );
+
+        // Must NOT have a trailing ORDER BY clause (TOPN already sorts, FR3).
+        assert!(
+            !dax.contains("ORDER BY"),
+            "projection+limit must not emit trailing ORDER BY, got: {dax}"
+        );
+    }
+
+    /// AC2 / FR2: projection with 4 order keys (New-Jersey shape) — all 4 must
+    /// appear in the TOPN sort args, in declared order with declared directions.
+    #[test]
+    fn projection_four_order_keys_all_honored_in_topn() {
+        let ctx = customer_ctx();
+        let bound = proj_with_order(
+            &[
+                ("customer_name_dimension.[Customer First Name]", "customer_name_dimension"),
+                ("customer_demographics.[Income Band]", "customer_demographics"),
+                ("customer_demographics.[Vehicle Count]", "customer_demographics"),
+                ("customer_demographics.[Buy Potential]", "customer_demographics"),
+            ],
+            vec![
+                OrderKey { key: "customer_name_dimension.[Customer First Name]".to_string(), direction: SortDirection::Asc },
+                OrderKey { key: "customer_demographics.[Income Band]".to_string(), direction: SortDirection::Asc },
+                OrderKey { key: "customer_demographics.[Vehicle Count]".to_string(), direction: SortDirection::Asc },
+                OrderKey { key: "customer_demographics.[Buy Potential]".to_string(), direction: SortDirection::Asc },
+            ],
+            Some(20),
+        );
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+
+        assert!(dax.contains("TOPN(20,"), "got: {dax}");
+        assert!(dax.contains("'customer_name_dimension'[Customer First Name]"), "got: {dax}");
+        assert!(dax.contains("'customer_demographics'[Income Band]"), "got: {dax}");
+        assert!(dax.contains("'customer_demographics'[Vehicle Count]"), "got: {dax}");
+        assert!(dax.contains("'customer_demographics'[Buy Potential]"), "got: {dax}");
+        // All four must appear as sort args, not just the first.
+        let topn_start = dax.find("TOPN(20,").expect("TOPN must be present");
+        let topn_segment = &dax[topn_start..];
+        // Each grounded ref must appear in the TOPN expression.
+        for label in &["Customer First Name", "Income Band", "Vehicle Count", "Buy Potential"] {
+            assert!(
+                topn_segment.contains(label),
+                "TOPN must include sort key {label}, got: {topn_segment}"
+            );
+        }
+        assert!(!dax.contains("ORDER BY"), "no trailing ORDER BY for projection+limit, got: {dax}");
+    }
+
+    /// AC3 / FR2: direction respected — DESC and ASC keys emit correct direction tokens.
+    #[test]
+    fn projection_order_direction_respected() {
+        let ctx = customer_ctx();
+        // income-band-9 shape: Vehicle Count DESC, Customer ID ASC.
+        let bound = proj_with_order(
+            &[
+                ("customer_demographics.[Vehicle Count]", "customer_demographics"),
+                ("customer_demographics.[Customer ID]", "customer_demographics"),
+            ],
+            vec![
+                OrderKey { key: "customer_demographics.[Vehicle Count]".to_string(), direction: SortDirection::Desc },
+                OrderKey { key: "customer_demographics.[Customer ID]".to_string(), direction: SortDirection::Asc },
+            ],
+            Some(20),
+        );
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+
+        assert!(dax.contains("TOPN(20,"), "got: {dax}");
+        // Verify that Vehicle Count appears before DESC and Customer ID before ASC.
+        let topn_start = dax.find("TOPN(20,").expect("TOPN must be present");
+        let topn_segment = &dax[topn_start..];
+        // DESC must appear (for Vehicle Count).
+        assert!(topn_segment.contains("DESC"), "DESC direction must appear, got: {topn_segment}");
+        // ASC must appear (for Customer ID).
+        assert!(topn_segment.contains("ASC"), "ASC direction must appear, got: {topn_segment}");
+        assert!(!dax.contains("ORDER BY"), "no trailing ORDER BY for projection+limit, got: {dax}");
+    }
+
+    /// AC5 / FR4: measure-bearing ORDER BY is byte-identical when a projection
+    /// change is NOT involved — guard that the non-projection path is unchanged.
+    #[test]
+    fn measure_bearing_orderby_uses_measure_ref_path() {
+        let json = r#"{
+            "catalog": "atscale_catalogs",
+            "columns": [
+                {"unique_name":"customer_name_dimension.[Customer First Name]","label":"Customer First Name","kind":"level","hierarchy":"customer_name_dimension","level":"Customer First Name"},
+                {"unique_name":"tpcds.total_sales","label":"Total Sales","kind":"measure"}
+            ]
+        }"#;
+        let ctx = DaxCatalogContext::from_json(json).unwrap();
+        let bound = BoundMqoInput {
+            mqo: Mqo {
+                model: "tpcds".into(),
+                measures: vec![],
+                dimensions: vec![mqo_spec::LevelSelection {
+                    hierarchy: "customer_name_dimension".to_string(),
+                    level: "customer_name_dimension.[Customer First Name]".to_string(),
+                }],
+                filters: vec![],
+                limit: Some(10),
+                order: Some(vec![OrderKey {
+                    key: "tpcds.total_sales".to_string(),
+                    direction: SortDirection::Desc,
+                }]),
+                time_intelligence: vec![],
+                non_empty: false,
+                projection: false, // measure-bearing, not projection
+            },
+            measures: vec![BoundMeasureInput {
+                unique_name: "tpcds.total_sales".to_string(),
+                is_calc: false,
+                semi_additive: false,
+                required_dimension: None,
+                trigger_hierarchies: vec![],
+            }],
+            dimensions: vec![BoundDimensionInput {
+                unique_name: "customer_name_dimension.[Customer First Name]".to_string(),
+                hierarchy: "customer_name_dimension".to_string(),
+            }],
+            calc_group_members: vec![],
+        };
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        // Measure-bearing query with a limit should emit TOPN with measure ref.
+        assert!(dax.contains("TOPN(10,"), "got: {dax}");
+        assert!(dax.contains("[Total Sales]"), "measure ref must appear, got: {dax}");
+        // And also ORDER BY (the non-projection path keeps ORDER BY).
+        assert!(dax.contains("ORDER BY"), "measure-bearing must emit ORDER BY, got: {dax}");
+        assert!(dax.contains("[Total Sales] DESC"), "measure ORDER BY must appear, got: {dax}");
+    }
+
+    /// AC6 (FR6): unresolvable order key in a projection should decline with a typed error.
+    #[test]
+    fn projection_unresolvable_order_key_declines() {
+        let ctx = customer_ctx();
+        let bound = proj_with_order(
+            &[("customer_name_dimension.[Customer First Name]", "customer_name_dimension")],
+            vec![OrderKey {
+                key: "nonexistent_dimension.[No Such Level]".to_string(),
+                direction: SortDirection::Asc,
+            }],
+            Some(20),
+        );
+        let err = compile_grounded(&bound, Some(&ctx)).unwrap_err();
+        assert!(
+            matches!(err, crate::DaxCompileError::UngroundableLevel { ref unique_name } if unique_name.contains("No Such Level")),
+            "expected UngroundableLevel for bad order key, got: {err:?}"
+        );
+    }
+}
+
 // ── PRD-mqo-projection-dax-grounding: per-level table + filter key alignment ────
 #[cfg(test)]
 mod projection_grounding_tests {
@@ -1523,7 +1839,7 @@ mod projection_grounding_tests {
     use mqo_spec::Mqo;
 
     /// Catalog whose `catalog` (database) name is `atscale_catalogs` — the live
-    /// failure case. ship_mode hierarchy has Carrier + Ship Mode Type levels.
+    /// failure case. `ship_mode` hierarchy has Carrier + Ship Mode Type levels.
     /// A space-bearing hierarchy ("Ship Mode") is included for the FR-3 quote test.
     fn ship_mode_ctx() -> DaxCatalogContext {
         let json = r#"{
@@ -1582,9 +1898,9 @@ mod projection_grounding_tests {
         assert!(!dax.contains("/* ungrounded"), "no ungrounded annotation, got: {dax}");
     }
 
-    /// AC-2 (filter half) + FR-2: a MemberLevel filter whose `level` is the BARE
-    /// label ("Ship Mode Type") still grounds to 'ship_mode'[Ship Mode Type] —
-    /// no /* ungrounded */, no unquoted space-bearing identifier.
+    /// AC-2 (filter half) + FR-2: a `MemberLevel` filter whose `level` is the BARE
+    /// label ("Ship Mode Type") still grounds to `'ship_mode'[Ship Mode Type]` —
+    /// no `/* ungrounded */`, no unquoted space-bearing identifier.
     #[test]
     fn ac2_member_level_filter_bare_label_grounds() {
         let ctx = ship_mode_ctx();
@@ -1602,7 +1918,7 @@ mod projection_grounding_tests {
         assert!(!dax.contains(" Ship Mode Type["), "no unquoted space-bearing ident, got: {dax}");
     }
 
-    /// FR-2: the same filter with a FULL unique_name as `level` grounds identically.
+    /// FR-2: the same filter with a FULL `unique_name` as `level` grounds identically.
     #[test]
     fn member_level_filter_unique_name_grounds_identically() {
         let ctx = ship_mode_ctx();
@@ -1631,7 +1947,7 @@ mod projection_grounding_tests {
     }
 
     /// AC-4: a projection level absent from the catalog declines with a typed
-    /// UngroundableLevel naming the level — no DAX emitted.
+    /// `UngroundableLevel` naming the level — no DAX emitted.
     #[test]
     fn ac4_ungroundable_projection_level_declines() {
         let ctx = ship_mode_ctx();
@@ -1666,8 +1982,8 @@ mod date_cross_dimension_codegen_tests {
     use mqo_spec::{Filter, Mqo};
 
     /// Catalog with:
-    /// - sold_date_dimensions: Sold Calendar Year (domain: years) + Sold Date Key (no year-exact domain)
-    /// - store_dimension: Store Name (domain: store names) + Gender (domain: F, M)
+    /// - `sold_date_dimensions`: Sold Calendar Year (domain: years) + Sold Date Key (no year-exact domain)
+    /// - `store_dimension`: Store Name (domain: store names) + Gender (domain: F, M)
     /// - measure: Net Profit
     fn tpcds_combined_ctx() -> DaxCatalogContext {
         let json = r#"{
@@ -1683,7 +1999,7 @@ mod date_cross_dimension_codegen_tests {
         DaxCatalogContext::from_json(json).unwrap()
     }
 
-    /// Build a BoundMqoInput with two Member filters and optional group-by dimensions.
+    /// Build a `BoundMqoInput` with two Member filters and optional group-by dimensions.
     fn bound_two_filters(
         f1_hierarchy: &str,
         f1_member: &str,
