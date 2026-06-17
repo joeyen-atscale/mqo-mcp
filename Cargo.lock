@@ -2692,6 +2692,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mqo-pg-query"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "mqo-auth-bridge",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "mqo-result-profiler"
 version = "0.1.0"
 dependencies = [
