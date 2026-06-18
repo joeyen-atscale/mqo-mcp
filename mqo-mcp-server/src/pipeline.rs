@@ -28,6 +28,8 @@ use mqo_auth_bridge::{Backend, EngineResult, FixtureEngine};
 use mqoguard_filter_bind_report::{
     BoundMqo, CompiledQuery, MemberFilter, MqoFilter, report_filters,
 };
+use crate::mcp::OntologyCheckMode;
+use crate::ontology_check::OntologyCheckStore;
 use crate::probe::BackendCapabilities;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -354,6 +356,11 @@ pub fn run<S: std::hash::BuildHasher>(
     // `ChannelScopeMismatch` guard (PRD-mqo-channel-scope-measure-grounding).
     // `None` disables the guard (conservative default for non-TPC-DS models).
     channel_scope_map: Option<&std::collections::BTreeMap<String, serde_json::Value>>,
+    // Inline ontology-check stage (PRD-swa-ontology-check-inline-enforcement).
+    // `None` store → stage logs `skipped` and proceeds (FR2 fail-open).
+    ontology_store: Option<&OntologyCheckStore>,
+    ontology_mode: OntologyCheckMode,
+    ontology_disabled_rules: &[String],
 ) -> Result<PipelineOutput, PipelineError> {
     // ── Hard guard: input must be an MQO object, never a raw SQL string. ──
     if query.is_string() {
@@ -397,6 +404,13 @@ pub fn run<S: std::hash::BuildHasher>(
     // pass through (no false-positive for plain additive measures).
     if let Some(rejection) = check_calc_context(&mqo, catalog) {
         return Err(rejection);
+    }
+
+    // ── Inline ontology-check stage (PRD-swa-ontology-check-inline-enforcement) ──
+    // Runs after structural + param validation, before any subprocess.
+    // Fail-open when no graph is available (FR2/NFR3).
+    if let Some(err) = ontology_check_inline(&mqo, ontology_store, ontology_mode, ontology_disabled_rules) {
+        return Err(err);
     }
 
     let scratch = Scratch::new()?;
@@ -939,6 +953,128 @@ fn param_validate(
         count: rejections.len(),
         report,
     })
+}
+
+/// Inline ontology-check pipeline stage (PRD-swa-ontology-check-inline-enforcement).
+///
+/// Runs after structural + param validation, before any subprocess execution.
+///
+/// - `Off` mode: returns `None` immediately (parity with pre-PRD behavior).
+/// - No graph available: returns `None` (fail-open per FR2).
+/// - `Warn` mode: calls the check, logs outcome, returns `None` (query proceeds).
+/// - `Enforce` mode: if any finding has `severity: "error"` (after filtering
+///   disabled rules), maps to `PipelineError::ParamRejected` and returns `Some(...)`.
+///
+/// The `args` shape passed to `OntologyCheckStore::check` uses the MQO's
+/// `measures` and `dimensions` lists in the same format the advisory tool accepts.
+fn ontology_check_inline(
+    mqo: &mqo_spec::Mqo,
+    store: Option<&OntologyCheckStore>,
+    mode: OntologyCheckMode,
+    disabled_rules: &[String],
+) -> Option<PipelineError> {
+    // Off mode: stage does not run.
+    if mode == OntologyCheckMode::Off {
+        eprintln!("mqo-mcp-server: ontology_check: mode=off ontology_checked=skipped");
+        return None;
+    }
+
+    // No graph available: fail-open.
+    let Some(store) = store else {
+        eprintln!("mqo-mcp-server: ontology_check: mode={mode:?} ontology_checked=skipped (no_store)");
+        return None;
+    };
+
+    // Build the args JSON for OntologyCheckStore::check.
+    let measures_arr: Vec<serde_json::Value> = mqo
+        .measures
+        .iter()
+        .map(|m| serde_json::json!(m.unique_name))
+        .collect();
+
+    let dims_arr: Vec<serde_json::Value> = mqo
+        .dimensions
+        .iter()
+        .map(|d| serde_json::json!({ "hierarchy": d.hierarchy, "level": d.level }))
+        .collect();
+
+    let args = serde_json::json!({
+        "measures": measures_arr,
+        "dimensions": dims_arr
+    });
+
+    let result = store.check(&args);
+
+    // Collect findings, filtering disabled rules.
+    let empty = vec![];
+    let all_findings = result
+        .get("findings")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or(&empty);
+
+    let active_findings: Vec<&serde_json::Value> = all_findings
+        .iter()
+        .filter(|f| {
+            let rule_id = f.get("rule_id").and_then(serde_json::Value::as_str).unwrap_or("");
+            // Keep findings whose rule_id is NOT in the disabled list and NOT the
+            // internal "ontology_graph_not_available" info finding.
+            rule_id != "ontology_graph_not_available"
+                && !disabled_rules.iter().any(|r| r.as_str() == rule_id)
+        })
+        .collect();
+
+    let error_findings: Vec<&serde_json::Value> = active_findings
+        .iter()
+        .copied()
+        .filter(|f| f.get("severity").and_then(serde_json::Value::as_str) == Some("error"))
+        .collect();
+
+    let fired_rule_ids: Vec<&str> = active_findings
+        .iter()
+        .filter_map(|f| f.get("rule_id").and_then(serde_json::Value::as_str))
+        .collect();
+
+    let has_errors = !error_findings.is_empty();
+    let conforms = result.get("conforms").and_then(serde_json::Value::as_bool).unwrap_or(true);
+
+    eprintln!(
+        "mqo-mcp-server: ontology_check: mode={mode:?} ontology_checked=true conforms={conforms} \
+         findings={} errors={} rules_fired={fired_rule_ids:?}",
+        active_findings.len(),
+        error_findings.len()
+    );
+
+    match mode {
+        OntologyCheckMode::Off => None, // already handled above
+        OntologyCheckMode::Warn => {
+            // Warn mode: findings logged, query proceeds regardless.
+            None
+        }
+        OntologyCheckMode::Enforce => {
+            if !has_errors {
+                return None;
+            }
+            // Map error findings to the param_rejected envelope.
+            let rejections: Vec<serde_json::Value> = error_findings
+                .iter()
+                .map(|f| {
+                    let rule_id = f.get("rule_id").and_then(serde_json::Value::as_str).unwrap_or("ontology_error");
+                    let entity = f.get("entity").cloned().unwrap_or(serde_json::Value::Null);
+                    let message = f.get("message").and_then(serde_json::Value::as_str).unwrap_or("ontology check failed");
+                    serde_json::json!({
+                        "rule_id": rule_id,
+                        "entity": entity,
+                        "message": message,
+                        "reason": "ontology_violation",
+                        "source": "ontology_check_inline"
+                    })
+                })
+                .collect();
+            let count = rejections.len();
+            let report = serde_json::json!({ "param_rejections": rejections });
+            Some(PipelineError::ParamRejected { count, report })
+        }
+    }
 }
 
 /// Pre-execution calc-context check (PRD-mqo-calc-context-ratio-measures).
@@ -1693,5 +1829,182 @@ mod calc_context_tests {
         let mqo = mqo_with_measure("tpcds.web_sales");
         let result = check_calc_context(&mqo, &catalog);
         assert!(result.is_none(), "measure not in catalog is not rejected");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Unit tests for ontology_check_inline (AC1–AC5 + FR5 per-rule disable)
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod ontology_inline_tests {
+    use super::*;
+    use crate::mcp::OntologyCheckMode;
+    use crate::ontology_check::OntologyCheckStore;
+
+    // ── Shared fixture TTL (same synthetic graph as ontology_check.rs tests) ─
+    fn fixture_ttl() -> &'static str {
+        r#"
+@prefix aso:  <https://ontology.atscale.com/aso/> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+<https://models.atscale.com#cube-sales>
+    rdf:type owl:NamedIndividual, aso:Cube ;
+    rdfs:label "Sales" .
+
+<https://models.atscale.com#measure-revenue>
+    rdf:type owl:NamedIndividual, aso:FullyAdditiveMeasure ;
+    rdfs:label "Revenue" .
+
+<https://models.atscale.com#measure-inventory>
+    rdf:type owl:NamedIndividual, aso:SemiAdditiveMeasure ;
+    rdfs:label "Inventory Level" .
+
+<https://models.atscale.com#hier-brand>
+    rdf:type owl:NamedIndividual, aso:Hierarchy ;
+    rdfs:label "Brand" ;
+    aso:hasLevel <https://models.atscale.com#level-brand> .
+
+<https://models.atscale.com#level-brand>
+    rdf:type owl:NamedIndividual, aso:Level ;
+    rdfs:label "Brand" .
+
+<https://models.atscale.com#level-sold-calendar-month>
+    rdf:type owl:NamedIndividual, aso:Level ;
+    rdfs:label "Sold Calendar Month" .
+"#
+    }
+
+    fn fixture_store() -> OntologyCheckStore {
+        let mut s = OntologyCheckStore::new();
+        s.load_turtle(fixture_ttl()).expect("fixture TTL must parse");
+        s
+    }
+
+    /// Build a minimal MQO with the given measure unique_name and optional dimension.
+    fn make_mqo(measure: Option<&str>, dim_hier: Option<&str>, dim_level: Option<&str>) -> mqo_spec::Mqo {
+        let measures = measure.map_or_else(Vec::new, |m| vec![
+            mqo_spec::MeasureRef { unique_name: m.to_string() }
+        ]);
+        let dimensions = match (dim_hier, dim_level) {
+            (Some(h), Some(l)) => vec![
+                mqo_spec::LevelSelection {
+                    hierarchy: h.to_string(),
+                    level: l.to_string(),
+                }
+            ],
+            _ => vec![],
+        };
+        mqo_spec::Mqo {
+            model: "test_model".to_string(),
+            measures,
+            dimensions,
+            filters: vec![],
+            time_intelligence: vec![],
+            order: None,
+            limit: None,
+            non_empty: false,
+            projection: false,
+        }
+    }
+
+    // AC1: stage runs in warn mode with loaded graph → returns None (query proceeds)
+    // and the log line would say ontology_checked=true.
+    #[test]
+    fn ac1_warn_mode_with_graph_valid_query_proceeds() {
+        let store = fixture_store();
+        let mqo = make_mqo(Some("Revenue"), Some("Brand"), Some("Brand"));
+        let result = ontology_check_inline(&mqo, Some(&store), OntologyCheckMode::Warn, &[]);
+        assert!(result.is_none(), "warn mode with valid query must return None (query proceeds)");
+    }
+
+    // AC2: no graph (store has None graph) → stage returns None, fail-open.
+    #[test]
+    fn ac2_no_graph_fail_open() {
+        let store = OntologyCheckStore::new(); // no graph loaded
+        let mqo = make_mqo(Some("Revenue"), None, None);
+        let result = ontology_check_inline(&mqo, Some(&store), OntologyCheckMode::Enforce, &[]);
+        // OntologyCheckStore::check with no graph returns conforms=true + info finding.
+        // The inline stage should not reject on info findings.
+        assert!(result.is_none(), "no-graph store must fail-open (return None)");
+    }
+
+    // AC2b: None store → fail-open.
+    #[test]
+    fn ac2b_none_store_fail_open() {
+        let mqo = make_mqo(Some("Revenue"), None, None);
+        let result = ontology_check_inline(&mqo, None, OntologyCheckMode::Enforce, &[]);
+        assert!(result.is_none(), "None store must fail-open (return None)");
+    }
+
+    // AC3: warn mode — ungrounded entity found, findings exist but None returned.
+    #[test]
+    fn ac3_warn_mode_ungrounded_entity_proceeds() {
+        let store = fixture_store();
+        let mqo = make_mqo(Some("SyntheticRank"), Some("Brand"), Some("Brand")); // SyntheticRank not in graph
+        let result = ontology_check_inline(&mqo, Some(&store), OntologyCheckMode::Warn, &[]);
+        assert!(
+            result.is_none(),
+            "warn mode must return None even when entity not in graph (findings attached but query proceeds)"
+        );
+    }
+
+    // AC4: enforce mode — ungrounded entity returns Some(PipelineError::ParamRejected).
+    #[test]
+    fn ac4_enforce_mode_ungrounded_entity_rejects() {
+        let store = fixture_store();
+        let mqo = make_mqo(Some("SyntheticRank"), None, None); // not in graph
+        let result = ontology_check_inline(&mqo, Some(&store), OntologyCheckMode::Enforce, &[]);
+        match result {
+            Some(PipelineError::ParamRejected { count, report }) => {
+                assert!(count >= 1, "must have at least 1 rejection");
+                let rejections = report
+                    .get("param_rejections")
+                    .and_then(serde_json::Value::as_array)
+                    .expect("param_rejections must be array");
+                assert!(!rejections.is_empty(), "rejections array must not be empty");
+                // Verify the rejection carries rule_id=entity_existence
+                let first = &rejections[0];
+                assert_eq!(
+                    first.get("rule_id").and_then(serde_json::Value::as_str),
+                    Some("entity_existence"),
+                    "rule_id must be entity_existence: {first}"
+                );
+                assert_eq!(
+                    first.get("entity").and_then(serde_json::Value::as_str),
+                    Some("SyntheticRank"),
+                    "entity must name the offending measure: {first}"
+                );
+            }
+            other => panic!("expected ParamRejected, got {other:?}"),
+        }
+    }
+
+    // AC5: off mode — stage returns None regardless of graph or query.
+    #[test]
+    fn ac5_off_mode_returns_none() {
+        let store = fixture_store();
+        let mqo = make_mqo(Some("SyntheticRank"), None, None);
+        let result = ontology_check_inline(&mqo, Some(&store), OntologyCheckMode::Off, &[]);
+        assert!(result.is_none(), "off mode must always return None");
+    }
+
+    // FR5: per-rule disable — disabled rule produces no finding even in enforce mode.
+    #[test]
+    fn fr5_disabled_rule_suppressed_in_enforce() {
+        let store = fixture_store();
+        // Use a query with Inventory Level + Sold Calendar Month to trigger semi_additive_sum_over_time,
+        // but with that rule disabled.
+        let mqo = make_mqo(Some("Inventory Level"), Some("Sold Calendar Month"), Some("Sold Calendar Month"));
+        let disabled = vec!["entity_existence".to_string(), "semi_additive_sum_over_time".to_string()];
+        // With entity_existence disabled, Inventory Level is checked but semi_additive is suppressed.
+        // "Inventory Level" IS in the graph (SemiAdditiveMeasure), so entity_existence would NOT fire
+        // but semi_additive_sum_over_time would — and we disable it.
+        let result = ontology_check_inline(&mqo, Some(&store), OntologyCheckMode::Enforce, &disabled);
+        assert!(
+            result.is_none(),
+            "disabled rule must not produce a rejection: {result:?}"
+        );
     }
 }

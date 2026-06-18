@@ -92,8 +92,10 @@ fn plain_server() -> Server {
         model_graph: None,
         grounding_store: None,
         ontology_check: None,
-            autolift_base_url: None,
-            autolift_cache: None,
+        ontology_check_mode: mqo_mcp_server::mcp::OntologyCheckMode::Warn,
+        ontology_check_disabled_rules: Vec::new(),
+        autolift_base_url: None,
+        autolift_cache: None,
     }
 }
 

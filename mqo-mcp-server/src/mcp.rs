@@ -738,6 +738,34 @@ fn json_byte_size(v: &Value) -> usize {
 /// Protocol version this server speaks. Matches the MCP spec revision string.
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
+/// Operating mode for the inline ontology-check pipeline stage.
+///
+/// Controlled via `--ontology-check-mode` / `MQO_ONTOLOGY_CHECK_MODE`.
+/// Default: `Warn` (non-breaking; findings logged but query proceeds).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum OntologyCheckMode {
+    /// Stage does not run; parity with pre-PRD behavior.
+    Off,
+    /// Stage runs; findings attached to response as advisory metadata; query executes.
+    #[default]
+    Warn,
+    /// Stage runs; query rejected pre-execution if any finding has `severity: error`.
+    Enforce,
+}
+
+impl std::str::FromStr for OntologyCheckMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "off" => Ok(OntologyCheckMode::Off),
+            "warn" => Ok(OntologyCheckMode::Warn),
+            "enforce" => Ok(OntologyCheckMode::Enforce),
+            other => Err(format!("unknown ontology-check-mode '{other}'; expected off|warn|enforce")),
+        }
+    }
+}
+
 /// Selects which engine the server uses for `query_multidimensional`.
 ///
 /// - `Fixture` — deterministic cluster-free synthesis (default; no `--endpoint`).
@@ -832,6 +860,16 @@ pub struct Server {
     /// Uses the same lifted `aso:` graph as `model_graph`; kept as a separate
     /// store so it can be populated/tested independently (advisory-first tier).
     pub ontology_check: Option<Box<OntologyCheckStore>>,
+    /// Inline ontology-check mode for `query_multidimensional`.
+    ///
+    /// Controlled by `--ontology-check-mode`. Default: `Warn` (non-breaking).
+    /// `Off` restores pre-PRD behavior; `Enforce` rejects queries with error-severity findings.
+    pub ontology_check_mode: OntologyCheckMode,
+    /// Per-rule disable list for the inline ontology-check stage.
+    ///
+    /// Findings whose `rule_id` appears here are suppressed in any mode.
+    /// Controlled by `--ontology-check-disable-rule` (repeatable).
+    pub ontology_check_disabled_rules: Vec<String>,
     /// Base URL for the engine catalog-XML endpoint used by auto-lift.
     ///
     /// When `Some`, `query_model_graph` fetches `{base_url}/{catalog_id}.xml`
@@ -2217,6 +2255,9 @@ impl Server {
             self.enriched.as_ref().map(|e| e.catalog_json.as_str()),
             &self.xmla_model_coords,
             self.enriched.as_ref().map(|e| &e.channel_scope_map),
+            self.ontology_check.as_deref(),
+            self.ontology_check_mode,
+            &self.ontology_check_disabled_rules,
         );
         #[allow(clippy::cast_possible_truncation)]
         let latency_ms = start.elapsed().as_millis() as u64;
@@ -3855,6 +3896,8 @@ mod hierarchy_levels_value_type_tests {
             model_graph: None,
             grounding_store: None,
             ontology_check: None,
+            ontology_check_mode: OntologyCheckMode::Warn,
+            ontology_check_disabled_rules: Vec::new(),
             autolift_base_url: None,
             autolift_cache: None,
         }
@@ -3958,6 +4001,8 @@ mod hierarchy_levels_value_type_tests {
             model_graph: None,
             grounding_store: None,
             ontology_check: None,
+            ontology_check_mode: OntologyCheckMode::Warn,
+            ontology_check_disabled_rules: Vec::new(),
             autolift_base_url: None,
             autolift_cache: None,
         };
@@ -4043,6 +4088,8 @@ mod hierarchy_levels_value_type_tests {
             model_graph: None,
             grounding_store: None,
             ontology_check: None,
+            ontology_check_mode: OntologyCheckMode::Warn,
+            ontology_check_disabled_rules: Vec::new(),
             autolift_base_url: None,
             autolift_cache: None,
         };
@@ -4190,6 +4237,8 @@ mod autolift_wiring_tests {
             model_graph: None,
             grounding_store: None,
             ontology_check: None,
+            ontology_check_mode: OntologyCheckMode::Warn,
+            ontology_check_disabled_rules: Vec::new(),
             autolift_base_url: None,
             autolift_cache: None,
         }
