@@ -2651,6 +2651,104 @@ fn member_locate_ac6_column_name_search_unchanged() {
     );
 }
 
+// ── PRD-mqo-describe-ranking-limit-grammar acceptance tests ─────────────────
+
+/// ext31: `query_multidimensional` tool description documents `limit` and `order`.
+///
+/// AC1 (PRD-mqo-describe-ranking-limit-grammar): the tool description must
+/// mention both "limit" and "order" so the model can discover ranking grammar.
+#[test]
+fn ext31_query_multidimensional_description_documents_limit_and_order() {
+    let tools = tool_descriptors();
+    let tool = tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "query_multidimensional")
+        .expect("query_multidimensional must be in tool list");
+    let desc = tool["description"].as_str().expect("description must be a string");
+
+    assert!(
+        desc.contains("limit"),
+        "query_multidimensional description must document `limit`: {desc}"
+    );
+    assert!(
+        desc.contains("order"),
+        "query_multidimensional description must document `order`: {desc}"
+    );
+    assert!(
+        desc.contains("TOPN") || desc.contains("top-N") || desc.contains("top N"),
+        "query_multidimensional description must mention TOPN/top-N: {desc}"
+    );
+    assert!(
+        desc.contains("Rank") || desc.contains("rank"),
+        "query_multidimensional description must warn about synthetic Rank columns: {desc}"
+    );
+    assert!(
+        desc.contains("direction"),
+        "query_multidimensional description must document direction field in order: {desc}"
+    );
+}
+
+/// ext32: `query_multidimensional` JSON schema includes `limit` and `order` fields.
+///
+/// AC1 (FR1): the inputSchema properties must include limit and order so strict
+/// MCP clients can emit them without guessing.
+#[test]
+fn ext32_query_multidimensional_schema_includes_limit_and_order() {
+    let tools = tool_descriptors();
+    let tool = tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "query_multidimensional")
+        .expect("query_multidimensional must be in tool list");
+
+    // The inputSchema has: {type:object, properties: {mqo: <mqo_schema>, cluster: ...}}
+    // The mqo_schema is emitted by schemars from mqo_spec::Mqo and includes limit/order
+    // as optional properties in the definitions or directly in the mqo object schema.
+    let schema_str = serde_json::to_string(&tool["inputSchema"]).expect("schema to string");
+    assert!(
+        schema_str.contains("limit"),
+        "inputSchema must reference `limit` field: {schema_str}"
+    );
+    assert!(
+        schema_str.contains("order"),
+        "inputSchema must reference `order` field: {schema_str}"
+    );
+}
+
+/// ext33: `describe_model` response carries a ranking_note advertising limit+order grammar.
+///
+/// AC6 (PRD-mqo-describe-ranking-limit-grammar FR2): describe_model must surface
+/// that ranking is expressed via limit+order, not a Rank column.
+#[test]
+fn ext33_describe_model_response_carries_ranking_note() {
+    let srv = server();
+    let result = call_tool(&srv, "describe_model", json!({}));
+    assert_eq!(result["isError"], json!(false), "describe_model must not error: {result}");
+    let text = result["content"][0]["text"].as_str().expect("text content");
+    let payload: serde_json::Value = serde_json::from_str(text).expect("parse describe_model json");
+
+    assert!(
+        payload.get("ranking_note").is_some(),
+        "describe_model must include ranking_note: {payload}"
+    );
+    let note = payload["ranking_note"].as_str().expect("ranking_note must be a string");
+    assert!(
+        note.contains("limit"),
+        "ranking_note must mention limit: {note}"
+    );
+    assert!(
+        note.contains("order"),
+        "ranking_note must mention order: {note}"
+    );
+    assert!(
+        note.contains("Rank") || note.contains("rank"),
+        "ranking_note must warn about synthetic Rank column: {note}"
+    );
+}
+
 /// empty member_value → typed input error (not a scan).
 #[test]
 fn member_locate_empty_value_returns_error() {
