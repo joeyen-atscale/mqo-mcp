@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.11.0 — 2026-06-18
+
+RULE 12 role-confusion guard (PRD-mqo-grounding-enforcement-dedup): rejects MQO params where a measure name appears in the `dimensions` slot or a level name appears in the `measures` slot. Catalog-driven check; fires only when the name resolves unambiguously to exactly one kind (ambiguous names and unresolved names are deferred to the binder). New `RejectReason::RoleConfusion { entity, actual_kind, correct_slot }` variant. New `check_role_confusion()` function wired after RULE 11 in `validate()`. 5 new tests (AC1–AC5): measure-as-dim fired, level-as-measure fired, ambiguous silent, correct usage silent, unresolved silent.
+
 ## v0.10.0 — 2026-06-18
 
 RULE 6 dimension-scoped rank grounding (PRD-mqo-rule6-dimension-scoped-rank-grounding): bracket-label level grounding is now scoped to the referenced dimension. Closes the cross-dimension grounding leak where a foreign dimension's `Rank` level caused RULE 6 to accept synthetic rank columns in unrelated queries (4 C9 rank-persist cases). New shared helper `dimension_levels_for_prefix(catalog, prefix)` → `Option<Vec<String>>` resolves a bracket prefix to the owning dimension's levels; conservative flat-union fallback when prefix is unresolvable (FR5). Measure grounding remains catalog-global (FR4). New RULE 6 tests: AC1 cross-dim leak fires, AC2 in-dim grounded silent, AC5 unresolvable-prefix conservative.

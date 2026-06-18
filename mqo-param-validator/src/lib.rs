@@ -362,6 +362,22 @@ pub enum RejectReason {
         /// The Jaro-Winkler similarity score (for operator audit).
         similarity: f64,
     },
+    /// RULE 12 (PRD-mqo-grounding-enforcement-dedup): a catalog entity appears in
+    /// the wrong MQO slot — a `kind=measure` name placed in the `dimensions` list,
+    /// or a `kind=level/hierarchy` name placed in the `measures` list.
+    ///
+    /// Conservative: only fires when the name resolves *unambiguously* to the
+    /// wrong kind (i.e. matches the wrong catalog partition and does NOT also
+    /// match the correct partition). Ambiguous names and unresolvable names
+    /// defer to the binder.
+    RoleConfusion {
+        /// The entity name that was placed in the wrong slot.
+        entity: String,
+        /// The catalog kind of that entity (`"measure"` or `"level"`).
+        actual_kind: String,
+        /// The correct MQO slot it should appear in (`"measures"` or `"dimensions"`).
+        correct_slot: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -634,6 +650,11 @@ pub fn validate(mqo: &BoundMqoInput, catalog: &CatalogSnapshot) -> Vec<ParamReje
     // guard — fires only when RULE 8 and RULE 10 both declined and a fuzzy-only
     // near-miss of exactly one dimension-local level is found.
     check_near_miss_level_label(mqo, catalog, &mut rejections);
+
+    // RULE 12 (PRD-mqo-grounding-enforcement-dedup): role-confusion guard — a
+    // catalog measure used in the dimensions slot, or a catalog level used in
+    // the measures slot. Catalog-driven, no graph required, always-on.
+    check_role_confusion(mqo, catalog, &mut rejections);
 
     rejections
 }
@@ -4448,4 +4469,247 @@ mod tests {
         assert_eq!(r11_count, 0, "AC6: unresolvable prefix must keep RULE 11 silent; got: {rejections:?}");
     }
 
+}
+
+// ---------------------------------------------------------------------------
+// RULE 12: role-confusion guard (PRD-mqo-grounding-enforcement-dedup)
+// ---------------------------------------------------------------------------
+
+/// Check whether the MQO places a catalog entity in the wrong slot:
+/// a `kind=measure` name in the `dimensions` list, or a `kind=level/hierarchy`
+/// name in the `measures` list.
+///
+/// Conservative (FR2 — zero false positives):
+/// - Only fires when the name resolves *unambiguously* to the wrong kind AND
+///   does NOT also match the correct kind (ambiguous names defer to the binder).
+/// - A name not found in either catalog partition is ignored (let the binder
+///   surface the not-found error).
+/// - Empty measures/dimensions lists are a no-op.
+pub(crate) fn check_role_confusion(
+    mqo: &BoundMqoInput,
+    catalog: &CatalogSnapshot,
+    rejections: &mut Vec<ParamRejection>,
+) {
+    // Pre-build normalized sets for O(1) lookup.
+    let measure_names: std::collections::HashSet<String> = catalog
+        .measures
+        .iter()
+        .flat_map(|m| {
+            let mut names = vec![normalize(&m.unique_name)];
+            if let Some(label) = &m.label {
+                names.push(normalize(label));
+            }
+            names
+        })
+        .collect();
+
+    let level_names: std::collections::HashSet<String> = catalog
+        .hierarchies
+        .iter()
+        .flat_map(|h| h.levels.iter().map(|l| normalize(l)))
+        .collect();
+
+    // Check: measure slot contains a name that is a catalog level (not a measure).
+    for mref in &mqo.measures {
+        let norm = normalize(&mref.unique_name);
+        let is_measure = measure_names.contains(&norm);
+        let is_level = level_names.contains(&norm);
+        if is_level && !is_measure {
+            // Unambiguously a level in the measures slot.
+            rejections.push(ParamRejection::new(
+                mref.unique_name.clone(),
+                FieldClass::Measure,
+                RejectReason::RoleConfusion {
+                    entity: mref.unique_name.clone(),
+                    actual_kind: "level".to_string(),
+                    correct_slot: "dimensions".to_string(),
+                },
+                vec![Suggestion {
+                    name: format!("move [{}] to the dimensions list", mref.unique_name),
+                    similarity: 1.0,
+                    note: Some(format!(
+                        "[{}] is a dimension attribute (level), not a measure; \
+                         place it in the dimensions slot and use a real measure \
+                         in the measures slot.",
+                        mref.unique_name
+                    )),
+                }],
+            ));
+        }
+    }
+
+    // Check: dimensions slot contains a name that is a catalog measure (not a level).
+    for dref in &mqo.dimensions {
+        let norm = normalize(&dref.unique_name);
+        let is_measure = measure_names.contains(&norm);
+        let is_level = level_names.contains(&norm);
+        if is_measure && !is_level {
+            // Unambiguously a measure in the dimensions slot.
+            rejections.push(ParamRejection::new(
+                dref.unique_name.clone(),
+                FieldClass::Dimension,
+                RejectReason::RoleConfusion {
+                    entity: dref.unique_name.clone(),
+                    actual_kind: "measure".to_string(),
+                    correct_slot: "measures".to_string(),
+                },
+                vec![Suggestion {
+                    name: format!("move [{}] to the measures list", dref.unique_name),
+                    similarity: 1.0,
+                    note: Some(format!(
+                        "[{}] is a measure, not a dimension attribute; \
+                         place it in the measures slot.",
+                        dref.unique_name
+                    )),
+                }],
+            ));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RULE 12 tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod rule12_tests {
+    use super::*;
+
+    fn rule12_catalog() -> CatalogSnapshot {
+        CatalogSnapshot {
+            measures: vec![
+                CatalogMeasure {
+                    unique_name: "Store Sales".into(),
+                    label: Some("Store Sales".into()),
+                    ..Default::default()
+                },
+                CatalogMeasure {
+                    unique_name: "Total Quantity Sold".into(),
+                    label: Some("Total Quantity Sold".into()),
+                    ..Default::default()
+                },
+            ],
+            dimensions: vec![
+                CatalogDimension {
+                    unique_name: "Store".into(),
+                    subject_areas: vec![],
+                },
+            ],
+            hierarchies: vec![
+                CatalogHierarchy {
+                    dimension_unique_name: "Store".into(),
+                    hierarchy_unique_name: "Store".into(),
+                    levels: vec!["Store Name".into(), "Store City".into()],
+                    level_meta: vec![],
+                },
+            ],
+            date_roles: vec![],
+        }
+    }
+
+    // AC1: measure used as dimension → RULE 12 fires with RoleConfusion(actual_kind=measure)
+    #[test]
+    fn ac1_measure_as_dimension_rejected() {
+        let catalog = rule12_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Store Sales".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "Total Quantity Sold".into(), // measure in dimensions slot
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let r12: Vec<_> = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::RoleConfusion { actual_kind, .. } if actual_kind == "measure"))
+            .collect();
+        assert_eq!(r12.len(), 1, "AC1: measure-as-dimension must fire RULE 12; got: {rejections:?}");
+        assert_eq!(r12[0].field, "Total Quantity Sold");
+    }
+
+    // AC2: level used as measure → RULE 12 fires with RoleConfusion(actual_kind=level)
+    #[test]
+    fn ac2_level_as_measure_rejected() {
+        let catalog = rule12_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![
+                MqoMeasureRef { unique_name: "Store Name".into(), aggregation: None }, // level in measures slot
+            ],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "Store".into(),
+                level: Some("Store City".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let r12: Vec<_> = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::RoleConfusion { actual_kind, .. } if actual_kind == "level"))
+            .collect();
+        assert_eq!(r12.len(), 1, "AC2: level-as-measure must fire RULE 12; got: {rejections:?}");
+        assert_eq!(r12[0].field, "Store Name");
+    }
+
+    // AC3: ambiguous label (matches both a measure and a level) → RULE 12 silent
+    #[test]
+    fn ac3_ambiguous_label_silent() {
+        let mut catalog = rule12_catalog();
+        // Add a level with the same name as a measure to create ambiguity.
+        catalog.hierarchies[0].levels.push("Store Sales".into());
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "Store Sales".into(), // ambiguous: also a measure
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let r12_count = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::RoleConfusion { .. }))
+            .count();
+        assert_eq!(r12_count, 0, "AC3: ambiguous label must keep RULE 12 silent; got: {rejections:?}");
+    }
+
+    // AC4: correct usage → RULE 12 silent
+    #[test]
+    fn ac4_correct_usage_silent() {
+        let catalog = rule12_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Store Sales".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "Store".into(),
+                level: Some("Store Name".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let r12_count = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::RoleConfusion { .. }))
+            .count();
+        assert_eq!(r12_count, 0, "AC4: correct usage must keep RULE 12 silent; got: {rejections:?}");
+    }
+
+    // AC5: unresolved name → RULE 12 silent (defer to binder)
+    #[test]
+    fn ac5_unresolved_name_silent() {
+        let catalog = rule12_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "UnknownMeasure".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "UnknownDim".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let r12_count = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::RoleConfusion { .. }))
+            .count();
+        assert_eq!(r12_count, 0, "AC5: unresolved name must keep RULE 12 silent; got: {rejections:?}");
+    }
 }
