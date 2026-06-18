@@ -260,10 +260,23 @@ fn append_order_by(
     if bound.mqo.is_projection() && bound.mqo.limit.is_some() {
         return Ok(());
     }
-    // Measure-bearing with a limit: TOPN selects and sorts by primary measure — skip ORDER BY.
-    // AtScale XMLA rejects ORDER BY on dimension column refs after TOPN, causing an engine
-    // error (j=None) on queries like "top 20 stores by employee count, tie-break by name".
+    // Measure-bearing with a limit: TOPN handles the primary sort. Emit ORDER BY only for
+    // measure-typed keys — AtScale XMLA rejects ORDER BY on dimension column refs after TOPN
+    // (engine error). Dimension tie-breaker keys are dropped; measure-sort keys are kept so
+    // TOPN row-set correctness is preserved when measure values tie at the cutoff.
     if !bound.mqo.is_projection() && bound.mqo.limit.is_some() {
+        let measure_order_parts: Vec<String> = order_keys
+            .iter()
+            .filter(|ok| bound.measures.iter().any(|m| m.unique_name == ok.key))
+            .map(|ok| {
+                let dir = sort_dir_str(&ok.direction);
+                format!("{} {dir}", measure_dax_ref_ctx(&ok.key, ctx))
+            })
+            .collect();
+        if !measure_order_parts.is_empty() {
+            write!(dax, "\nORDER BY {}", measure_order_parts.join(", "))
+                .expect("String write is infallible");
+        }
         return Ok(());
     }
     let order_parts: Result<Vec<String>, DaxCompileError> = order_keys
@@ -1852,10 +1865,11 @@ mod projection_orderby_tests {
         let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
         // Measure-bearing query with a limit should emit TOPN with measure ref.
         assert!(dax.contains("TOPN(10,"), "got: {dax}");
-        assert!(dax.contains("[Total Sales]"), "measure ref must appear in TOPN, got: {dax}");
-        // ORDER BY is suppressed for measure-bearing+limit: TOPN already handles sort,
-        // and AtScale XMLA rejects ORDER BY on dimension refs after TOPN.
-        assert!(!dax.contains("ORDER BY"), "measure-bearing+limit must NOT emit ORDER BY, got: {dax}");
+        assert!(dax.contains("[Total Sales]"), "measure ref must appear, got: {dax}");
+        // v0.17.2: measure-typed ORDER BY key is kept (dimension-typed ones are dropped).
+        // [Total Sales] is in bound.measures → it is emitted in ORDER BY.
+        assert!(dax.contains("ORDER BY"), "measure-typed order key must produce ORDER BY, got: {dax}");
+        assert!(dax.contains("[Total Sales] DESC"), "measure ref must appear in ORDER BY, got: {dax}");
     }
 
     /// AC6 (FR6): unresolvable order key in a projection should decline with a typed error.
@@ -2010,11 +2024,11 @@ mod aggregation_orderby_tests {
         assert!(measure_pos < dim_pos, "measure key must precede dimension key in declared order");
     }
 
-    /// AC4: measure-bearing with a TOPN limit must NOT emit ORDER BY.
-    /// AtScale XMLA rejects ORDER BY on dimension column refs after TOPN, causing j=None
-    /// engine errors on queries like "top 20 stores by employee count, tie-break by name".
+    /// AC4a: measure-bearing with a TOPN limit keeps measure-typed ORDER BY, drops dimension keys.
+    /// v0.17.2: refined from v0.17.1 (which dropped ALL ORDER BY, causing tie-break regression).
+    /// AtScale XMLA rejects ORDER BY on dimension column refs after TOPN; measure refs are OK.
     #[test]
-    fn measure_bearing_with_limit_suppresses_order_by() {
+    fn measure_bearing_with_limit_keeps_measure_order_drops_dim_order() {
         let ctx = agg_ctx();
         let bound = agg_bound(
             "tpcds.total_net_profit",
@@ -2027,12 +2041,38 @@ mod aggregation_orderby_tests {
             Some(20),
         );
         let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        // Measure-typed key must appear in ORDER BY
+        assert!(
+            dax.contains("ORDER BY") && dax.contains("[Total Net Profit] DESC"),
+            "measure-typed ORDER BY key must be kept for TOPN+limit, got:\n{dax}"
+        );
+        // Dimension-typed key must NOT appear in ORDER BY (XMLA rejects it after TOPN)
+        assert!(
+            !dax.contains("'items'[Item Product Name] ASC"),
+            "dimension-typed ORDER BY key must be dropped for TOPN+limit, got:\n{dax}"
+        );
+        assert!(dax.contains("TOPN(20"), "TOPN wrapper must still be present, got:\n{dax}");
+    }
+
+    /// AC4b: measure-bearing+limit with only dimension ORDER BY keys emits no ORDER BY at all.
+    #[test]
+    fn measure_bearing_with_limit_only_dim_order_emits_no_order_by() {
+        let ctx = agg_ctx();
+        let bound = agg_bound(
+            "tpcds.total_net_profit",
+            "items.[Item Product Name]",
+            "items",
+            vec![
+                OrderKey { key: "items.[Item Product Name]".to_string(), direction: SortDirection::Asc },
+            ],
+            Some(20),
+        );
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
         assert!(
             !dax.contains("ORDER BY"),
-            "measure-bearing+limit must NOT emit ORDER BY (TOPN handles sort), got:\n{dax}"
+            "dimension-only ORDER BY must be fully suppressed for TOPN+limit, got:\n{dax}"
         );
-        // TOPN wrapper must still be present with the correct measure sort key
-        assert!(dax.contains("TOPN(20"), "TOPN limit must still be present, got:\n{dax}");
+        assert!(dax.contains("TOPN(20"), "TOPN must still be present, got:\n{dax}");
     }
 
     /// AC1 (PRD-mqo-orderby-fallback-to-measure-ref): an order key that is NOT in
