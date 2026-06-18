@@ -601,8 +601,10 @@ fn json_round_trip_bound_mqo_input() {
 }
 
 /// Kill mutant: `delete match arm TimeIntel::Rank` in build_measure_pairs.
-/// When Rank time-intel is applied, the measure label must include " Rank" suffix.
-/// Without the Rank arm, the label would stay bare (e.g. "Revenue" not "Revenue Rank").
+/// v0.17.0 (PRD-mqo-rank-column-residual-suppression): the Rank arm must NOT append
+/// " Rank" to the measure label — the ordinal is expressed by TOPN ordering only.
+/// Without the Rank arm entirely, the label would be bare AND TOPN wouldn't be emitted;
+/// with the Rank arm but without the label suffix, TOPN is emitted and the label is bare.
 #[test]
 fn rank_label_includes_rank_suffix() {
     let mut mqo = minimal_mqo("sales", "sales.revenue");
@@ -624,11 +626,15 @@ fn rank_label_includes_rank_suffix() {
     );
     // The TOPN wrapper must name the top_n from the Rank variant, not the limit field.
     assert!(dax.contains("TOPN(3"), "Rank top_n=3 must produce TOPN(3: {dax}");
-    // The measure label in the ROW/SUMMARIZECOLUMNS name slot must include "Rank".
-    // Without the Rank arm in build_measure_pairs, the label would be bare "Revenue".
+    // The measure label must be bare (no " Rank" suffix) — ordinal is encoded by TOPN order,
+    // not as a named output column (PRD-mqo-rank-column-residual-suppression, v0.17.0).
     assert!(
-        dax.contains("\"Revenue Rank\""),
-        "Rank time-intel must append ' Rank' to the measure label: {dax}"
+        dax.contains("\"Revenue\""),
+        "Rank time-intel must NOT append ' Rank' to the measure label (v0.17.0), got: {dax}"
+    );
+    assert!(
+        !dax.contains("\"Revenue Rank\""),
+        "Rank label must not carry ' Rank' suffix (phantom column removed in v0.17.0), got: {dax}"
     );
 }
 

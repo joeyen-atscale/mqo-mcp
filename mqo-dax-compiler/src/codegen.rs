@@ -260,6 +260,12 @@ fn append_order_by(
     if bound.mqo.is_projection() && bound.mqo.limit.is_some() {
         return Ok(());
     }
+    // Measure-bearing with a limit: TOPN selects and sorts by primary measure — skip ORDER BY.
+    // AtScale XMLA rejects ORDER BY on dimension column refs after TOPN, causing an engine
+    // error (j=None) on queries like "top 20 stores by employee count, tie-break by name".
+    if !bound.mqo.is_projection() && bound.mqo.limit.is_some() {
+        return Ok(());
+    }
     let order_parts: Result<Vec<String>, DaxCompileError> = order_keys
         .iter()
         .map(|ok| {
@@ -1846,10 +1852,10 @@ mod projection_orderby_tests {
         let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
         // Measure-bearing query with a limit should emit TOPN with measure ref.
         assert!(dax.contains("TOPN(10,"), "got: {dax}");
-        assert!(dax.contains("[Total Sales]"), "measure ref must appear, got: {dax}");
-        // And also ORDER BY (the non-projection path keeps ORDER BY).
-        assert!(dax.contains("ORDER BY"), "measure-bearing must emit ORDER BY, got: {dax}");
-        assert!(dax.contains("[Total Sales] DESC"), "measure ORDER BY must appear, got: {dax}");
+        assert!(dax.contains("[Total Sales]"), "measure ref must appear in TOPN, got: {dax}");
+        // ORDER BY is suppressed for measure-bearing+limit: TOPN already handles sort,
+        // and AtScale XMLA rejects ORDER BY on dimension refs after TOPN.
+        assert!(!dax.contains("ORDER BY"), "measure-bearing+limit must NOT emit ORDER BY, got: {dax}");
     }
 
     /// AC6 (FR6): unresolvable order key in a projection should decline with a typed error.
@@ -1934,6 +1940,7 @@ mod aggregation_orderby_tests {
 
     /// AC1: dimension tie-breaker in a measure-bearing ORDER BY emits a grounded level ref.
     /// Shape: total-net-profit-per-product — measure DESC, dimension ASC.
+    /// Uses limit=None so ORDER BY is emitted (not suppressed by the TOPN guard).
     #[test]
     fn measure_bearing_dimension_tiebreaker_resolves_to_level_ref() {
         let ctx = agg_ctx();
@@ -1945,7 +1952,7 @@ mod aggregation_orderby_tests {
                 OrderKey { key: "tpcds.total_net_profit".to_string(), direction: SortDirection::Desc },
                 OrderKey { key: "items.[Item Product Name]".to_string(), direction: SortDirection::Asc },
             ],
-            Some(20),
+            None,
         );
         let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
         // Measure key must use measure ref (square-bracket only, no table prefix)
@@ -1980,9 +1987,34 @@ mod aggregation_orderby_tests {
         );
     }
 
-    /// AC3: all order keys honored, directions preserved across a mixed list.
+    /// AC3: all order keys honored, directions preserved across a mixed list (no limit).
     #[test]
     fn measure_bearing_mixed_order_honors_all_keys_and_directions() {
+        let ctx = agg_ctx();
+        let bound = agg_bound(
+            "tpcds.total_net_profit",
+            "items.[Item Product Name]",
+            "items",
+            vec![
+                OrderKey { key: "tpcds.total_net_profit".to_string(), direction: SortDirection::Desc },
+                OrderKey { key: "items.[Item Product Name]".to_string(), direction: SortDirection::Asc },
+            ],
+            None,
+        );
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        let order_pos = dax.find("ORDER BY").expect("must emit ORDER BY when no limit");
+        let order_clause = &dax[order_pos..];
+        // Both keys must appear in ORDER BY, measure first (declared order), direction correct
+        let measure_pos = order_clause.find("[Total Net Profit] DESC").expect("measure key missing");
+        let dim_pos = order_clause.find("'items'[Item Product Name] ASC").expect("dimension key missing");
+        assert!(measure_pos < dim_pos, "measure key must precede dimension key in declared order");
+    }
+
+    /// AC4: measure-bearing with a TOPN limit must NOT emit ORDER BY.
+    /// AtScale XMLA rejects ORDER BY on dimension column refs after TOPN, causing j=None
+    /// engine errors on queries like "top 20 stores by employee count, tie-break by name".
+    #[test]
+    fn measure_bearing_with_limit_suppresses_order_by() {
         let ctx = agg_ctx();
         let bound = agg_bound(
             "tpcds.total_net_profit",
@@ -1995,18 +2027,19 @@ mod aggregation_orderby_tests {
             Some(20),
         );
         let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
-        let order_pos = dax.find("ORDER BY").expect("must emit ORDER BY");
-        let order_clause = &dax[order_pos..];
-        // Both keys must appear in ORDER BY, measure first (declared order), direction correct
-        let measure_pos = order_clause.find("[Total Net Profit] DESC").expect("measure key missing");
-        let dim_pos = order_clause.find("'items'[Item Product Name] ASC").expect("dimension key missing");
-        assert!(measure_pos < dim_pos, "measure key must precede dimension key in declared order");
+        assert!(
+            !dax.contains("ORDER BY"),
+            "measure-bearing+limit must NOT emit ORDER BY (TOPN handles sort), got:\n{dax}"
+        );
+        // TOPN wrapper must still be present with the correct measure sort key
+        assert!(dax.contains("TOPN(20"), "TOPN limit must still be present, got:\n{dax}");
     }
 
     /// AC1 (PRD-mqo-orderby-fallback-to-measure-ref): an order key that is NOT in
     /// bound.measures and cannot ground as a dimension level falls back to a measure
     /// reference (measure_dax_ref_ctx), returning Ok instead of propagating
     /// UngroundableLevel (v0.16.0 regression removed in v0.17.0).
+    /// Uses limit=None so ORDER BY is emitted (not suppressed by the TOPN guard).
     #[test]
     fn measure_bearing_unresolvable_order_key_falls_back_to_measure_ref() {
         let ctx = agg_ctx();
@@ -2018,7 +2051,7 @@ mod aggregation_orderby_tests {
                 OrderKey { key: "tpcds.total_net_profit".to_string(), direction: SortDirection::Desc },
                 OrderKey { key: "nonexistent.[No Such Dim]".to_string(), direction: SortDirection::Asc },
             ],
-            Some(20),
+            None,
         );
         let dax = compile_grounded(&bound, Some(&ctx)).expect("should return Ok with measure-ref fallback");
         // The unresolvable key falls back to measure_dax_ref_ctx → [[No Such Dim]] form.
