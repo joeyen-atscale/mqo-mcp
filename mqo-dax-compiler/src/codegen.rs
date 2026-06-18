@@ -107,9 +107,34 @@ pub fn compile_grounded(
     // passed so an ambiguous Member value (e.g. "M" in both Gender and Marital
     // Status) binds to the level the query groups by.
     let dim_levels: Vec<String> = bound.dimensions.iter().map(|d| d.unique_name.clone()).collect();
+    // PRD-mqo-multi-dim-filter-dax-grounding: for projection MQOs with 2+ AND-combinable
+    // top-level filters, emit a single combined KEEPFILTERS(FILTER(ALL(col1, col2, ...), pred1 && pred2 && ...))
+    // instead of N separate FILTER(ALL(col)) args (which cartesian-explode at fine grain).
     let mut filter_exprs: Vec<String> = Vec::new();
-    for f in &bound.mqo.filters {
-        filter_exprs.push(filter_expr_ctx(f, ctx, &dim_levels)?);
+    let combine_projection_filters = bound.mqo.is_projection()
+        && bound.mqo.filters.len() >= 2
+        && !bound.mqo.filters.iter().any(|f| {
+            matches!(f, Filter::Group { op: mqo_spec::FilterGroupOp::Or, .. })
+        });
+    if combine_projection_filters {
+        let mut preds: Vec<String> = Vec::new();
+        let mut all_cols: Vec<String> = Vec::new();
+        for f in &bound.mqo.filters {
+            let (pred, cols) = filter_predicate(f, ctx, &dim_levels, 0)?;
+            preds.push(format!("({pred})"));
+            all_cols.extend(cols);
+        }
+        all_cols.sort();
+        all_cols.dedup();
+        let combined_pred = preds.join(" && ");
+        let all_cols_str = all_cols.join(", ");
+        filter_exprs.push(format!(
+            "KEEPFILTERS(FILTER(ALL({all_cols_str}), {combined_pred})) /* combined-projection-filter */"
+        ));
+    } else {
+        for f in &bound.mqo.filters {
+            filter_exprs.push(filter_expr_ctx(f, ctx, &dim_levels)?);
+        }
     }
     // Calc-group member filters (from bound.calc_group_members).
     for cgm in &bound.calc_group_members {
@@ -253,8 +278,13 @@ fn append_order_by(
                 if is_measure_key {
                     Ok(format!("{} {dir}", measure_dax_ref_ctx(&ok.key, ctx)))
                 } else {
-                    let col_ref = level_col_ref_grounded(&ok.key, ctx)?;
-                    Ok(format!("{col_ref} {dir}"))
+                    // PRD-mqo-orderby-fallback-to-measure-ref: when grounding fails for a
+                    // non-bound-measure key (unique-name mismatch), fall back to measure ref
+                    // instead of propagating UngroundableLevel (v0.16.0 regression).
+                    match level_col_ref_grounded(&ok.key, ctx) {
+                        Ok(col_ref) => Ok(format!("{col_ref} {dir}")),
+                        Err(_) => Ok(format!("{} {dir}", measure_dax_ref_ctx(&ok.key, ctx))),
+                    }
                 }
             }
         })
@@ -418,8 +448,9 @@ fn build_measure_pairs(
                 }
                 TimeIntel::Rank { .. } => {
                     // Rank is handled at the table level (TOPN wrapper), not per-measure.
-                    // We still need to emit the measure itself.
-                    current_label = format!("{current_label} Rank");
+                    // PRD-mqo-rank-column-residual-suppression: do NOT append " Rank" to the
+                    // label — the measure emits under its original name; the ordinal is
+                    // expressed by TOPN ordering, never as an output column.
                 }
             }
         }
@@ -1972,9 +2003,12 @@ mod aggregation_orderby_tests {
         assert!(measure_pos < dim_pos, "measure key must precede dimension key in declared order");
     }
 
-    /// AC6 (FR7): unresolvable order key in a measure-bearing query returns a typed error.
+    /// AC1 (PRD-mqo-orderby-fallback-to-measure-ref): an order key that is NOT in
+    /// bound.measures and cannot ground as a dimension level falls back to a measure
+    /// reference (measure_dax_ref_ctx), returning Ok instead of propagating
+    /// UngroundableLevel (v0.16.0 regression removed in v0.17.0).
     #[test]
-    fn measure_bearing_unresolvable_order_key_declines() {
+    fn measure_bearing_unresolvable_order_key_falls_back_to_measure_ref() {
         let ctx = agg_ctx();
         let bound = agg_bound(
             "tpcds.total_net_profit",
@@ -1986,11 +2020,14 @@ mod aggregation_orderby_tests {
             ],
             Some(20),
         );
-        let err = compile_grounded(&bound, Some(&ctx)).unwrap_err();
+        let dax = compile_grounded(&bound, Some(&ctx)).expect("should return Ok with measure-ref fallback");
+        // The unresolvable key falls back to measure_dax_ref_ctx → [[No Such Dim]] form.
         assert!(
-            matches!(err, crate::DaxCompileError::UngroundableLevel { ref unique_name } if unique_name.contains("No Such Dim")),
-            "expected UngroundableLevel for unresolvable dim order key, got: {err:?}"
+            dax.contains("[[No Such Dim]]"),
+            "expected measure-ref fallback [[No Such Dim]] in ORDER BY, got:\n{dax}"
         );
+        // The bound measure key still uses the proper measure ref.
+        assert!(dax.contains("[Total Net Profit] DESC"), "expected bound measure ref in ORDER BY");
     }
 }
 
