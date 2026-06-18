@@ -328,6 +328,17 @@ pub enum RejectReason {
         /// The channel-scoped sibling measure the caller should use instead.
         suggested_measure: String,
     },
+    /// RULE 8 (PRD-mqo-projected-level-label-fidelity): the MQO projects a
+    /// dimension level whose label is a suffix/substring of exactly one canonical
+    /// catalog level label. The agent dropped the qualifying prefix
+    /// (e.g. "Floor Space" instead of "Store Floor Space"), causing the result
+    /// column to carry the truncated label and fail column-set scoring.
+    NonCanonicalLevelLabel {
+        /// The truncated label the agent supplied.
+        supplied: String,
+        /// The exact canonical label from the catalog (use this instead).
+        canonical: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -585,6 +596,10 @@ pub fn validate(mqo: &BoundMqoInput, catalog: &CatalogSnapshot) -> Vec<ParamReje
     // Guard stays silent when no sibling exists (FR4) — additive, never
     // replaces prior rejections.
     check_channel_scope_mismatch(mqo, catalog, &mut rejections);
+
+    // RULE 8 (PRD-mqo-projected-level-label-fidelity): reject a projected level
+    // whose label is a suffix of exactly one canonical catalog level label.
+    check_non_canonical_level_label(mqo, catalog, &mut rejections);
 
     rejections
 }
@@ -2331,6 +2346,88 @@ fn check_channel_scope_mismatch(
 }
 
 // ---------------------------------------------------------------------------
+// RULE 8: non-canonical level label (PRD-mqo-projected-level-label-fidelity)
+// ---------------------------------------------------------------------------
+
+/// Collect all level labels from every hierarchy in the catalog (flat, deduped).
+fn all_catalog_level_labels(catalog: &CatalogSnapshot) -> Vec<String> {
+    let mut labels: Vec<String> = catalog
+        .hierarchies
+        .iter()
+        .flat_map(|h| h.levels.iter().cloned())
+        .collect();
+    labels.sort();
+    labels.dedup();
+    labels
+}
+
+/// RULE 8: fire when a projected level's label is NOT an exact catalog entry but IS a
+/// case-insensitive suffix (word-boundary) of exactly one canonical level label.
+/// The agent dropped a qualifying prefix ("Store "); RULE 8 names the canonical form.
+///
+/// Fires on `dref.level` (bare label) when set. Does NOT fire when:
+/// - the label IS an exact catalog entry (no correction needed)
+/// - zero catalog levels end with the supplied label (Unmapped handles those)
+/// - ≥2 catalog levels end with the supplied label (ambiguous, no guess)
+fn check_non_canonical_level_label(
+    mqo: &BoundMqoInput,
+    catalog: &CatalogSnapshot,
+    rejections: &mut Vec<ParamRejection>,
+) {
+    let all_labels = all_catalog_level_labels(catalog);
+
+    for dref in &mqo.dimensions {
+        let Some(ref supplied) = dref.level else {
+            continue;
+        };
+        let supplied_lower = supplied.to_lowercase();
+
+        // Skip if already an exact match (case-insensitive).
+        let is_exact = all_labels.iter().any(|l| l.to_lowercase() == supplied_lower);
+        if is_exact {
+            continue;
+        }
+
+        // Find catalog levels that END WITH the supplied label (suffix match).
+        // Use word-boundary: the supplied label must follow a space in the canonical,
+        // so "Name" doesn't match "Store Name" AND "Customer Name" → ambiguous anyway.
+        let suffix_matches: Vec<&String> = all_labels
+            .iter()
+            .filter(|l| {
+                let l_lower = l.to_lowercase();
+                // The canonical must be strictly longer and end with the supplied suffix.
+                l_lower.len() > supplied_lower.len()
+                    && l_lower.ends_with(&supplied_lower)
+                    // Require the char before the suffix to be whitespace (word boundary).
+                    && l_lower
+                        .as_bytes()
+                        .get(l_lower.len() - supplied_lower.len() - 1)
+                        .map_or(false, |&b| b == b' ')
+            })
+            .collect();
+
+        if suffix_matches.len() == 1 {
+            let canonical = suffix_matches[0].clone();
+            rejections.push(ParamRejection::new(
+                supplied.clone(),
+                FieldClass::HierarchyLevel,
+                RejectReason::NonCanonicalLevelLabel {
+                    supplied: supplied.clone(),
+                    canonical: canonical.clone(),
+                },
+                vec![Suggestion {
+                    name: canonical,
+                    similarity: 1.0,
+                    note: Some("use the full canonical label (include the qualifying prefix)".to_string()),
+                }],
+            ));
+        }
+        // 0 suffix matches → existing Unmapped/WrongHierarchyLevel handles it.
+        // ≥2 suffix matches → ambiguous; do not guess.
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
@@ -3190,6 +3287,127 @@ mod tests {
         assert!(
             rejections.iter().any(|r| matches!(&r.reason, RejectReason::SyntheticRankColumn { .. })),
             "ungrounded Rank in dimension slot must be rejected; got: {rejections:?}"
+        );
+    }
+
+    // ── RULE 8: non-canonical level label ─────────────────────────────────────
+
+    /// Catalog for RULE 8 tests: a "Store Floor Space" level in the Store hierarchy.
+    fn rule8_catalog() -> CatalogSnapshot {
+        CatalogSnapshot {
+            measures: vec![CatalogMeasure {
+                unique_name: "Net Profit".into(),
+                label: Some("Net Profit".into()),
+                ..Default::default()
+            }],
+            dimensions: vec![CatalogDimension {
+                unique_name: "Store".into(),
+                subject_areas: vec![],
+            }],
+            hierarchies: vec![CatalogHierarchy {
+                hierarchy_unique_name: "Store".into(),
+                dimension_unique_name: "Store".into(),
+                levels: vec!["Store".into(), "Store Floor Space".into(), "Store Name".into()],
+                level_meta: vec![],
+            }],
+            date_roles: vec![],
+        }
+    }
+
+    /// FR2: agent binds "Floor Space" (truncated suffix) — must get NonCanonicalLevelLabel
+    /// pointing to "Store Floor Space".
+    #[test]
+    fn rule8_truncated_suffix_fires() {
+        let catalog = rule8_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "Store".into(),
+                level: Some("Floor Space".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let rule8 = rejections.iter().find(|r| {
+            matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. })
+        });
+        assert!(rule8.is_some(), "RULE 8 must fire for 'Floor Space'; got: {rejections:?}");
+        if let Some(r) = rule8 {
+            if let RejectReason::NonCanonicalLevelLabel { supplied, canonical } = &r.reason {
+                assert_eq!(supplied, "Floor Space");
+                assert_eq!(canonical, "Store Floor Space");
+            }
+            // Suggestion must name the canonical label.
+            assert!(
+                r.suggestions.iter().any(|s| s.name == "Store Floor Space"),
+                "suggestion must include 'Store Floor Space'; got: {:?}",
+                r.suggestions
+            );
+        }
+    }
+
+    /// AC2: exact catalog label "Store Floor Space" must NOT trigger RULE 8.
+    #[test]
+    fn rule8_exact_match_silent() {
+        let catalog = rule8_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "Store".into(),
+                level: Some("Store Floor Space".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        assert!(
+            rejections.iter().all(|r| !matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. })),
+            "RULE 8 must stay silent for exact catalog label; got: {rejections:?}"
+        );
+    }
+
+    /// AC3: ambiguous suffix ("Name" matches both "Store Name" and "Store Floor Space" — wait,
+    /// actually "Name" only suffix-matches "Store Name") — use a genuinely ambiguous label to
+    /// confirm RULE 8 does NOT fire when ≥2 catalog levels end with the supplied suffix.
+    #[test]
+    fn rule8_ambiguous_suffix_silent() {
+        // Add a second level ending in "Space" so "Space" is ambiguous.
+        let mut catalog = rule8_catalog();
+        catalog.hierarchies[0].levels.push("Web Space".into());
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "Store".into(),
+                level: Some("Space".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        assert!(
+            rejections.iter().all(|r| !matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. })),
+            "RULE 8 must stay silent when suffix is ambiguous (≥2 matches); got: {rejections:?}"
+        );
+    }
+
+    /// AC4: no level set on dref — RULE 8 must stay silent.
+    #[test]
+    fn rule8_no_level_silent() {
+        let catalog = rule8_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "Store".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        assert!(
+            rejections.iter().all(|r| !matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. })),
+            "RULE 8 must stay silent when level is None; got: {rejections:?}"
         );
     }
 
