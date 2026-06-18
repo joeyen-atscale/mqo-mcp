@@ -244,7 +244,18 @@ fn append_order_by(
                 let col_ref = level_col_ref_grounded(&ok.key, ctx)?;
                 Ok(format!("{col_ref} {dir}"))
             } else {
-                Ok(format!("{} {dir}", measure_dax_ref_ctx(&ok.key, ctx)))
+                // FR1 (measure-bearing): dispatch by key kind, not query shape.
+                // A key that matches a bound measure → measure ref (preserves byte-identical
+                // output for all-measure ORDER BY, FR4). A key that resolves to a dimension
+                // level → grounded level ref (FR2). Unknown keys propagate UngroundableLevel
+                // via ? (FR7).
+                let is_measure_key = bound.measures.iter().any(|m| m.unique_name == ok.key);
+                if is_measure_key {
+                    Ok(format!("{} {dir}", measure_dax_ref_ctx(&ok.key, ctx)))
+                } else {
+                    let col_ref = level_col_ref_grounded(&ok.key, ctx)?;
+                    Ok(format!("{col_ref} {dir}"))
+                }
             }
         })
         .collect();
@@ -1826,6 +1837,159 @@ mod projection_orderby_tests {
         assert!(
             matches!(err, crate::DaxCompileError::UngroundableLevel { ref unique_name } if unique_name.contains("No Such Level")),
             "expected UngroundableLevel for bad order key, got: {err:?}"
+        );
+    }
+}
+
+// ── PRD-mqo-aggregation-orderby-dax-fix: measure-bearing ORDER BY with dim keys ─
+#[cfg(test)]
+mod aggregation_orderby_tests {
+    use super::compile_grounded;
+    use crate::catalog_context::DaxCatalogContext;
+    use crate::input::{BoundDimensionInput, BoundMeasureInput, BoundMqoInput};
+    use mqo_spec::{Mqo, OrderKey, SortDirection};
+
+    fn agg_ctx() -> DaxCatalogContext {
+        let json = r#"{
+            "catalog": "atscale_catalogs",
+            "columns": [
+                {"unique_name":"items.[Item Product Name]","label":"Item Product Name","kind":"level","hierarchy":"items","level":"Item Product Name"},
+                {"unique_name":"date_dim.[Sold Calendar Year]","label":"Sold Calendar Year","kind":"level","hierarchy":"date_dim","level":"Sold Calendar Year"},
+                {"unique_name":"products.[Product category]","label":"Product category","kind":"level","hierarchy":"products","level":"Product category"},
+                {"unique_name":"tpcds.total_net_profit","label":"Total Net Profit","kind":"measure"},
+                {"unique_name":"tpcds.total_quantity_sold","label":"Total Quantity Sold","kind":"measure"},
+                {"unique_name":"tpcds.total_product_count","label":"Total Product Count","kind":"measure"}
+            ]
+        }"#;
+        DaxCatalogContext::from_json(json).unwrap()
+    }
+
+    fn agg_bound(
+        measure_unique: &str,
+        dim_unique: &str,
+        dim_hierarchy: &str,
+        order: Vec<OrderKey>,
+        limit: Option<u64>,
+    ) -> BoundMqoInput {
+        BoundMqoInput {
+            mqo: Mqo {
+                model: "tpcds".into(),
+                measures: vec![],
+                dimensions: vec![mqo_spec::LevelSelection {
+                    hierarchy: dim_hierarchy.to_string(),
+                    level: dim_unique.to_string(),
+                }],
+                filters: vec![],
+                limit,
+                order: if order.is_empty() { None } else { Some(order) },
+                time_intelligence: vec![],
+                non_empty: false,
+                projection: false,
+            },
+            measures: vec![BoundMeasureInput {
+                unique_name: measure_unique.to_string(),
+                is_calc: false,
+                semi_additive: false,
+                required_dimension: None,
+                trigger_hierarchies: vec![],
+            }],
+            dimensions: vec![BoundDimensionInput {
+                unique_name: dim_unique.to_string(),
+                hierarchy: dim_hierarchy.to_string(),
+            }],
+            calc_group_members: vec![],
+        }
+    }
+
+    /// AC1: dimension tie-breaker in a measure-bearing ORDER BY emits a grounded level ref.
+    /// Shape: total-net-profit-per-product — measure DESC, dimension ASC.
+    #[test]
+    fn measure_bearing_dimension_tiebreaker_resolves_to_level_ref() {
+        let ctx = agg_ctx();
+        let bound = agg_bound(
+            "tpcds.total_net_profit",
+            "items.[Item Product Name]",
+            "items",
+            vec![
+                OrderKey { key: "tpcds.total_net_profit".to_string(), direction: SortDirection::Desc },
+                OrderKey { key: "items.[Item Product Name]".to_string(), direction: SortDirection::Asc },
+            ],
+            Some(20),
+        );
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        // Measure key must use measure ref (square-bracket only, no table prefix)
+        assert!(dax.contains("[Total Net Profit] DESC"), "measure sort must use measure ref, got: {dax}");
+        // Dimension key must use grounded level ref — table-qualified with the hierarchy name
+        assert!(
+            dax.contains("'items'[Item Product Name] ASC"),
+            "dimension tiebreaker must be table-qualified (grounded), got: {dax}"
+        );
+    }
+
+    /// AC2: dimension as the primary sort key for a measure-bearing aggregation.
+    /// Shape: total-quantity-sold-per-year — ordered by Sold Calendar Year ASC.
+    #[test]
+    fn measure_bearing_dimension_primary_sort_resolves_to_level_ref() {
+        let ctx = agg_ctx();
+        let bound = agg_bound(
+            "tpcds.total_quantity_sold",
+            "date_dim.[Sold Calendar Year]",
+            "date_dim",
+            vec![OrderKey {
+                key: "date_dim.[Sold Calendar Year]".to_string(),
+                direction: SortDirection::Asc,
+            }],
+            None,
+        );
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        // Must emit a grounded (table-qualified) level ref, not a bare measure ref
+        assert!(
+            dax.contains("'date_dim'[Sold Calendar Year] ASC"),
+            "dimension primary sort must be table-qualified (grounded), got: {dax}"
+        );
+    }
+
+    /// AC3: all order keys honored, directions preserved across a mixed list.
+    #[test]
+    fn measure_bearing_mixed_order_honors_all_keys_and_directions() {
+        let ctx = agg_ctx();
+        let bound = agg_bound(
+            "tpcds.total_net_profit",
+            "items.[Item Product Name]",
+            "items",
+            vec![
+                OrderKey { key: "tpcds.total_net_profit".to_string(), direction: SortDirection::Desc },
+                OrderKey { key: "items.[Item Product Name]".to_string(), direction: SortDirection::Asc },
+            ],
+            Some(20),
+        );
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        let order_pos = dax.find("ORDER BY").expect("must emit ORDER BY");
+        let order_clause = &dax[order_pos..];
+        // Both keys must appear in ORDER BY, measure first (declared order), direction correct
+        let measure_pos = order_clause.find("[Total Net Profit] DESC").expect("measure key missing");
+        let dim_pos = order_clause.find("'items'[Item Product Name] ASC").expect("dimension key missing");
+        assert!(measure_pos < dim_pos, "measure key must precede dimension key in declared order");
+    }
+
+    /// AC6 (FR7): unresolvable order key in a measure-bearing query returns a typed error.
+    #[test]
+    fn measure_bearing_unresolvable_order_key_declines() {
+        let ctx = agg_ctx();
+        let bound = agg_bound(
+            "tpcds.total_net_profit",
+            "items.[Item Product Name]",
+            "items",
+            vec![
+                OrderKey { key: "tpcds.total_net_profit".to_string(), direction: SortDirection::Desc },
+                OrderKey { key: "nonexistent.[No Such Dim]".to_string(), direction: SortDirection::Asc },
+            ],
+            Some(20),
+        );
+        let err = compile_grounded(&bound, Some(&ctx)).unwrap_err();
+        assert!(
+            matches!(err, crate::DaxCompileError::UngroundableLevel { ref unique_name } if unique_name.contains("No Such Dim")),
+            "expected UngroundableLevel for unresolvable dim order key, got: {err:?}"
         );
     }
 }
