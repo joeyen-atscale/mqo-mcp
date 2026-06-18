@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.10.0 — 2026-06-18
+
+RULE 6 dimension-scoped rank grounding (PRD-mqo-rule6-dimension-scoped-rank-grounding): bracket-label level grounding is now scoped to the referenced dimension. Closes the cross-dimension grounding leak where a foreign dimension's `Rank` level caused RULE 6 to accept synthetic rank columns in unrelated queries (4 C9 rank-persist cases). New shared helper `dimension_levels_for_prefix(catalog, prefix)` → `Option<Vec<String>>` resolves a bracket prefix to the owning dimension's levels; conservative flat-union fallback when prefix is unresolvable (FR5). Measure grounding remains catalog-global (FR4). New RULE 6 tests: AC1 cross-dim leak fires, AC2 in-dim grounded silent, AC5 unresolvable-prefix conservative.
+
+RULE 10 ambiguous-level-by-dimension resolution (PRD-mqo-validator-ambiguous-level-dimension-resolution): fires when a level label suffix-matches ≥2 catalog levels globally (RULE 8 declines) but exactly one candidate belongs to the dimension the ref names. New `RejectReason::AmbiguousLevelResolvedByDimension { supplied, canonical, dimension }` variant. New helper `suffix_candidates_with_dim(candidate, catalog)` exposes the full `(label, dim)` candidate set used by both RULE 8 (via existing `unique_suffix_match`) and RULE 10. Wired in `validate` after RULE 8. New tests: AC1 state-name customer-dim, AC2 brand-name product-dim, AC3/AC5 no-double-fire with RULE 8.
+
+RULE 11 fuzzy near-miss level guard (PRD-mqo-validator-fuzzy-near-miss-level-guard): last-resort dimension-scoped fuzzy correction using the existing `strsim::jaro_winkler`. Fires only when RULE 8 and RULE 10 both declined (no suffix match exists) AND exactly one dimension-local level is within `NEAR_MISS_JW_THRESHOLD = 0.90`. New `RejectReason::NearMissLevelLabel { supplied, canonical, similarity }` variant. New tests: AC1 Warehouse-Square-Footage fires, AC2 exact-label silent, AC3 two-near-matches silent, AC6 unresolvable-prefix silent.
+
 ## v0.9.0 — 2026-06-17
 
 Add RULE7: channel-scope mismatch guard (PRD-mqo-channel-scope-measure-grounding). Fires when the bound measure is an all-channel total and a channel-scoped sibling with the same base concept exists. Guard stays silent when no sibling exists (FR4). `ChannelScopeMismatch { measure, named_channel, suggested_measure }` RejectReason variant added. `channel_scope: Option<Vec<String>>` field added to `CatalogMeasure` (from FactBindings descriptor). `channel_family_stem` helper strips channel/qualifier tokens to detect siblings. 4 new unit tests (AC3/AC4/AC5 + absent-scope).

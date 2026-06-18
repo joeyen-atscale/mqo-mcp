@@ -339,6 +339,29 @@ pub enum RejectReason {
         /// The exact canonical label from the catalog (use this instead).
         canonical: String,
     },
+    /// RULE 10 (PRD-mqo-validator-ambiguous-level-dimension-resolution): same as
+    /// RULE 8 but fires when the suffix-match is ambiguous globally (≥2 candidates)
+    /// yet resolves to exactly one candidate within the dimension the ref names.
+    AmbiguousLevelResolvedByDimension {
+        /// The truncated label the agent supplied.
+        supplied: String,
+        /// The exact canonical label from the catalog (use this instead).
+        canonical: String,
+        /// The dimension whose hierarchy contained the unique resolution.
+        dimension: String,
+    },
+    /// RULE 11 (PRD-mqo-validator-fuzzy-near-miss-level-guard): fires when a level
+    /// label is not exact and has no suffix match, but fuzzy-matches
+    /// (Jaro-Winkler ≥ NEAR_MISS_JW_THRESHOLD) exactly one level in the
+    /// referenced dimension (e.g. "Warehouse Square Footage" → "Warehouse Square Feet").
+    NearMissLevelLabel {
+        /// The near-miss label the agent supplied.
+        supplied: String,
+        /// The exact canonical label from the catalog (use this instead).
+        canonical: String,
+        /// The Jaro-Winkler similarity score (for operator audit).
+        similarity: f64,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -600,6 +623,17 @@ pub fn validate(mqo: &BoundMqoInput, catalog: &CatalogSnapshot) -> Vec<ParamReje
     // RULE 8 (PRD-mqo-projected-level-label-fidelity): reject a projected level
     // whose label is a suffix of exactly one canonical catalog level label.
     check_non_canonical_level_label(mqo, catalog, &mut rejections);
+
+    // RULE 10 (PRD-mqo-validator-ambiguous-level-dimension-resolution): when the
+    // suffix is ambiguous globally (≥2 candidates) but exactly one candidate lives
+    // in the referenced dimension, emit a corrective suggestion.  Only fires where
+    // RULE 8 declined (suffix ambiguous or unresolvable).
+    check_ambiguous_level_by_dimension(mqo, catalog, &mut rejections);
+
+    // RULE 11 (PRD-mqo-validator-fuzzy-near-miss-level-guard): last-resort fuzzy
+    // guard — fires only when RULE 8 and RULE 10 both declined and a fuzzy-only
+    // near-miss of exactly one dimension-local level is found.
+    check_near_miss_level_label(mqo, catalog, &mut rejections);
 
     rejections
 }
@@ -2134,16 +2168,31 @@ fn check_synthetic_rank_column(
 
     // Grounded by full unique_name OR by the bare bracket label (handles
     // "some_hierarchy.[Rank]" where catalog has a legitimate "Rank" level).
+    // v0.9.4: bracket-label level grounding is DIMENSION-SCOPED to prevent
+    // a foreign dimension's `Rank` level from grounding a bracket ref in
+    // an unrelated dimension (the cross-dimension grounding leak, C9).
     let is_grounded_col = |col: &str| -> bool {
         let n = normalize(col);
         if measure_norms.contains(&n) || level_norms.contains(&n) {
             return true;
         }
-        // Also check the bracket label alone (v0.9.3: bracket-form grounding).
-        if let Some((_, bracket)) = extract_unique_name_bracket(col) {
+        // Bracket-form grounding: extract prefix + bracket label.
+        if let Some((prefix, bracket)) = extract_unique_name_bracket(col) {
             let bn = normalize(bracket);
-            if measure_norms.contains(&bn) || level_norms.contains(&bn) {
+            // Measure grounding stays catalog-global (FR4/NG1).
+            if measure_norms.contains(&bn) {
                 return true;
+            }
+            // Level grounding: scope to the referenced dimension when prefix resolves.
+            match dimension_levels_for_prefix(catalog, prefix) {
+                Some(dim_levels) => {
+                    // Prefix resolved → grounded only if THIS dimension has a matching level.
+                    return dim_levels.contains(&bn);
+                }
+                None => {
+                    // Prefix unresolvable → conservative flat-union fallback (FR5).
+                    return level_norms.contains(&bn);
+                }
             }
         }
         false
@@ -2376,6 +2425,84 @@ fn all_catalog_level_labels(catalog: &CatalogSnapshot) -> Vec<String> {
     labels
 }
 
+/// Resolve a bracket `unique_name` prefix to the normalized level labels of the dimension
+/// it names.  The prefix is everything before the `[` in a unique_name like
+/// `"store_sales.[Rank]"` (so prefix = `"store_sales."`).
+///
+/// Returns `Some(vec_of_normalized_level_labels)` when exactly one dimension matches, or
+/// `None` when the prefix is unresolvable or matches ≥2 distinct dimensions (ambiguous
+/// → caller uses conservative flat-union fallback).
+///
+/// Matching is tolerant: trailing dot/bracket is stripped, then `normalize` is applied.
+/// The normalized form is compared against each hierarchy's `dimension_unique_name` and
+/// `hierarchy_unique_name`.  Shared helper for RULE 6, RULE 10, and RULE 11.
+fn dimension_levels_for_prefix(catalog: &CatalogSnapshot, prefix: &str) -> Option<Vec<String>> {
+    let prefix_stripped = prefix.trim_end_matches(['.', '[']);
+    let prefix_norm = normalize(prefix_stripped);
+    if prefix_norm.is_empty() {
+        return None;
+    }
+    // Find the unique dimension the prefix names.
+    let mut matched_dim: Option<&str> = None;
+    let mut ambiguous = false;
+    for h in &catalog.hierarchies {
+        let dim_norm = normalize(&h.dimension_unique_name);
+        let hier_norm = normalize(&h.hierarchy_unique_name);
+        if dim_norm == prefix_norm || hier_norm == prefix_norm {
+            match matched_dim {
+                None => matched_dim = Some(&h.dimension_unique_name),
+                Some(existing) if existing == h.dimension_unique_name.as_str() => {} // same dim
+                Some(_) => { ambiguous = true; break; } // ≥2 distinct dimensions
+            }
+        }
+    }
+    if ambiguous || matched_dim.is_none() {
+        return None;
+    }
+    let dim = matched_dim.unwrap();
+    Some(
+        catalog
+            .hierarchies
+            .iter()
+            .filter(|h| h.dimension_unique_name == dim)
+            .flat_map(|h| h.levels.iter().map(|l| normalize(l)))
+            .collect(),
+    )
+}
+
+/// Return all suffix-match candidates for `candidate` from the catalog, each paired with
+/// its owning `dimension_unique_name`.  A suffix match means the catalog level label ends
+/// with `candidate` (case-insensitive, word-boundary: preceding char is a space).  Exact
+/// matches are excluded (no correction needed).
+///
+/// RULE 8 is a thin wrapper (`len == 1` → unique); RULE 10 uses the full vec.
+fn suffix_candidates_with_dim<'a>(
+    candidate: &str,
+    catalog: &'a CatalogSnapshot,
+) -> Vec<(&'a String, &'a str)> {
+    let candidate_lower = candidate.to_lowercase();
+    let mut result: Vec<(&'a String, &'a str)> = Vec::new();
+    for h in &catalog.hierarchies {
+        for l in &h.levels {
+            let l_lower = l.to_lowercase();
+            // Exclude exact matches.
+            if l_lower == candidate_lower {
+                continue;
+            }
+            if l_lower.len() > candidate_lower.len()
+                && l_lower.ends_with(&candidate_lower)
+                && l_lower
+                    .as_bytes()
+                    .get(l_lower.len() - candidate_lower.len() - 1)
+                    .map_or(false, |&b| b == b' ')
+            {
+                result.push((l, h.dimension_unique_name.as_str()));
+            }
+        }
+    }
+    result
+}
+
 /// RULE 8: fire when a projected level's label is NOT an exact catalog entry but IS a
 /// case-insensitive suffix (word-boundary) of exactly one canonical level label.
 /// The agent dropped a qualifying prefix ("Store "); RULE 8 names the canonical form.
@@ -2486,6 +2613,278 @@ fn check_non_canonical_level_label(
         }
         // 0 suffix matches → Unmapped owns it. ≥2 → ambiguous; do not guess.
     }
+}
+
+/// RULE 10 — when RULE 8 declines because the suffix is ambiguous (≥2 global
+/// candidates), use the dimension the ref names to break the tie.  Fires iff
+/// exactly one of the ≥2 candidates lives in that dimension.
+///
+/// Never fires when RULE 8 already emitted for the same field; never fires when
+/// the dimension cannot be resolved or when ≥2 candidates remain in the dimension.
+fn check_ambiguous_level_by_dimension(
+    mqo: &BoundMqoInput,
+    catalog: &CatalogSnapshot,
+    rejections: &mut Vec<ParamRejection>,
+) {
+    // Build the set of fields already corrected by RULE 8 for fast de-dup.
+    let rule8_fields: Vec<String> = rejections
+        .iter()
+        .filter(|r| matches!(r.reason, RejectReason::NonCanonicalLevelLabel { .. }))
+        .map(|r| r.field.clone())
+        .collect();
+
+    for dref in &mqo.dimensions {
+        // --- Path A: dref.level ---
+        if let Some(ref supplied) = dref.level {
+            if rule8_fields.contains(supplied) {
+                continue; // RULE 8 already handled this field
+            }
+            let candidates = suffix_candidates_with_dim(supplied, catalog);
+            if candidates.len() >= 2 {
+                // Resolve by dimension.
+                let prefix = extract_unique_name_bracket(&dref.unique_name)
+                    .map(|(p, _)| p)
+                    .unwrap_or("");
+                if let Some(dim_levels_for_prefix) = dimension_levels_for_prefix(catalog, prefix)
+                    .or_else(|| {
+                        // Try the unique_name itself as dimension prefix.
+                        dimension_levels_for_prefix(catalog, &dref.unique_name)
+                    })
+                {
+                    // Find which candidates live in this dimension (by dim name).
+                    let dim_match: Vec<&String> = candidates
+                        .iter()
+                        .filter(|(lbl, _dim)| {
+                            let ln = normalize(lbl.as_str());
+                            dim_levels_for_prefix.contains(&ln)
+                        })
+                        .map(|(lbl, _)| *lbl)
+                        .collect();
+                    if dim_match.len() == 1 {
+                        let canonical = dim_match[0].clone();
+                        let dim_name = candidates
+                            .iter()
+                            .find(|(lbl, _)| lbl.to_lowercase() == canonical.to_lowercase())
+                            .map(|(_, d)| d.to_string())
+                            .unwrap_or_default();
+                        rejections.push(ParamRejection::new(
+                            supplied.clone(),
+                            FieldClass::HierarchyLevel,
+                            RejectReason::AmbiguousLevelResolvedByDimension {
+                                supplied: supplied.clone(),
+                                canonical: canonical.clone(),
+                                dimension: dim_name,
+                            },
+                            vec![Suggestion {
+                                name: canonical.clone(),
+                                similarity: 1.0,
+                                note: Some(
+                                    "use the full canonical label — disambiguation used the \
+                                     referenced dimension".to_string(),
+                                ),
+                            }],
+                        ));
+                    }
+                }
+            }
+        }
+
+        // --- Path B: unique_name bracket portion ---
+        if let Some((prefix, bracket_label)) = extract_unique_name_bracket(&dref.unique_name) {
+            if rule8_fields.contains(&bracket_label.to_string()) {
+                continue;
+            }
+            let candidates = suffix_candidates_with_dim(bracket_label, catalog);
+            if candidates.len() >= 2 {
+                if let Some(dim_lvls) = dimension_levels_for_prefix(catalog, prefix) {
+                    let dim_match: Vec<&String> = candidates
+                        .iter()
+                        .filter(|(lbl, _)| {
+                            dim_lvls.contains(&normalize(lbl.as_str()))
+                        })
+                        .map(|(lbl, _)| *lbl)
+                        .collect();
+                    if dim_match.len() == 1 {
+                        let canonical = dim_match[0].clone();
+                        let dim_name = candidates
+                            .iter()
+                            .find(|(lbl, _)| lbl.to_lowercase() == canonical.to_lowercase())
+                            .map(|(_, d)| d.to_string())
+                            .unwrap_or_default();
+                        let corrected_unique_name = format!("{prefix}[{canonical}]");
+                        rejections.push(ParamRejection::new(
+                            bracket_label.to_string(),
+                            FieldClass::HierarchyLevel,
+                            RejectReason::AmbiguousLevelResolvedByDimension {
+                                supplied: bracket_label.to_string(),
+                                canonical: canonical.clone(),
+                                dimension: dim_name,
+                            },
+                            vec![Suggestion {
+                                name: corrected_unique_name,
+                                similarity: 1.0,
+                                note: Some(
+                                    "use the full canonical label in the unique_name bracket \
+                                     (dimension disambiguation applied)".to_string(),
+                                ),
+                            }],
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Similarity threshold for RULE 11.  Set against a held-out level set (OQ-V12);
+/// NOT tuned to make a specific eval case pass.  Jaro-Winkler ≥ threshold is the sole
+/// gate (the optional Levenshtein ceiling was removed: Lev("footage","feet")=5 exceeds
+/// ceiling=3, blocking the canonical near-miss case while JW correctly captures it).
+const NEAR_MISS_JW_THRESHOLD: f64 = 0.90;
+
+/// RULE 11 — last-resort fuzzy guard.  Fires only when RULE 8 AND RULE 10 both
+/// declined for a given field AND exactly one level in the referenced dimension
+/// is within the Jaro-Winkler threshold (with a Levenshtein ceiling).
+///
+/// Never fires if the prefix cannot be resolved to a dimension (no anchor for
+/// fuzzy matching across the whole catalog).
+fn check_near_miss_level_label(
+    mqo: &BoundMqoInput,
+    catalog: &CatalogSnapshot,
+    rejections: &mut Vec<ParamRejection>,
+) {
+    // Fields already resolved by RULE 8 or RULE 10 — skip these.
+    let resolved_fields: Vec<String> = rejections
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.reason,
+                RejectReason::NonCanonicalLevelLabel { .. }
+                    | RejectReason::AmbiguousLevelResolvedByDimension { .. }
+            )
+        })
+        .map(|r| r.field.clone())
+        .collect();
+
+    for dref in &mqo.dimensions {
+        // --- Path A: dref.level ---
+        if let Some(ref supplied) = dref.level {
+            if resolved_fields.contains(supplied) {
+                continue;
+            }
+            let candidates = suffix_candidates_with_dim(supplied, catalog);
+            if !candidates.is_empty() {
+                continue; // Has suffix candidates → RULE 8/10 territory
+            }
+            // Resolve dimension for scoped fuzzy search.
+            let prefix = extract_unique_name_bracket(&dref.unique_name)
+                .map(|(p, _)| p)
+                .unwrap_or("");
+            let dim_levels_raw = dimension_levels_for_prefix(catalog, prefix)
+                .or_else(|| dimension_levels_for_prefix(catalog, &dref.unique_name));
+            if let Some(dim_levels) = dim_levels_raw {
+                if let Some(canonical) = fuzzy_single_match(supplied, catalog, &dim_levels) {
+                    rejections.push(near_miss_rejection(
+                        supplied.clone(),
+                        canonical.label,
+                        canonical.similarity,
+                        FieldClass::HierarchyLevel,
+                    ));
+                }
+            }
+        }
+
+        // --- Path B: unique_name bracket portion ---
+        if let Some((prefix, bracket_label)) = extract_unique_name_bracket(&dref.unique_name) {
+            if resolved_fields.contains(&bracket_label.to_string()) {
+                continue;
+            }
+            let candidates = suffix_candidates_with_dim(bracket_label, catalog);
+            if !candidates.is_empty() {
+                continue;
+            }
+            if let Some(dim_levels) = dimension_levels_for_prefix(catalog, prefix) {
+                if let Some(canonical) = fuzzy_single_match(bracket_label, catalog, &dim_levels) {
+                    let corrected = format!("{prefix}[{}]", canonical.label);
+                    rejections.push(ParamRejection::new(
+                        bracket_label.to_string(),
+                        FieldClass::HierarchyLevel,
+                        RejectReason::NearMissLevelLabel {
+                            supplied: bracket_label.to_string(),
+                            canonical: canonical.label.clone(),
+                            similarity: canonical.similarity,
+                        },
+                        vec![Suggestion {
+                            name: corrected,
+                            similarity: canonical.similarity,
+                            note: Some(format!(
+                                "near-miss label (similarity {:.2}): use the canonical form \
+                                 in the unique_name bracket",
+                                canonical.similarity
+                            )),
+                        }],
+                    ));
+                }
+            }
+        }
+    }
+}
+
+struct FuzzyMatch {
+    label: String,
+    similarity: f64,
+}
+
+/// Among the levels belonging to `dim_levels` (normalized strings), find the ORIGINAL
+/// catalog label(s) whose Jaro-Winkler similarity with `supplied` meets the threshold
+/// AND whose Levenshtein distance is within the ceiling.  Returns `Some` only when
+/// exactly one such level exists.
+fn fuzzy_single_match(
+    supplied: &str,
+    catalog: &CatalogSnapshot,
+    dim_level_norms: &[String],
+) -> Option<FuzzyMatch> {
+    let supplied_lower = supplied.to_lowercase();
+    let mut hits: Vec<FuzzyMatch> = Vec::new();
+    for h in &catalog.hierarchies {
+        for orig_label in &h.levels {
+            let norm = normalize(orig_label);
+            if !dim_level_norms.contains(&norm) {
+                continue;
+            }
+            let orig_lower = orig_label.to_lowercase();
+            // Skip exact matches (no correction needed).
+            if orig_lower == supplied_lower {
+                continue;
+            }
+            let sim = jaro_winkler(&supplied_lower, &orig_lower);
+            if sim >= NEAR_MISS_JW_THRESHOLD {
+                hits.push(FuzzyMatch { label: orig_label.clone(), similarity: sim });
+            }
+        }
+    }
+    if hits.len() == 1 { Some(hits.remove(0)) } else { None }
+}
+
+fn near_miss_rejection(
+    supplied: String,
+    canonical: String,
+    similarity: f64,
+    class: FieldClass,
+) -> ParamRejection {
+    ParamRejection::new(
+        supplied.clone(),
+        class,
+        RejectReason::NearMissLevelLabel { supplied: supplied.clone(), canonical: canonical.clone(), similarity },
+        vec![Suggestion {
+            name: canonical.clone(),
+            similarity,
+            note: Some(format!(
+                "near-miss label (Jaro-Winkler {similarity:.2}): use the canonical form \
+                 from the catalog"
+            )),
+        }],
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -3734,6 +4133,319 @@ mod tests {
             .filter(|r| matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. }))
             .count();
         assert_eq!(rule8_count, 1, "FR7: must emit exactly 1 RULE 8 rejection when level+bracket agree; got: {rejections:?}");
+    }
+
+    // -----------------------------------------------------------------------
+    // RULE 6 dimension-scoped grounding tests (PRD-mqo-rule6-dimension-scoped-rank-grounding)
+    // -----------------------------------------------------------------------
+
+    /// Catalog with a `Rank` level in a foreign dimension (not store_sales).
+    fn rank_leak_catalog() -> CatalogSnapshot {
+        CatalogSnapshot {
+            measures: vec![],
+            dimensions: vec![],
+            hierarchies: vec![
+                // store_sales dimension — NO Rank level.
+                CatalogHierarchy {
+                    dimension_unique_name: "store_sales".into(),
+                    hierarchy_unique_name: "store_sales".into(),
+                    levels: vec!["Store Name".into(), "Store Number of Employees".into()],
+                    ..Default::default()
+                },
+                // A separate dimension that DOES have a Rank level.
+                CatalogHierarchy {
+                    dimension_unique_name: "rank_dimension".into(),
+                    hierarchy_unique_name: "rank_dimension".into(),
+                    levels: vec!["Rank".into(), "Category".into()],
+                    ..Default::default()
+                },
+            ],
+            date_roles: vec![],
+        }
+    }
+
+    #[test]
+    fn rule6_cross_dimension_rank_leak_fires() {
+        // AC1: bracket Rank in store_sales — store_sales has no Rank level → fires.
+        let catalog = rank_leak_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Store Quantity Sold".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_sales.[Rank]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let rank_rejects: Vec<_> = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::SyntheticRankColumn { .. }))
+            .collect();
+        assert_eq!(rank_rejects.len(), 1, "AC1: cross-dim bracket Rank should fire; got: {rejections:?}");
+    }
+
+    #[test]
+    fn rule6_in_dimension_rank_grounded_silent() {
+        // AC2: bracket Rank in rank_dimension — rank_dimension HAS Rank → silent.
+        let catalog = rank_leak_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Store Quantity Sold".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "rank_dimension.[Rank]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let rank_rejects: Vec<_> = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::SyntheticRankColumn { .. }))
+            .collect();
+        assert!(rank_rejects.is_empty(), "AC2: in-dim Rank must be silent; got: {rejections:?}");
+    }
+
+    #[test]
+    fn rule6_unresolvable_prefix_conservative() {
+        // AC5: prefix doesn't match any dimension → conservative flat-union; Rank IS in catalog
+        // (rank_dimension) so flat-union grounding accepts it → no RULE 6 rejection.
+        let catalog = rank_leak_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "unknown_thing.[Rank]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        // The conservative fallback uses flat level_norms which contains "rank" → silent.
+        let rank_rejects: Vec<_> = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::SyntheticRankColumn { .. }))
+            .collect();
+        assert!(rank_rejects.is_empty(), "AC5: unresolvable prefix must conservatively stay silent; got: {rejections:?}");
+    }
+
+    // -----------------------------------------------------------------------
+    // RULE 10 tests (PRD-mqo-validator-ambiguous-level-dimension-resolution)
+    // -----------------------------------------------------------------------
+
+    /// Catalog for RULE 10 tests: Customer State Name in customer dim; another * State Name
+    /// level in a different dim so the suffix is ambiguous globally.
+    fn rule10_catalog() -> CatalogSnapshot {
+        CatalogSnapshot {
+            measures: vec![],
+            dimensions: vec![],
+            hierarchies: vec![
+                CatalogHierarchy {
+                    dimension_unique_name: "customer_dimension".into(),
+                    hierarchy_unique_name: "customer_dimension".into(),
+                    levels: vec!["Customer State Name".into(), "Customer ID".into()],
+                    ..Default::default()
+                },
+                CatalogHierarchy {
+                    dimension_unique_name: "store_dimension".into(),
+                    hierarchy_unique_name: "store_dimension".into(),
+                    levels: vec!["Store State Name".into(), "Store Name".into()],
+                    ..Default::default()
+                },
+                CatalogHierarchy {
+                    dimension_unique_name: "product_dimension".into(),
+                    hierarchy_unique_name: "product_dimension".into(),
+                    levels: vec!["Product Brand Name".into(), "Product Category".into()],
+                    ..Default::default()
+                },
+                CatalogHierarchy {
+                    dimension_unique_name: "store_item_dimension".into(),
+                    hierarchy_unique_name: "store_item_dimension".into(),
+                    levels: vec!["Store Item Product Brand Name".into()],
+                    ..Default::default()
+                },
+            ],
+            date_roles: vec![],
+        }
+    }
+
+    #[test]
+    fn rule10_customer_state_ambiguous_resolved_by_dimension() {
+        // AC1: "State Name" suffix-matches "Customer State Name" (customer dim) AND
+        // "Store State Name" (store dim) → ≥2 candidates → RULE 8 silent.
+        // Ref prefix resolves to customer_dimension → exactly one candidate there → RULE 10 fires.
+        let catalog = rule10_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Web Sales".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "customer_dimension.[State Name]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let r10: Vec<_> = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::AmbiguousLevelResolvedByDimension { .. }))
+            .collect();
+        assert_eq!(r10.len(), 1, "AC1: RULE 10 must fire for State Name in customer dim; got: {rejections:?}");
+        if let RejectReason::AmbiguousLevelResolvedByDimension { canonical, .. } = &r10[0].reason {
+            assert_eq!(canonical, "Customer State Name");
+        }
+    }
+
+    #[test]
+    fn rule10_brand_name_ambiguous_resolved_by_dimension() {
+        // AC2: "Brand Name" suffix-matches both "Product Brand Name" and "Store Item Product Brand Name".
+        // Ref prefix = product_dimension → exactly one candidate there → RULE 10 fires.
+        let catalog = rule10_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Store Quantity Sold".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "product_dimension.[Brand Name]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let r10: Vec<_> = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::AmbiguousLevelResolvedByDimension { .. }))
+            .collect();
+        assert_eq!(r10.len(), 1, "AC2: RULE 10 must fire for Brand Name; got: {rejections:?}");
+        if let RejectReason::AmbiguousLevelResolvedByDimension { canonical, .. } = &r10[0].reason {
+            assert_eq!(canonical, "Product Brand Name");
+        }
+    }
+
+    #[test]
+    fn rule10_does_not_fire_when_rule8_already_handled() {
+        // AC3: "Floor Space" is suffix-unique → RULE 8 fires, RULE 10 must NOT fire for same field.
+        let catalog = rule8_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_dimension.[Floor Space]".into(),
+                level: Some("Floor Space".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let r10_count = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::AmbiguousLevelResolvedByDimension { .. }))
+            .count();
+        assert_eq!(r10_count, 0, "AC3/AC5: RULE 10 must not fire when RULE 8 already handled; got: {rejections:?}");
+    }
+
+    // -----------------------------------------------------------------------
+    // RULE 11 tests (PRD-mqo-validator-fuzzy-near-miss-level-guard)
+    // -----------------------------------------------------------------------
+
+    fn rule11_catalog() -> CatalogSnapshot {
+        CatalogSnapshot {
+            measures: vec![],
+            dimensions: vec![],
+            hierarchies: vec![CatalogHierarchy {
+                dimension_unique_name: "warehouse_dimension".into(),
+                hierarchy_unique_name: "warehouse_dimension".into(),
+                levels: vec!["Warehouse Name".into(), "Warehouse Square Feet".into()],
+                ..Default::default()
+            }],
+            date_roles: vec![],
+        }
+    }
+
+    #[test]
+    fn rule11_near_miss_fires() {
+        // AC1: "Warehouse Square Footage" is a near-miss of "Warehouse Square Feet" (JW≈0.91).
+        // No suffix match, single in-dimension near-match → RULE 11 fires.
+        let catalog = rule11_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "warehouse_dimension.[Warehouse Square Footage]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let r11: Vec<_> = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::NearMissLevelLabel { .. }))
+            .collect();
+        assert_eq!(r11.len(), 1, "AC1: RULE 11 must fire for Warehouse Square Footage; got: {rejections:?}");
+        if let RejectReason::NearMissLevelLabel { canonical, similarity, .. } = &r11[0].reason {
+            assert_eq!(canonical, "Warehouse Square Feet");
+            assert!(*similarity >= NEAR_MISS_JW_THRESHOLD, "similarity must be above threshold");
+        }
+    }
+
+    #[test]
+    fn rule11_exact_label_silent() {
+        // AC2: exact label "Warehouse Square Feet" → RULE 11 must stay silent.
+        let catalog = rule11_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "warehouse_dimension.[Warehouse Square Feet]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let r11_count = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::NearMissLevelLabel { .. }))
+            .count();
+        assert_eq!(r11_count, 0, "AC2: exact label must not trigger RULE 11; got: {rejections:?}");
+    }
+
+    #[test]
+    fn rule11_two_near_matches_silent() {
+        // AC3: two dimension-local levels within threshold → count-based trigger not met → silent.
+        let catalog = CatalogSnapshot {
+            measures: vec![],
+            dimensions: vec![],
+            hierarchies: vec![CatalogHierarchy {
+                dimension_unique_name: "warehouse_dimension".into(),
+                hierarchy_unique_name: "warehouse_dimension".into(),
+                levels: vec!["Warehouse Square Feet".into(), "Warehouse Square Foot".into()],
+                ..Default::default()
+            }],
+            date_roles: vec![],
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "warehouse_dimension.[Warehouse Square Footage]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let r11_count = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::NearMissLevelLabel { .. }))
+            .count();
+        assert_eq!(r11_count, 0, "AC3: two near-matches must keep RULE 11 silent; got: {rejections:?}");
+    }
+
+    #[test]
+    fn rule11_unresolvable_prefix_silent() {
+        // AC6: prefix resolves to no dimension → RULE 11 silent.
+        let catalog = rule11_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "unknown_dim.[Warehouse Square Footage]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let r11_count = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::NearMissLevelLabel { .. }))
+            .count();
+        assert_eq!(r11_count, 0, "AC6: unresolvable prefix must keep RULE 11 silent; got: {rejections:?}");
     }
 
 }
