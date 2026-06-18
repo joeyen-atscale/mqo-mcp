@@ -2369,6 +2369,51 @@ fn all_catalog_level_labels(catalog: &CatalogSnapshot) -> Vec<String> {
 /// - the label IS an exact catalog entry (no correction needed)
 /// - zero catalog levels end with the supplied label (Unmapped handles those)
 /// - ≥2 catalog levels end with the supplied label (ambiguous, no guess)
+/// Extract the final `[Label]` bracket content from a unique_name such as
+/// `"store_dimension.[Floor Space]"` → `Some(("store_dimension.", "Floor Space"))`.
+/// Returns `None` when no `[...]` is present (bare label or prefix-only).
+fn extract_unique_name_bracket(unique_name: &str) -> Option<(&str, &str)> {
+    let open = unique_name.rfind('[')?;
+    let close = unique_name.rfind(']')?;
+    if close <= open {
+        return None;
+    }
+    let prefix = &unique_name[..=open]; // includes the `[`
+    let label = &unique_name[open + 1..close];
+    if label.is_empty() {
+        return None;
+    }
+    // Return prefix UP TO (not including) the `[` for reconstruction.
+    Some((&unique_name[..open], label))
+}
+
+/// Test whether `candidate` is a case-insensitive, word-boundary suffix of exactly one
+/// label in `all_labels`. Returns the canonical label if so, `None` otherwise.
+fn unique_suffix_match<'a>(candidate: &str, all_labels: &'a [String]) -> Option<&'a String> {
+    let candidate_lower = candidate.to_lowercase();
+
+    // Skip if already an exact match — no correction needed.
+    if all_labels.iter().any(|l| l.to_lowercase() == candidate_lower) {
+        return None;
+    }
+
+    let matches: Vec<&String> = all_labels
+        .iter()
+        .filter(|l| {
+            let l_lower = l.to_lowercase();
+            l_lower.len() > candidate_lower.len()
+                && l_lower.ends_with(&candidate_lower)
+                // Word-boundary: the character before the suffix must be a space.
+                && l_lower
+                    .as_bytes()
+                    .get(l_lower.len() - candidate_lower.len() - 1)
+                    .map_or(false, |&b| b == b' ')
+        })
+        .collect();
+
+    if matches.len() == 1 { Some(matches[0]) } else { None }
+}
+
 fn check_non_canonical_level_label(
     mqo: &BoundMqoInput,
     catalog: &CatalogSnapshot,
@@ -2377,53 +2422,54 @@ fn check_non_canonical_level_label(
     let all_labels = all_catalog_level_labels(catalog);
 
     for dref in &mqo.dimensions {
-        let Some(ref supplied) = dref.level else {
-            continue;
-        };
-        let supplied_lower = supplied.to_lowercase();
+        // Track canonicals already emitted for this dref to de-dup FR7.
+        let mut emitted_canonicals: Vec<String> = Vec::new();
 
-        // Skip if already an exact match (case-insensitive).
-        let is_exact = all_labels.iter().any(|l| l.to_lowercase() == supplied_lower);
-        if is_exact {
-            continue;
+        // --- Path A: dref.level (original RULE 8 behavior, FR8 unchanged) ---
+        if let Some(ref supplied) = dref.level {
+            if let Some(canonical) = unique_suffix_match(supplied, &all_labels) {
+                emitted_canonicals.push(canonical.clone());
+                rejections.push(ParamRejection::new(
+                    supplied.clone(),
+                    FieldClass::HierarchyLevel,
+                    RejectReason::NonCanonicalLevelLabel {
+                        supplied: supplied.clone(),
+                        canonical: canonical.clone(),
+                    },
+                    vec![Suggestion {
+                        name: canonical.clone(),
+                        similarity: 1.0,
+                        note: Some("use the full canonical label (include the qualifying prefix)".to_string()),
+                    }],
+                ));
+            }
         }
 
-        // Find catalog levels that END WITH the supplied label (suffix match).
-        // Use word-boundary: the supplied label must follow a space in the canonical,
-        // so "Name" doesn't match "Store Name" AND "Customer Name" → ambiguous anyway.
-        let suffix_matches: Vec<&String> = all_labels
-            .iter()
-            .filter(|l| {
-                let l_lower = l.to_lowercase();
-                // The canonical must be strictly longer and end with the supplied suffix.
-                l_lower.len() > supplied_lower.len()
-                    && l_lower.ends_with(&supplied_lower)
-                    // Require the char before the suffix to be whitespace (word boundary).
-                    && l_lower
-                        .as_bytes()
-                        .get(l_lower.len() - supplied_lower.len() - 1)
-                        .map_or(false, |&b| b == b' ')
-            })
-            .collect();
-
-        if suffix_matches.len() == 1 {
-            let canonical = suffix_matches[0].clone();
-            rejections.push(ParamRejection::new(
-                supplied.clone(),
-                FieldClass::HierarchyLevel,
-                RejectReason::NonCanonicalLevelLabel {
-                    supplied: supplied.clone(),
-                    canonical: canonical.clone(),
-                },
-                vec![Suggestion {
-                    name: canonical,
-                    similarity: 1.0,
-                    note: Some("use the full canonical label (include the qualifying prefix)".to_string()),
-                }],
-            ));
+        // --- Path B: unique_name bracket portion (FR1–FR3, new in v0.9.2) ---
+        if let Some((prefix, bracket_label)) = extract_unique_name_bracket(&dref.unique_name) {
+            if let Some(canonical) = unique_suffix_match(bracket_label, &all_labels) {
+                // De-dup: if path A already emitted for this same canonical, skip (FR7).
+                if emitted_canonicals.iter().any(|c| c == canonical) {
+                    continue;
+                }
+                // Build the corrected unique_name: preserve the prefix, swap the bracket.
+                let corrected_unique_name = format!("{prefix}[{canonical}]");
+                rejections.push(ParamRejection::new(
+                    bracket_label.to_string(),
+                    FieldClass::HierarchyLevel,
+                    RejectReason::NonCanonicalLevelLabel {
+                        supplied: bracket_label.to_string(),
+                        canonical: canonical.clone(),
+                    },
+                    vec![Suggestion {
+                        name: corrected_unique_name,
+                        similarity: 1.0,
+                        note: Some("use the full canonical label in the unique_name bracket".to_string()),
+                    }],
+                ));
+            }
         }
-        // 0 suffix matches → existing Unmapped/WrongHierarchyLevel handles it.
-        // ≥2 suffix matches → ambiguous; do not guess.
+        // 0 suffix matches → Unmapped owns it. ≥2 → ambiguous; do not guess.
     }
 }
 
@@ -3409,6 +3455,165 @@ mod tests {
             rejections.iter().all(|r| !matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. })),
             "RULE 8 must stay silent when level is None; got: {rejections:?}"
         );
+    }
+
+    // ── RULE 8 v0.9.2: bracket portion of unique_name (AC1–AC8) ──────────────
+
+    /// AC1: bracket-form truncation fires with corrected unique_name suggestion.
+    /// store_dimension.[Floor Space] → NonCanonicalLevelLabel, suggestion = store_dimension.[Store Floor Space]
+    #[test]
+    fn rule8_bracket_truncation_fires_with_corrected_unique_name() {
+        let catalog = rule8_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_dimension.[Floor Space]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let rule8 = rejections.iter().find(|r| {
+            matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. })
+        });
+        assert!(rule8.is_some(), "RULE 8 must fire for bracket 'Floor Space'; got: {rejections:?}");
+        if let Some(r) = rule8 {
+            if let RejectReason::NonCanonicalLevelLabel { supplied, canonical } = &r.reason {
+                assert_eq!(supplied, "Floor Space");
+                assert_eq!(canonical, "Store Floor Space");
+            }
+            // Suggestion must carry the corrected unique_name (AC1/FR3).
+            assert!(
+                r.suggestions.iter().any(|s| s.name == "store_dimension.[Store Floor Space]"),
+                "suggestion must include corrected unique_name; got: {:?}", r.suggestions
+            );
+        }
+    }
+
+    /// AC2 (unique_name path): exact bracket label passes silently.
+    #[test]
+    fn rule8_bracket_exact_match_silent() {
+        let catalog = rule8_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_dimension.[Store Floor Space]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        assert!(
+            rejections.iter().all(|r| !matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. })),
+            "RULE 8 must stay silent for exact bracket label; got: {rejections:?}"
+        );
+    }
+
+    /// AC3: ambiguous bracket label (suffix of ≥2 catalog levels) → silent.
+    #[test]
+    fn rule8_bracket_ambiguous_silent() {
+        let mut catalog = rule8_catalog();
+        catalog.hierarchies[0].levels.push("Warehouse Floor Space".into());
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_dimension.[Floor Space]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        assert!(
+            rejections.iter().all(|r| !matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. })),
+            "RULE 8 must stay silent on ambiguous bracket; got: {rejections:?}"
+        );
+    }
+
+    /// AC5: store-employee-counts case — bracket "Number of Employees" → "Store Number of Employees".
+    #[test]
+    fn rule8_bracket_number_of_employees_fires() {
+        let catalog = CatalogSnapshot {
+            measures: vec![CatalogMeasure {
+                unique_name: "Net Profit".into(),
+                label: Some("Net Profit".into()),
+                ..Default::default()
+            }],
+            dimensions: vec![CatalogDimension { unique_name: "Store".into(), subject_areas: vec![] }],
+            hierarchies: vec![CatalogHierarchy {
+                hierarchy_unique_name: "Store".into(),
+                dimension_unique_name: "Store".into(),
+                levels: vec!["Store Name".into(), "Store Number of Employees".into()],
+                level_meta: vec![],
+            }],
+            date_roles: vec![],
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_dimension.[Number of Employees]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let rule8 = rejections.iter().find(|r| {
+            matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. })
+        });
+        assert!(rule8.is_some(), "RULE 8 must fire for '[Number of Employees]'; got: {rejections:?}");
+        if let Some(r) = rule8 {
+            assert!(
+                r.suggestions.iter().any(|s| s.name == "store_dimension.[Store Number of Employees]"),
+                "suggestion must be corrected unique_name; got: {:?}", r.suggestions
+            );
+        }
+    }
+
+    /// AC6: no bracket in unique_name → bracket check skipped, only level path active.
+    #[test]
+    fn rule8_bare_unique_name_no_bracket_check() {
+        let catalog = rule8_catalog();
+        // "Floor Space" bare unique_name — no brackets — should NOT trigger bracket path.
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "Floor Space".into(), // no brackets
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        // The bare unique_name has no bracket, so bracket path is skipped.
+        // The level path also doesn't fire (level is None). So RULE 8 is silent.
+        assert!(
+            rejections.iter().all(|r| !matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. })),
+            "RULE 8 bracket path must not fire on bare unique_name; got: {rejections:?}"
+        );
+    }
+
+    /// AC7: FR7 de-dup — both dref.level and bracket trigger same canonical → one rejection.
+    #[test]
+    fn rule8_dedup_level_and_bracket_same_canonical() {
+        let catalog = rule8_catalog();
+        // Both level="Floor Space" AND unique_name has [Floor Space] → same canonical → 1 rejection.
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_dimension.[Floor Space]".into(),
+                level: Some("Floor Space".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let rule8_count = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. }))
+            .count();
+        assert_eq!(rule8_count, 1, "FR7: must emit exactly 1 RULE 8 rejection when level+bracket agree; got: {rejections:?}");
     }
 
 }
