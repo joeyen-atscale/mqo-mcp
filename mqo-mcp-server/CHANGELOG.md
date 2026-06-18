@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.49.0 — 2026-06-18
+
+Advertise limit+order in query_multidimensional tool description so LLM agents can discover ranking grammar (TOPN pushdown already implemented). Fixes 4 timeout cases + fake-Rank class on tpcds_sql_derived_limited corpus.
+
 ## v0.48.0 — 2026-06-18
 
 Role-confusion guard + inline ontology stage removal (PRD-mqo-grounding-enforcement-dedup). Removes the dead `ontology_check_inline()` pipeline stage (v0.47.0 shipped it but `Server.ontology_check` was always `None` at startup, so enforce mode had zero effect). Removes associated CLI surfaces: `--ontology-check-mode`, `--ontology-check-disable-rule`, `MQO_ONTOLOGY_CHECK_MODE`, `MQO_ONTOLOGY_CHECK_DISABLED_RULES`. The `validate_query_ontology` standalone tool is unaffected. Enforcement is now honest: grounding errors surface via RULE 12 in `mqo-param-validator` v0.11.0 (role-confusion guard) and the existing RULE 1–11 param-validator path, with no dead code in the hot path.
