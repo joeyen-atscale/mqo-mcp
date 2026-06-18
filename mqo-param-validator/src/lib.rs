@@ -2114,8 +2114,6 @@ fn check_synthetic_rank_column(
     rejections: &mut Vec<ParamRejection>,
 ) {
     // Pre-build normalized catalog sets for fast O(n) grounding checks.
-    // We re-derive these here rather than accepting pre-built sets so this
-    // function is self-contained (NFR2 determinism; no shared mutable state).
     let measure_norms: Vec<String> = catalog
         .measures
         .iter()
@@ -2134,15 +2132,31 @@ fn check_synthetic_rank_column(
         .flat_map(|h| h.levels.iter().map(|l| normalize(l)))
         .collect();
 
-    let is_grounded = |col: &str| -> bool {
+    // Grounded by full unique_name OR by the bare bracket label (handles
+    // "some_hierarchy.[Rank]" where catalog has a legitimate "Rank" level).
+    let is_grounded_col = |col: &str| -> bool {
         let n = normalize(col);
-        measure_norms.contains(&n) || level_norms.contains(&n)
+        if measure_norms.contains(&n) || level_norms.contains(&n) {
+            return true;
+        }
+        // Also check the bracket label alone (v0.9.3: bracket-form grounding).
+        if let Some((_, bracket)) = extract_unique_name_bracket(col) {
+            let bn = normalize(bracket);
+            if measure_norms.contains(&bn) || level_norms.contains(&bn) {
+                return true;
+            }
+        }
+        false
     };
 
     // Check measure slots.
     for mref in &mqo.measures {
         let col = &mref.unique_name;
-        if is_rank_shaped(col) && !is_grounded(col) {
+        // Effective label: the bracket portion when present (that's what becomes
+        // the DAX alias), otherwise the full unique_name.
+        let bracket_label = extract_unique_name_bracket(col).map(|(_, l)| l.to_string());
+        let label = bracket_label.as_deref().unwrap_or(col.as_str());
+        if is_rank_shaped(label) && !is_grounded_col(col) {
             rejections.push(ParamRejection::new(
                 col.clone(),
                 FieldClass::Measure,
@@ -2166,15 +2180,16 @@ fn check_synthetic_rank_column(
     // Check dimension slots.
     for dref in &mqo.dimensions {
         let col = &dref.unique_name;
-        // Only fire when the dimension itself is ungrounded (a grounded dimension
-        // with a rank-sounding name is legitimately in the catalog).
+        let bracket_label_dim = extract_unique_name_bracket(col).map(|(_, l)| l.to_string());
+        let label = bracket_label_dim.as_deref().unwrap_or(col.as_str());
+        // Only fire when the dimension itself is ungrounded.
         let dim_norm = normalize(col);
         let dim_grounded = catalog
             .dimensions
             .iter()
             .any(|d| normalize(&d.unique_name) == dim_norm)
-            || is_grounded(col);
-        if is_rank_shaped(col) && !dim_grounded {
+            || is_grounded_col(col);
+        if is_rank_shaped(label) && !dim_grounded {
             rejections.push(ParamRejection::new(
                 col.clone(),
                 FieldClass::Dimension,
@@ -2378,7 +2393,7 @@ fn extract_unique_name_bracket(unique_name: &str) -> Option<(&str, &str)> {
     if close <= open {
         return None;
     }
-    let prefix = &unique_name[..=open]; // includes the `[`
+    let _prefix_with_bracket = &unique_name[..=open]; // includes the `[`
     let label = &unique_name[open + 1..close];
     if label.is_empty() {
         return None;
@@ -3333,6 +3348,111 @@ mod tests {
         assert!(
             rejections.iter().any(|r| matches!(&r.reason, RejectReason::SyntheticRankColumn { .. })),
             "ungrounded Rank in dimension slot must be rejected; got: {rejections:?}"
+        );
+    }
+
+    // ── RULE 6 v0.9.3: bracket-form unique_name rank guard ────────────────────
+
+    /// AC1: bracket-form "store_sales.[Rank]" in dimension slot, Rank not in catalog → fires.
+    #[test]
+    fn rule6_bracket_rank_dimension_fires() {
+        let catalog = rank_guard_catalog();
+        let catalog_no_rank = CatalogSnapshot {
+            measures: catalog.measures.iter().filter(|m| m.unique_name != "Rank").cloned().collect(),
+            ..catalog.clone()
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_sales.[Rank]".into(),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog_no_rank);
+        assert!(
+            rejections.iter().any(|r| matches!(&r.reason, RejectReason::SyntheticRankColumn { .. })),
+            "bracket-form '[Rank]' in dimension must fire SyntheticRankColumn; got: {rejections:?}"
+        );
+    }
+
+    /// AC2: bracket-form "store_sales.[Rank]" but catalog HAS level "Rank" → grounded, silent.
+    #[test]
+    fn rule6_bracket_rank_grounded_silent() {
+        let mut catalog = rank_guard_catalog();
+        // Add "Rank" as a catalog level so it's grounded.
+        catalog.hierarchies[0].levels.push("Rank".into());
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_sales.[Rank]".into(),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        assert!(
+            rejections.iter().all(|r| !matches!(&r.reason, RejectReason::SyntheticRankColumn { .. })),
+            "grounded bracket '[Rank]' must not fire; got: {rejections:?}"
+        );
+    }
+
+    /// AC3: bare "Rank" (no brackets) still fires as before (existing behavior preserved).
+    #[test]
+    fn rule6_bare_rank_still_fires() {
+        let catalog = rank_guard_catalog();
+        let catalog_no_rank = CatalogSnapshot {
+            measures: catalog.measures.iter().filter(|m| m.unique_name != "Rank").cloned().collect(),
+            ..catalog.clone()
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Rank".into(), aggregation: None }],
+            dimensions: vec![],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog_no_rank);
+        assert!(
+            rejections.iter().any(|r| matches!(&r.reason, RejectReason::SyntheticRankColumn { .. })),
+            "bare 'Rank' must still fire; got: {rejections:?}"
+        );
+    }
+
+    /// AC4: bracket-form with non-rank label "[Store Name]" → silent.
+    #[test]
+    fn rule6_bracket_non_rank_silent() {
+        let catalog = rank_guard_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_dimension.[Store Name]".into(),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        assert!(
+            rejections.iter().all(|r| !matches!(&r.reason, RejectReason::SyntheticRankColumn { .. })),
+            "non-rank bracket label must not fire; got: {rejections:?}"
+        );
+    }
+
+    /// AC1 (measure slot): bracket-form "tpcds.[Rank]" in measure slot, not in catalog → fires.
+    #[test]
+    fn rule6_bracket_rank_measure_fires() {
+        let catalog = rank_guard_catalog();
+        let catalog_no_rank = CatalogSnapshot {
+            measures: catalog.measures.iter().filter(|m| m.unique_name != "Rank").cloned().collect(),
+            ..catalog.clone()
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "tpcds.[Rank]".into(), aggregation: None }],
+            dimensions: vec![],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog_no_rank);
+        assert!(
+            rejections.iter().any(|r| matches!(&r.reason, RejectReason::SyntheticRankColumn { .. })),
+            "bracket-form '[Rank]' in measure slot must fire; got: {rejections:?}"
         );
     }
 
