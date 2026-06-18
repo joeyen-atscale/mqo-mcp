@@ -51,7 +51,7 @@ use mqo_mcp_server::{
         CatalogCache, CACHE_FORMAT_VERSION,
     },
     cursor::{CursorStore, DEFAULT_CURSOR_TTL_SECS, DEFAULT_PAGE_SIZE},
-    mcp::{discover_xmla_coords, DEFAULT_MAX_PROJECTION_CARDINALITY},
+    mcp::{discover_xmla_coords, OntologyCheckMode, DEFAULT_MAX_PROJECTION_CARDINALITY},
     run_health_check_sync, BackendCapabilities, EndpointConfig, LiveExecutor, OidcConfig, Server,
     ServerEnrichedData, ServerEngine, ToolPaths,
 };
@@ -327,6 +327,22 @@ struct Args {
     /// Can also be set via the `ATSCALE_CATALOG_XML_BASE` environment variable.
     #[arg(long, env = "ATSCALE_CATALOG_XML_BASE", value_name = "URL")]
     autolift_base_url: Option<String>,
+
+    /// Inline ontology-check mode for `query_multidimensional`.
+    ///
+    /// `off`     — stage does not run (parity with pre-v0.47 behavior).
+    /// `warn`    — stage runs; findings logged as advisory; query always executes (default).
+    /// `enforce` — stage runs; query rejected pre-execution when ≥1 finding has severity=error.
+    ///
+    /// Can also be set via `MQO_ONTOLOGY_CHECK_MODE`.
+    #[arg(long, env = "MQO_ONTOLOGY_CHECK_MODE", default_value = "warn", value_name = "MODE")]
+    ontology_check_mode: String,
+
+    /// Disable a specific ontology-check rule (e.g. `semi_additive_sum_over_time`).
+    /// Repeatable; all occurrences are collected. Can also be set via
+    /// `MQO_ONTOLOGY_CHECK_DISABLED_RULES` (comma-separated).
+    #[arg(long, value_name = "RULE_ID", action = clap::ArgAction::Append)]
+    ontology_check_disable_rule: Vec<String>,
 }
 
 fn main() {
@@ -688,6 +704,18 @@ fn main() {
         // Ontology check store (OBQC advisory tier): populated when the lift
         // pipeline is integrated.  Fail-open until then (FR7).
         ontology_check: None,
+        ontology_check_mode: args.ontology_check_mode.parse::<OntologyCheckMode>().unwrap_or_else(|e| {
+            eprintln!("mqo-mcp-server: WARN: invalid --ontology-check-mode: {e}; defaulting to warn");
+            OntologyCheckMode::Warn
+        }),
+        ontology_check_disabled_rules: {
+            // Also accept MQO_ONTOLOGY_CHECK_DISABLED_RULES env var (comma-separated).
+            let mut rules = args.ontology_check_disable_rule.clone();
+            if let Ok(env_val) = std::env::var("MQO_ONTOLOGY_CHECK_DISABLED_RULES") {
+                rules.extend(env_val.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_string));
+            }
+            rules
+        },
         autolift_base_url,
         autolift_cache,
     };
