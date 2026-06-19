@@ -2184,23 +2184,142 @@ impl Server {
             }
         }
 
-        // ── Non-queryable dimension guard (FR-3, PRD-mqo-queryable-model-grounding) ─
-        // When XMLA discovery has run (>0 cubes in the map) and the requested model
-        // is NOT in the map, it is a dimension table — return a typed model_path
-        // error naming the candidate cubes rather than the opaque xmla_coords_not_found.
-        // This fires BEFORE the pipeline so the LLM can recover in one retry.
-        // When discovery has not run (empty map), we fall through and let the
-        // pipeline handle it as before (FR-5 fail-safe: never mislabel a real cube).
+        // ── Model coordinate normalization + non-queryable dimension guard ────────
+        // (PRD-mqo-model-coordinate-resolution, FR1–FR5)
+        //
+        // When XMLA discovery has run (>0 cubes in the map):
+        //   FR1: normalize the submitted coordinate (strip embedded quotes, extract
+        //        cube segment, case-insensitive match) before declaring it missing.
+        //   FR2: dimension-table error names the queryable cubes on the top line.
+        //   FR3: no-match error lists available queryable cubes.
+        //   FR4: ambiguous match (bare name → 2+ cubes) returns ambiguity error.
+        //   FR5: wrong catalog/backend but unambiguous cube → bind succeeds with
+        //        a `coordinate_normalized` note; pipeline proceeds normally.
+        //
+        // When discovery has not run (empty map): fall through unchanged — never
+        // mislabel a real cube (FR5 fail-safe).
+        let mut query = query; // make mutable so we can rewrite model when normalizing
         if !self.xmla_model_coords.is_empty() {
-            if let Some(requested_model) = query.get("model").and_then(Value::as_str) {
-                if !self.xmla_model_coords.contains_key(requested_model) {
-                    let mut cubes: Vec<String> =
-                        self.xmla_model_coords.keys().cloned().collect();
-                    cubes.sort();
-                    return structured_err(&PipelineError::NonQueryableDimension {
-                        model: requested_model.to_string(),
-                        candidate_cubes: cubes,
-                    });
+            if let Some(raw_model) = query.get("model").and_then(Value::as_str).map(str::to_owned)
+            {
+                match resolve_model_coord(&raw_model, &self.xmla_model_coords) {
+                    Ok(matched_key) => {
+                        // FR1/FR5: coordinate resolved (exact or normalized).
+                        // If the submitted value differed (had embedded quotes /
+                        // wrong catalog segments), rewrite the model field so the
+                        // pipeline sees the canonical bare cube name.
+                        if matched_key != raw_model.as_str() {
+                            // Clone only when rewrite is needed.
+                            let mut q = query.clone();
+                            q["model"] = Value::String(matched_key.to_string());
+                            // Attach a coordinate_normalized advisory note so the
+                            // caller is aware the coordinate was canonicalized.
+                            q["_coordinate_normalized"] = json!({
+                                "submitted": raw_model,
+                                "resolved": matched_key,
+                                "note": "Embedded quotes and/or catalog/backend segments \
+                                         were stripped; cube segment matched uniquely."
+                            });
+                            query = q;
+                        }
+                        // Falls through to the pipeline with the (possibly rewritten) query.
+                    }
+                    Err(CoordResolution::Ambiguous(candidates)) => {
+                        // FR4: multiple cubes share the same bare name after normalization.
+                        let cube_seg = normalize_model_coord(&raw_model);
+                        let detail = format!(
+                            "Coordinate '{raw_model}' is ambiguous: bare name '{cube_seg}' \
+                             matches multiple queryable cubes: {candidates:?}. \
+                             Use a fully-qualified coordinate to disambiguate."
+                        );
+                        let payload = json!({
+                            "error": {
+                                "code": "ambiguous_model_coordinate",
+                                "detail": detail,
+                                "candidates": candidates,
+                                "error_class": "model_path",
+                            }
+                        });
+                        return json!({
+                            "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+                            "structuredContent": payload,
+                            "isError": true
+                        });
+                    }
+                    Err(CoordResolution::NoMatch(cube_seg, available)) => {
+                        // FR3: no queryable cube matches the coordinate.
+                        // Check if it might be a dimension table (listed in catalog
+                        // columns) or truly unknown — either way surface the available
+                        // queryable cubes so the LLM can recover in one retry.
+                        //
+                        // FR2: if the cube segment matches a catalog model that is
+                        // NOT a queryable cube, use the NonQueryableDimension error
+                        // with cubes named on the top-level detail line.
+                        // For a completely unknown name we use a plain no_match error.
+                        let catalog_has_model = self
+                            .catalog
+                            .get("columns")
+                            .and_then(Value::as_array)
+                            .map(|cols| {
+                                cols.iter().any(|c| {
+                                    c.get("model")
+                                        .and_then(Value::as_str)
+                                        .map(|m| m.to_lowercase() == cube_seg.to_lowercase())
+                                        .unwrap_or(false)
+                                })
+                            })
+                            .unwrap_or(false);
+                        if catalog_has_model {
+                            // FR2: known dimension table — NonQueryableDimension with
+                            // queryable cubes named on top-line detail.
+                            return structured_err(&PipelineError::NonQueryableDimension {
+                                model: cube_seg,
+                                candidate_cubes: available,
+                            });
+                        } else {
+                            // FR3: entirely unknown coordinate.
+                            let available_str = available.join(", ");
+                            let detail = format!(
+                                "No queryable cube found for '{raw_model}' \
+                                 (cube segment: '{cube_seg}'). \
+                                 Available queryable cubes: {available_str}."
+                            );
+                            let payload = json!({
+                                "error": {
+                                    "code": "non_queryable_dimension",
+                                    "detail": detail,
+                                    "candidate_cubes": available,
+                                    "error_class": "model_path",
+                                }
+                            });
+                            return json!({
+                                "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+                                "structuredContent": payload,
+                                "isError": true
+                            });
+                        }
+                    }
+                    Err(CoordResolution::Empty(available)) => {
+                        // FR3/FR5: empty/garbage coordinate — list available cubes.
+                        let available_str = available.join(", ");
+                        let detail = format!(
+                            "The model coordinate is empty or could not be parsed. \
+                             Available queryable cubes: {available_str}."
+                        );
+                        let payload = json!({
+                            "error": {
+                                "code": "non_queryable_dimension",
+                                "detail": detail,
+                                "candidate_cubes": available,
+                                "error_class": "model_path",
+                            }
+                        });
+                        return json!({
+                            "content": [{ "type": "text", "text": serde_json::to_string(&payload).unwrap_or_default() }],
+                            "structuredContent": payload,
+                            "isError": true
+                        });
+                    }
                 }
             }
         }
@@ -2713,18 +2832,22 @@ fn structured_err(e: &PipelineError) -> Value {
                 )
             }),
         ),
-        PipelineError::NonQueryableDimension { model, candidate_cubes } => (
-            "non_queryable_dimension",
-            json!({
-                "model": model,
-                "candidate_cubes": candidate_cubes,
-                "detail": format!(
-                    "Model '{model}' is a dimension table, not a queryable cube. \
-                     Re-issue query_multidimensional with one of the following \
-                     cube model(s) instead: {candidate_cubes:?}."
-                )
-            }),
-        ),
+        PipelineError::NonQueryableDimension { model, candidate_cubes } => {
+            // FR2: queryable cubes MUST appear on the top line of `detail` so the
+            // LLM reads them without needing to inspect a nested field.
+            let cubes_inline = candidate_cubes.join(", ");
+            (
+                "non_queryable_dimension",
+                json!({
+                    "model": model,
+                    "candidate_cubes": candidate_cubes,
+                    "detail": format!(
+                        "model '{model}' is a dimension table; use one of: {cubes_inline}. \
+                         Re-issue query_multidimensional with one of those cube name(s)."
+                    )
+                }),
+            )
+        }
         PipelineError::DimensionNotMaterialized { missing, requested, report } => (
             "dimension_not_materialized",
             json!({
@@ -2761,6 +2884,92 @@ fn tool_text_result(value: &Value) -> Value {
         "structuredContent": value,
         "isError": false
     })
+}
+
+// ── Model coordinate normalization (PRD-mqo-model-coordinate-resolution) ──────
+//
+// Coordinate forms seen in eval sessions:
+//   - `"atscale_catalogs"."tpcds_Databricks"."tpcds_benchmark_model"` (embedded quotes)
+//   - `atscale_catalogs.tpcds_Databricks.tpcds_benchmark_model` (clean 3-part)
+//   - `tpcds_benchmark_model` (bare)
+//
+// `normalize_model_coord` strips surrounding/embedded double-quotes, splits on
+// `.`, and returns the last (cube) segment.  An empty or whitespace-only result
+// is returned as-is so the caller can surface a meaningful "no match" error.
+
+/// Strip embedded double-quotes from `s`, split on `.`, return the last segment.
+///
+/// Examples:
+/// ```text
+/// "atscale_catalogs"."tpcds_Databricks"."tpcds_benchmark_model"
+///   → "tpcds_benchmark_model"
+/// atscale_catalogs.tpcds_Databricks.tpcds_benchmark_model
+///   → "tpcds_benchmark_model"
+/// tpcds_benchmark_model
+///   → "tpcds_benchmark_model"
+/// "" (empty / garbage) → "" (caller handles)
+/// ```
+fn normalize_model_coord(raw: &str) -> String {
+    // Remove all double-quote characters (handles both surrounding and embedded).
+    let stripped = raw.replace('"', "");
+    // Split on dot; the cube is always the last segment.
+    let cube = stripped.split('.').last().unwrap_or("").trim().to_string();
+    cube
+}
+
+/// Resolve the bare cube name for `raw_model` against `xmla_model_coords`.
+///
+/// Returns one of:
+/// - `Ok(matched_key)` — unique case-insensitive match (may be same as input or
+///   normalized form).
+/// - `Err(CoordResolution::Ambiguous(candidates))` — more than one cube matches.
+/// - `Err(CoordResolution::NoMatch(cube_segment, available))` — no match at all.
+/// - `Err(CoordResolution::Empty(available))` — empty/garbage coordinate.
+enum CoordResolution {
+    /// More than one queryable cube matches the bare cube segment.
+    Ambiguous(Vec<String>),
+    /// No queryable cube matches; includes the normalized segment tried and available cubes.
+    NoMatch(String, Vec<String>),
+    /// The submitted coordinate was empty or reduced to nothing after normalization.
+    Empty(Vec<String>),
+}
+
+fn resolve_model_coord<'a>(
+    raw_model: &str,
+    xmla_model_coords: &'a HashMap<String, (String, String)>,
+) -> Result<&'a str, CoordResolution> {
+    let cube_seg = normalize_model_coord(raw_model);
+
+    let mut available: Vec<String> = xmla_model_coords.keys().cloned().collect();
+    available.sort();
+
+    if cube_seg.is_empty() {
+        return Err(CoordResolution::Empty(available));
+    }
+
+    // Exact match first (case-sensitive) — fast path, no allocation.
+    if xmla_model_coords.contains_key(cube_seg.as_str()) {
+        // SAFETY: we just confirmed the key exists; `get` cannot return None.
+        return Ok(xmla_model_coords.get_key_value(cube_seg.as_str()).unwrap().0);
+    }
+
+    // Case-insensitive scan.
+    let seg_lower = cube_seg.to_lowercase();
+    let matches: Vec<&str> = xmla_model_coords
+        .keys()
+        .filter(|k| k.to_lowercase() == seg_lower)
+        .map(String::as_str)
+        .collect();
+
+    match matches.len() {
+        0 => Err(CoordResolution::NoMatch(cube_seg, available)),
+        1 => Ok(matches[0]),
+        _ => {
+            let mut candidates: Vec<String> = matches.iter().map(|s| s.to_string()).collect();
+            candidates.sort();
+            Err(CoordResolution::Ambiguous(candidates))
+        }
+    }
 }
 
 // ── XMLA catalog discovery ─────────────────────────────────────────────────
