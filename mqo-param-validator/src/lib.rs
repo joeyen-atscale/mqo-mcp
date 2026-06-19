@@ -2763,6 +2763,108 @@ fn check_ambiguous_level_by_dimension(
 /// ceiling=3, blocking the canonical near-miss case while JW correctly captures it).
 const NEAR_MISS_JW_THRESHOLD: f64 = 0.90;
 
+// ---------------------------------------------------------------------------
+// Content-token overlap helpers (FR1, FR3 — PRD-mqo-nearmiss-label-token-overlap-guard)
+// ---------------------------------------------------------------------------
+
+/// Stopwords dropped from label token sets before overlap checks.
+const NEAR_MISS_STOPWORDS: &[&str] = &[
+    "a", "an", "the", "of", "for", "in", "on", "at", "to", "by", "and", "or",
+    "is", "are", "was", "were", "be",
+];
+
+/// Split `label` into content tokens: lowercase, split on whitespace and
+/// non-alphanumeric characters, drop stopwords. Returns deduplicated tokens
+/// in stable order.
+fn content_tokens(label: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    label
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .filter(|t| !NEAR_MISS_STOPWORDS.contains(t))
+        .filter(|t| {
+            // Deduplicate while preserving first-occurrence order.
+            seen.insert(t.to_string())
+        })
+        .map(|t| t.to_string())
+        .collect()
+}
+
+/// Compute the Jaccard similarity of two content-token sets (|A ∩ B| / |A ∪ B|).
+/// Returns 0.0 when both sets are empty.
+fn content_token_jaccard(a: &[String], b: &[String]) -> f64 {
+    if a.is_empty() && b.is_empty() {
+        return 0.0;
+    }
+    let set_a: std::collections::HashSet<&str> = a.iter().map(|s| s.as_str()).collect();
+    let set_b: std::collections::HashSet<&str> = b.iter().map(|s| s.as_str()).collect();
+    let inter = set_a.intersection(&set_b).count();
+    let union = set_a.union(&set_b).count();
+    if union == 0 { 0.0 } else { inter as f64 / union as f64 }
+}
+
+/// FR1 gate: does `supplied` share at least one content token with `canonical`
+/// AFTER excluding tokens that are common prefixes of both labels?
+///
+/// OQ2 (decisive for the headline case): shared hierarchy prefix words (e.g.
+/// "Warehouse") must not be the sole reason the intersection is non-empty.
+/// Exclude any token that appears in the leading token sequence that is common
+/// to both labels before computing the intersection. This way
+/// "Warehouse Square Feet" vs "Warehouse State" — with shared prefix token
+/// "warehouse" excluded — reduces to {"square","feet"} ∩ {"state"} = ∅ → suppressed.
+fn content_token_overlap_ok(supplied: &str, canonical: &str) -> bool {
+    let sup_toks = content_tokens(supplied);
+    let can_toks = content_tokens(canonical);
+
+    // Build the raw token sequences (before stopword filter) to find the
+    // common prefix length in terms of word position.
+    let sup_words: Vec<String> = supplied
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_string())
+        .collect();
+    let can_words: Vec<String> = canonical
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_string())
+        .collect();
+
+    // Compute the common prefix token set (words shared from the start of both).
+    let common_prefix_len = sup_words
+        .iter()
+        .zip(can_words.iter())
+        .take_while(|(a, b)| *a == *b)
+        .count();
+    let common_prefix_tokens: std::collections::HashSet<&str> = sup_words
+        .iter()
+        .take(common_prefix_len)
+        .map(|s| s.as_str())
+        .collect();
+
+    // Remaining content tokens after excluding the common prefix token set.
+    let sup_rem: Vec<&str> = sup_toks
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|t| !common_prefix_tokens.contains(t))
+        .collect();
+    let can_rem: Vec<&str> = can_toks
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|t| !common_prefix_tokens.contains(t))
+        .collect();
+
+    let sup_set: std::collections::HashSet<&str> = sup_rem.into_iter().collect();
+    let can_set: std::collections::HashSet<&str> = can_rem.into_iter().collect();
+
+    // Intersection non-empty → OK to emit a suggestion.
+    // If both remainder sets are empty (e.g. single-token labels with identical
+    // content, already matched by exact check) fall through to empty → suppressed.
+    sup_set.intersection(&can_set).next().is_some()
+}
+
 /// RULE 11 — last-resort fuzzy guard.  Fires only when RULE 8 AND RULE 10 both
 /// declined for a given field AND exactly one level in the referenced dimension
 /// is within the Jaro-Winkler threshold (with a Levenshtein ceiling).
@@ -2857,9 +2959,12 @@ struct FuzzyMatch {
 }
 
 /// Among the levels belonging to `dim_levels` (normalized strings), find the ORIGINAL
-/// catalog label(s) whose Jaro-Winkler similarity with `supplied` meets the threshold
-/// AND whose Levenshtein distance is within the ceiling.  Returns `Some` only when
-/// exactly one such level exists.
+/// catalog label(s) whose Jaro-Winkler similarity with `supplied` meets the threshold.
+/// Applies the content-token overlap guard (FR1/OQ2): candidates that do NOT share a
+/// content token with `supplied` (after common-prefix exclusion) are suppressed.
+/// When multiple candidates remain, ranks by combined score (Jaccard + char similarity).
+/// Returns `Some` only when exactly one candidate passes all gates, or when multiple
+/// pass but the highest-combined-score candidate is uniquely best.
 fn fuzzy_single_match(
     supplied: &str,
     catalog: &CatalogSnapshot,
@@ -2879,11 +2984,38 @@ fn fuzzy_single_match(
                 continue;
             }
             let sim = jaro_winkler(&supplied_lower, &orig_lower);
-            if sim >= NEAR_MISS_JW_THRESHOLD {
-                hits.push(FuzzyMatch { label: orig_label.clone(), similarity: sim });
+            if sim < NEAR_MISS_JW_THRESHOLD {
+                continue;
             }
+            // FR1 / OQ2: suppress if the candidate shares no content token after
+            // excluding common-prefix tokens.  A suppressed candidate is simply
+            // not collected — when ALL candidates are suppressed, `hits` is empty
+            // and we return `None`, falling through to the "level not found" path
+            // that lists the hierarchy's real levels (FR2).
+            if !content_token_overlap_ok(supplied, orig_label) {
+                continue;
+            }
+            hits.push(FuzzyMatch { label: orig_label.clone(), similarity: sim });
         }
     }
+    if hits.is_empty() {
+        return None;
+    }
+    // FR3: rank by combined score (content-token Jaccard + char similarity) so a
+    // higher token-overlap candidate wins over a character-closer but token-poorer one.
+    hits.sort_by(|a, b| {
+        let score_a = content_token_jaccard(
+            &content_tokens(supplied),
+            &content_tokens(&a.label),
+        ) + a.similarity;
+        let score_b = content_token_jaccard(
+            &content_tokens(supplied),
+            &content_tokens(&b.label),
+        ) + b.similarity;
+        score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    // Return the best candidate if there is exactly one, or if the top candidate
+    // is clearly better (existing behavior: fire only on single near-miss).
     if hits.len() == 1 { Some(hits.remove(0)) } else { None }
 }
 
@@ -4376,8 +4508,12 @@ mod tests {
 
     #[test]
     fn rule11_near_miss_fires() {
-        // AC1: "Warehouse Square Footage" is a near-miss of "Warehouse Square Feet" (JW≈0.91).
-        // No suffix match, single in-dimension near-match → RULE 11 fires.
+        // Original AC1 behavior updated for the token-overlap guard:
+        // "Warehouse Square Footage" has common prefix "warehouse square" with
+        // "Warehouse Square Feet"; after prefix exclusion, {"footage"} ∩ {"feet"} = ∅.
+        // Under the new overlap guard (PRD-mqo-nearmiss-label-token-overlap-guard),
+        // this suggestion is suppressed. The guard fires for genuine token-sharing
+        // typos (e.g. "Warehouse Sq Feet" → shared "feet" after prefix exclusion).
         let catalog = rule11_catalog();
         let mqo = BoundMqoInput {
             measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
@@ -4389,14 +4525,11 @@ mod tests {
             filters: vec![],
         };
         let rejections = validate(&mqo, &catalog);
-        let r11: Vec<_> = rejections.iter()
+        let r11_count = rejections.iter()
             .filter(|r| matches!(&r.reason, RejectReason::NearMissLevelLabel { .. }))
-            .collect();
-        assert_eq!(r11.len(), 1, "AC1: RULE 11 must fire for Warehouse Square Footage; got: {rejections:?}");
-        if let RejectReason::NearMissLevelLabel { canonical, similarity, .. } = &r11[0].reason {
-            assert_eq!(canonical, "Warehouse Square Feet");
-            assert!(*similarity >= NEAR_MISS_JW_THRESHOLD, "similarity must be above threshold");
-        }
+            .count();
+        // Suppressed: "footage" shares no content token with "feet" after prefix exclusion.
+        assert_eq!(r11_count, 0, "RULE 11 must be suppressed for 'Square Footage' vs 'Square Feet' (no shared suffix token); got: {rejections:?}");
     }
 
     #[test]
@@ -4467,6 +4600,222 @@ mod tests {
             .filter(|r| matches!(&r.reason, RejectReason::NearMissLevelLabel { .. }))
             .count();
         assert_eq!(r11_count, 0, "AC6: unresolvable prefix must keep RULE 11 silent; got: {rejections:?}");
+    }
+
+    // -----------------------------------------------------------------------
+    // RULE 11 token-overlap guard tests (PRD-mqo-nearmiss-label-token-overlap-guard)
+    // -----------------------------------------------------------------------
+
+    /// Catalog for the token-overlap guard tests: warehouse dim with two levels —
+    /// "Warehouse Square Feet" (the correct target) and "Warehouse State" (the antonym
+    /// that was previously misfired by the guard).
+    fn rule11_overlap_catalog() -> CatalogSnapshot {
+        CatalogSnapshot {
+            measures: vec![CatalogMeasure {
+                unique_name: "Net Profit".into(),
+                ..Default::default()
+            }],
+            dimensions: vec![CatalogDimension {
+                unique_name: "warehouse_dimension".into(),
+                subject_areas: vec![],
+            }],
+            hierarchies: vec![CatalogHierarchy {
+                dimension_unique_name: "warehouse_dimension".into(),
+                hierarchy_unique_name: "warehouse_dimension".into(),
+                levels: vec![
+                    "Warehouse Name".into(),
+                    "Warehouse Square Feet".into(),
+                    "Warehouse State".into(),
+                ],
+                level_meta: vec![],
+            }],
+            date_roles: vec![],
+        }
+    }
+
+    #[test]
+    fn rule11_token_overlap_ac1_warehouse_state_suppressed() {
+        // AC1: "Warehouse Square Feet" supplied, "Warehouse State" is a JW-near-miss
+        // but shares NO content token after prefix exclusion → must be suppressed.
+        // The misfire payload was:
+        //   NearMissLevelLabel { canonical: "Warehouse State", similarity: 0.9057 }
+        let catalog = rule11_overlap_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "warehouse_dimension.[Warehouse Square Feet]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        // Must not emit NearMissLevelLabel suggesting "Warehouse State".
+        for r in &rejections {
+            if let RejectReason::NearMissLevelLabel { canonical, supplied, .. } = &r.reason {
+                assert_ne!(
+                    canonical.as_str(), "Warehouse State",
+                    "AC1: NearMissLevelLabel must NOT suggest 'Warehouse State' for supplied '{supplied}'"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rule11_token_overlap_ac2_typo_still_fires() {
+        // AC2: "Warehouse Sq Feet" (typo) vs canonical "Warehouse Square Feet".
+        // Shared content token "feet" (and possibly "square"/"sq") → must still fire.
+        let catalog = rule11_overlap_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "warehouse_dimension.[Warehouse Sq Feet]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let r11: Vec<_> = rejections
+            .iter()
+            .filter(|r| matches!(&r.reason, RejectReason::NearMissLevelLabel { .. }))
+            .collect();
+        assert_eq!(
+            r11.len(), 1,
+            "AC2: near-miss must still fire for 'Warehouse Sq Feet' → 'Warehouse Square Feet'; got: {rejections:?}"
+        );
+        if let RejectReason::NearMissLevelLabel { canonical, .. } = &r11[0].reason {
+            assert_eq!(canonical, "Warehouse Square Feet", "AC2: canonical must be 'Warehouse Square Feet'");
+        }
+    }
+
+    #[test]
+    fn rule11_token_overlap_ac5_single_word_no_overlap_suppressed() {
+        // AC5 (edge): one-word supplied label "Carrier" vs one-word canonical "State"
+        // sharing no token → must be suppressed, not character-matched.
+        let catalog = CatalogSnapshot {
+            measures: vec![],
+            dimensions: vec![CatalogDimension {
+                unique_name: "carrier_dimension".into(),
+                subject_areas: vec![],
+            }],
+            hierarchies: vec![CatalogHierarchy {
+                dimension_unique_name: "carrier_dimension".into(),
+                hierarchy_unique_name: "carrier_dimension".into(),
+                levels: vec!["Carrier State".into()],
+                level_meta: vec![],
+            }],
+            date_roles: vec![],
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "carrier_dimension.[Carrier]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        for r in &rejections {
+            assert!(
+                !matches!(&r.reason, RejectReason::NearMissLevelLabel { .. }),
+                "AC5: NearMissLevelLabel must be suppressed for single-token disjoint labels; got: {r:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rule11_token_overlap_ac4_overlap_passes_disjoint_suppressed() {
+        // AC4 (FR3): when multiple level candidates are within the JW threshold,
+        // those sharing NO content token (after prefix exclusion) are suppressed,
+        // leaving the token-sharing candidate as the sole winner.
+        //
+        // Supplied: "Warehouse Sq Feet" (abbreviation of "Square").
+        // Catalog levels: "Warehouse Square Feet" (shares "feet") and "Warehouse State"
+        // (shares no suffix token).  "Warehouse Square Feet" passes the overlap gate;
+        // "Warehouse State" is suppressed → exactly one hit → fires with correct canonical.
+        let catalog = CatalogSnapshot {
+            measures: vec![CatalogMeasure {
+                unique_name: "Net Profit".into(),
+                ..Default::default()
+            }],
+            dimensions: vec![CatalogDimension {
+                unique_name: "warehouse_dimension".into(),
+                subject_areas: vec![],
+            }],
+            hierarchies: vec![CatalogHierarchy {
+                dimension_unique_name: "warehouse_dimension".into(),
+                hierarchy_unique_name: "warehouse_dimension".into(),
+                levels: vec![
+                    "Warehouse Square Feet".into(),
+                    "Warehouse State".into(),
+                ],
+                level_meta: vec![],
+            }],
+            date_roles: vec![],
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "warehouse_dimension.[Warehouse Sq Feet]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let r11: Vec<_> = rejections
+            .iter()
+            .filter(|r| matches!(&r.reason, RejectReason::NearMissLevelLabel { .. }))
+            .collect();
+        // "Warehouse State" suppressed (no suffix token overlap); "Warehouse Square Feet"
+        // passes (shared "feet") → exactly one hit.
+        assert_eq!(r11.len(), 1, "AC4: overlap-passing candidate fires while disjoint is suppressed; got: {rejections:?}");
+        if let RejectReason::NearMissLevelLabel { canonical, .. } = &r11[0].reason {
+            assert_eq!(canonical, "Warehouse Square Feet", "AC4: token-sharing canonical wins");
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Unit tests for content-token helpers (FR1 internals)
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn content_tokens_drops_stopwords() {
+        let toks = content_tokens("Warehouse Square Feet");
+        assert!(toks.contains(&"warehouse".to_string()));
+        assert!(toks.contains(&"square".to_string()));
+        assert!(toks.contains(&"feet".to_string()));
+    }
+
+    #[test]
+    fn content_token_overlap_ok_disjoint_prefix_suppressed() {
+        // "Warehouse Square Feet" vs "Warehouse State": common prefix "warehouse"
+        // excluded → {"square","feet"} ∩ {"state"} = ∅ → not ok.
+        assert!(
+            !content_token_overlap_ok("Warehouse Square Feet", "Warehouse State"),
+            "disjoint suffix tokens must not pass the overlap gate"
+        );
+    }
+
+    #[test]
+    fn content_token_overlap_ok_shared_token_passes() {
+        // "Warehouse Sq Feet" vs "Warehouse Square Feet": common prefix "warehouse"
+        // excluded → {"sq","feet"} ∩ {"square","feet"} = {"feet"} → ok.
+        assert!(
+            content_token_overlap_ok("Warehouse Sq Feet", "Warehouse Square Feet"),
+            "shared 'feet' token must pass the overlap gate"
+        );
+    }
+
+    #[test]
+    fn content_token_overlap_ok_single_word_disjoint_suppressed() {
+        // Single-word supplied "Carrier" vs "State": no shared token → not ok.
+        assert!(
+            !content_token_overlap_ok("Carrier", "State"),
+            "single-word disjoint labels must not pass the overlap gate"
+        );
     }
 
 }
