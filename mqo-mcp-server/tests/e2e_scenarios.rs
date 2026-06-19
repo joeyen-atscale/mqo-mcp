@@ -94,6 +94,7 @@ fn plain_server() -> Server {
         ontology_check: None,
         autolift_base_url: None,
         autolift_cache: None,
+        describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
     }
 }
 

@@ -53,7 +53,7 @@ pub use handle_ops::{
 };
 pub use mcp::{
     discover_xmla_coords, tool_descriptors, Server, ServerEnrichedData, ServerEngine,
-    DEFAULT_MAX_PROJECTION_CARDINALITY, PROTOCOL_VERSION,
+    DEFAULT_DESCRIBE_TOKEN_BUDGET, DEFAULT_MAX_PROJECTION_CARDINALITY, PROTOCOL_VERSION,
 };
 pub use projection_guard::{check_projection_cardinality, ProjectionTooLarge};
 pub use pipeline::{error_class, error_class_values, PipelineError, PipelineOutput, ToolPaths};

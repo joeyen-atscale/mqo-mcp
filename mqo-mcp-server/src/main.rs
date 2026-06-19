@@ -328,6 +328,21 @@ struct Args {
     #[arg(long, env = "ATSCALE_CATALOG_XML_BASE", value_name = "URL")]
     autolift_base_url: Option<String>,
 
+    /// Token budget for the default `describe_model` payload
+    /// (PRD-mqo-describe-model-token-budget, FR3).
+    ///
+    /// Uses chars/4 as a token estimate. The `compatible_hierarchies` matrix
+    /// (~697 KB) is always stripped from the default response regardless of
+    /// this budget. When the remaining payload still exceeds the budget, the
+    /// server drops additional non-critical fields in documented priority order
+    /// (`domain` → `value_type` → `related_attributes`) and emits
+    /// `truncated_fields` so the model knows what was omitted.
+    ///
+    /// Default: 25,000 tokens (~100 KB). Set higher for larger context windows;
+    /// set lower to stay well under aggressive MCP client caps.
+    #[arg(long, default_value_t = mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET)]
+    describe_token_budget: usize,
+
 }
 
 fn main() {
@@ -691,6 +706,7 @@ fn main() {
         ontology_check: None,
         autolift_base_url,
         autolift_cache,
+        describe_token_budget: args.describe_token_budget,
     };
 
     serve(&server);
