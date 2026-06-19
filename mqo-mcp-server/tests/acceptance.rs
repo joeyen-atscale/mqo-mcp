@@ -2276,13 +2276,21 @@ fn qmg_ac2_query_dimension_returns_typed_model_path_error() {
         json!("model_path"),
         "error_class must be model_path: {err}"
     );
-    // candidate_cubes must name the real cube.
-    let cubes = err["detail"]["candidate_cubes"]
+    // candidate_cubes must name the real cube — at the top-level error field (FR2).
+    // (The old structure nested candidate_cubes inside detail; after
+    // PRD-mqo-model-coordinate-resolution the field is promoted to the top of the error object.)
+    let cubes = err["candidate_cubes"]
         .as_array()
-        .expect("candidate_cubes must be an array");
+        .expect("candidate_cubes must be an array at err.candidate_cubes");
     assert!(
         cubes.iter().any(|c| c.as_str() == Some("tpcds_benchmark_model")),
         "candidate_cubes must include tpcds_benchmark_model: {cubes:?}"
+    );
+    // FR2: detail string must also mention the cube on the first line.
+    let detail = err["detail"].as_str().unwrap_or("");
+    assert!(
+        detail.contains("tpcds_benchmark_model"),
+        "tpcds_benchmark_model must appear in detail string: {detail:?}"
     );
 }
 
@@ -2393,6 +2401,193 @@ fn qmg_ac5b_non_queryable_dimension_error_class_is_model_path() {
         error_class(&e),
         error_class_values::MODEL_PATH,
         "NonQueryableDimension must be classified as model_path"
+    );
+}
+
+// ── PRD-mqo-model-coordinate-resolution: coordinate normalization ────────────
+//
+// AC-coord-1: Embedded-quote 3-part coordinate binds to the correct cube (FR1/FR5).
+//   Given `"atscale_catalogs"."tpcds_Databricks"."tpcds_benchmark_model"`, the
+//   server normalizes to `tpcds_benchmark_model` and the query proceeds (no error).
+//
+// AC-coord-2: Bare cube name binds unchanged (FR1).
+//   Given bare `tpcds_benchmark_model`, the server binds directly.
+//
+// AC-coord-3: Dimension-table coordinate error names queryable cubes on top line (FR2).
+//   Given `ship_mode` (a non-queryable dimension in the catalog), the error detail
+//   must contain the queryable cube name on the first line of `detail`.
+//
+// AC-coord-4: Ambiguous cube name (FR4).
+//   Given two cubes sharing a case-insensitive name, an ambiguity error lists both.
+//
+// AC-coord-5: Empty/garbage coordinate lists available cubes (FR3/FR5).
+
+/// Build an MQO value with the given model string.
+fn mqo_with_model(model: &str) -> Value {
+    json!({
+        "model": model,
+        "measures": [{ "unique_name": "Revenue" }],
+        "dimensions": [],
+        "filters": [],
+        "time_intelligence": [],
+        "order": null,
+        "limit": 10,
+        "non_empty": true
+    })
+}
+
+/// AC-coord-1: embedded-quote 3-part coordinate normalizes and binds successfully.
+///
+/// The server must strip embedded quotes, extract the cube segment, and proceed
+/// without returning an error — the pipeline runs (fixture returns rows or the
+/// binder rejects the MQO field, but the coordinate guard must NOT fire).
+#[test]
+fn coord_ac1_embedded_quote_coordinate_binds() {
+    let srv = server_with_cube_map(); // maps tpcds_benchmark_model
+    let raw = r#""atscale_catalogs"."tpcds_Databricks"."tpcds_benchmark_model""#;
+    let result = call_tool(&srv, "query_multidimensional", json!({ "mqo": mqo_with_model(raw) }));
+
+    // The coordinate guard must NOT return a non_queryable_dimension error.
+    // (The pipeline may still return an error for other reasons — binder, etc. —
+    // but the code must NOT be "non_queryable_dimension".)
+    let is_coord_error = result["structuredContent"]["error"]["code"]
+        .as_str()
+        .map(|c| c == "non_queryable_dimension" || c == "ambiguous_model_coordinate")
+        .unwrap_or(false);
+    assert!(
+        !is_coord_error,
+        "embedded-quote coordinate must resolve, not fail with coord error: {result}"
+    );
+}
+
+/// AC-coord-2: bare cube name binds unchanged (no normalization needed).
+#[test]
+fn coord_ac2_bare_cube_name_binds() {
+    let srv = server_with_cube_map();
+    let result = call_tool(
+        &srv,
+        "query_multidimensional",
+        json!({ "mqo": mqo_with_model("tpcds_benchmark_model") }),
+    );
+
+    let is_coord_error = result["structuredContent"]["error"]["code"]
+        .as_str()
+        .map(|c| c == "non_queryable_dimension" || c == "ambiguous_model_coordinate")
+        .unwrap_or(false);
+    assert!(
+        !is_coord_error,
+        "bare cube name must bind directly: {result}"
+    );
+}
+
+/// AC-coord-3: dimension-table error puts queryable cubes on the top line of `detail`.
+///
+/// FR2 requires the cube list on the FIRST LINE of `detail`, not buried in a nested field.
+#[test]
+fn coord_ac3_dimension_error_names_cubes_on_top_line() {
+    let srv = server_with_cube_map();
+    // `ship_mode` is not in xmla_model_coords → non-queryable.
+    let result = call_tool(
+        &srv,
+        "query_multidimensional",
+        json!({ "mqo": mqo_with_model("ship_mode") }),
+    );
+
+    assert_eq!(result["isError"], json!(true), "must be an error: {result}");
+    let err = &result["structuredContent"]["error"];
+    assert_eq!(err["code"], json!("non_queryable_dimension"), "wrong code: {err}");
+
+    // FR2: the `detail` field (string) must contain the cube name on the first line.
+    let detail = err["detail"].as_str().unwrap_or("");
+    // "tpcds_benchmark_model" must appear before any newline.
+    let first_line = detail.lines().next().unwrap_or(detail);
+    assert!(
+        first_line.contains("tpcds_benchmark_model"),
+        "queryable cube must appear on the first line of detail; got: {detail:?}"
+    );
+}
+
+/// AC-coord-4: ambiguous coordinate (bare name matching two cubes) returns error listing both.
+#[test]
+fn coord_ac4_ambiguous_cube_name_returns_ambiguity_error() {
+    // Build a server with two cubes that share the same lowercase name.
+    let mut coords: HashMap<String, (String, String)> = HashMap::new();
+    coords.insert(
+        "SalesCube".to_string(),
+        ("catalog_a".to_string(), "SalesCube".to_string()),
+    );
+    coords.insert(
+        "salescube".to_string(),
+        ("catalog_b".to_string(), "salescube".to_string()),
+    );
+    let srv = Server {
+        catalog: load_catalog(),
+        stats: load_stats(),
+        tools: resolve_tools(),
+        row_threshold: 50_000,
+        engine: ServerEngine::Fixture,
+        backend_override: None,
+        capabilities: BackendCapabilities::all_live(),
+        registry: None,
+        health_cache: None,
+        handle_store: None,
+        cursor_store: None,
+        page_size: mqo_mcp_server::cursor::DEFAULT_PAGE_SIZE,
+        inline_threshold: mqo_mcp_server::INLINE_THRESHOLD,
+        enriched: None,
+        xmla_model_coords: coords,
+        max_projection_cardinality: mqo_mcp_server::DEFAULT_MAX_PROJECTION_CARDINALITY,
+        model_graph: None,
+        grounding_store: None,
+        ontology_check: None,
+        autolift_base_url: None,
+        autolift_cache: None,
+    };
+    // Submitting "SALESCUBE" (case-insensitive) matches both keys.
+    let result = call_tool(
+        &srv,
+        "query_multidimensional",
+        json!({ "mqo": mqo_with_model("SALESCUBE") }),
+    );
+
+    assert_eq!(result["isError"], json!(true), "must be an error: {result}");
+    let code = result["structuredContent"]["error"]["code"].as_str().unwrap_or("");
+    assert_eq!(
+        code, "ambiguous_model_coordinate",
+        "must be ambiguous_model_coordinate, got: {code}"
+    );
+    // Both candidates must appear.
+    let candidates = &result["structuredContent"]["error"]["candidates"];
+    assert!(candidates.is_array(), "candidates must be an array: {result}");
+    let arr = candidates.as_array().unwrap();
+    assert_eq!(arr.len(), 2, "must list exactly 2 candidates: {arr:?}");
+}
+
+/// AC-coord-5: empty coordinate lists available cubes (not a panic).
+#[test]
+fn coord_ac5_empty_coordinate_lists_available_cubes() {
+    let srv = server_with_cube_map();
+    let result = call_tool(
+        &srv,
+        "query_multidimensional",
+        json!({ "mqo": mqo_with_model("") }),
+    );
+
+    assert_eq!(result["isError"], json!(true), "must be an error: {result}");
+    let err = &result["structuredContent"]["error"];
+    // Must be a coord error (empty → non_queryable_dimension or similar), never a panic.
+    let code = err["code"].as_str().unwrap_or("");
+    assert!(
+        code == "non_queryable_dimension" || code == "ambiguous_model_coordinate",
+        "empty coordinate must return a coord error, got: {code}"
+    );
+    // Candidate cubes must be listed.
+    let candidates = &err["candidate_cubes"];
+    assert!(candidates.is_array(), "candidate_cubes must be present: {err}");
+    let arr = candidates.as_array().unwrap();
+    assert!(
+        arr.iter().any(|c| c.as_str() == Some("tpcds_benchmark_model")),
+        "tpcds_benchmark_model must appear in candidate_cubes: {arr:?}"
     );
 }
 
