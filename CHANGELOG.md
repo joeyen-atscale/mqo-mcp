@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.52.0] - 2026-06-19
+
+### Added
+- **describe_model token budget + describe_compatibility tool** (`mqo-mcp-server` v0.52.0, PRD-mqo-describe-model-token-budget):
+  Strip `compatible_hierarchies` from the default `describe_model` response and add a
+  `describe_compatibility` tool for on-demand access, eliminating the 697 KB matrix that
+  caused MCP client truncation in 66% of eval sessions.
+  - FR1: `compatible_hierarchies` is no longer inlined in `describe_model`; response is
+    ≤ 25 000 tokens for the full tpcds catalog (was 220 000+ tokens).
+  - FR2: New `describe_compatibility(model_coordinate, hierarchy_name)` tool returns the
+    compatibility set for a single hierarchy on demand.
+  - FR3: `--describe-token-budget <n>` server flag (default 25 000). Budget trimming drops
+    fields in priority order: domain → hierarchy_levels → value_type → related_attributes →
+    date_roles → advisory annotations → near_twins measure groups.
+  - FR4: `compatibility_available: true` marker in every `describe_model` response.
+  - FR5: Acceptance tests assert payload ≤ budget (AC1–AC4 in acceptance.rs, disambig_ac5
+    in acceptance_compat.rs updated from 15% relative to absolute token-budget check).
+
 ## [mqo-param-validator 0.12.0] - 2026-06-19
 
 ### Changed
