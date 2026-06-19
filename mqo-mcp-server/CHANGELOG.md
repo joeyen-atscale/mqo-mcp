@@ -1,4 +1,11 @@
+## v0.50.0 — 2026-06-18
+Fix projection_too_large error to prescribe 'set limit: <n>' instead of 'add a filter', so the model responds to cardinality errors by bounding the result rather than reformulating predicates.
+
 # Changelog
+
+## v0.49.0 — 2026-06-19
+
+Fix projection_too_large error to prescribe 'set limit: <n>' instead of 'add a filter', so the model responds to cardinality errors by bounding the result rather than reformulating predicates.
 
 ## v0.49.0 — 2026-06-18
 
