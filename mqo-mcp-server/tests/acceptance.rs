@@ -112,6 +112,7 @@ fn server() -> Server {
         ontology_check: None,
         autolift_base_url: None,
         autolift_cache: None,
+        describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
     }
 }
 
@@ -197,9 +198,9 @@ fn ac1_server_advertises_tools_with_readonly_hints() {
     }
 
     // Sanity: tool_descriptors() exposed publicly returns the same shape
-    // (4 core + 3 federation + 4 chart + 1 next_page + 12 dataset ops + 1 query_model_graph
-    //  + 1 describe_grounding + 1 validate_query_ontology = 27 total).
-    assert_eq!(tool_descriptors().as_array().unwrap().len(), 27);
+    // (4 core + 1 describe_compatibility + 3 federation + 4 chart + 1 next_page + 12 dataset ops
+    //  + 1 query_model_graph + 1 describe_grounding + 1 validate_query_ontology = 28 total).
+    assert_eq!(tool_descriptors().as_array().unwrap().len(), 28);
 }
 
 // ── AC2 ─────────────────────────────────────────────────────────────────────
@@ -337,6 +338,7 @@ fn ac4_drillthrough_mqo_routes_to_mdx() {
         ontology_check: None,
         autolift_base_url: None,
         autolift_cache: None,
+        describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
     };
     let mqo = valid_mqo(
         vec![json!({ "hierarchy": "time.calendar", "level": "Year" })],
@@ -670,6 +672,7 @@ fn new_ac2_live_mode_routes_through_live_executor() {
         ontology_check: None,
         autolift_base_url: None,
         autolift_cache: None,
+        describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
     };
     let mqo = valid_mqo(
         vec![json!({ "hierarchy": "time.calendar", "level": "Year" })],
@@ -802,6 +805,7 @@ fn new_ac4_engine_error_surfaces_as_structured_engine_error() {
         ontology_check: None,
         autolift_base_url: None,
         autolift_cache: None,
+        describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
     };
     let mqo = valid_mqo(
         vec![json!({ "hierarchy": "time.calendar", "level": "Year" })],
@@ -856,9 +860,10 @@ fn new_ac6_mcp_contract_unchanged() {
         .handle(&json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}))
         .expect("tools/list response");
     let tools = listed["result"]["tools"].as_array().expect("tools array");
-    // 4 core tools + 3 federation tools + 4 chart tools + 1 next_page + 12 dataset ops
-    // + 1 query_model_graph + 1 describe_grounding + 1 validate_query_ontology = 27 total.
-    assert_eq!(tools.len(), 27);
+    // 4 core tools + 1 describe_compatibility + 3 federation tools + 4 chart tools + 1 next_page
+    // + 12 dataset ops + 1 query_model_graph + 1 describe_grounding + 1 validate_query_ontology
+    // = 28 total.
+    assert_eq!(tools.len(), 28);
     // query_multidimensional has readOnlyHint: true.
     let qmd = tools
         .iter()
@@ -1017,6 +1022,7 @@ fn ext5_list_models_with_empty_catalog_returns_empty_array() {
         ontology_check: None,
         autolift_base_url: None,
         autolift_cache: None,
+        describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
     };
     let result = call_tool(&srv, "list_models", json!({}));
     assert_eq!(result["isError"], json!(false), "{result}");
@@ -1235,6 +1241,7 @@ fn ext13_diff_clusters_missing_cluster_a_returns_error() {
         ontology_check: None,
         autolift_base_url: None,
         autolift_cache: None,
+        describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
     };
 
     // cluster_a is absent — only cluster_b is provided.
@@ -1301,6 +1308,7 @@ fn ext14_diff_clusters_unknown_cluster_names_returns_error() {
         ontology_check: None,
         autolift_base_url: None,
         autolift_cache: None,
+        describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
     };
 
     let result = call_tool(
@@ -1382,6 +1390,7 @@ fn ext15_list_clusters_with_registry_returns_cluster_list() {
         ontology_check: None,
         autolift_base_url: None,
         autolift_cache: None,
+        describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
     };
 
     let result = call_tool(&srv, "list_clusters", json!({}));
@@ -1511,6 +1520,7 @@ fn ext20_backend_override_sql_forces_sql_for_small_query() {
         ontology_check: None,
         autolift_base_url: None,
         autolift_cache: None,
+        describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
     };
     // Year-level: cardinality 5, normally DAX.
     let mqo = valid_mqo(
@@ -1618,11 +1628,12 @@ fn ext24_tools_list_advertises_chart_tools_total_nine() {
         .expect("tools/list response");
     let tools = listed["result"]["tools"].as_array().expect("tools array");
 
-    assert_eq!(tools.len(), 27, "must advertise 27 tools (12 core + 12 dataset ops incl. dataset_export + 1 query_model_graph + 1 describe_grounding + 1 validate_query_ontology): {tools:?}");
+    assert_eq!(tools.len(), 28, "must advertise 28 tools (12 core + 1 describe_compatibility + 12 dataset ops incl. dataset_export + 1 query_model_graph + 1 describe_grounding + 1 validate_query_ontology): {tools:?}");
 
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     for expected in [
-        "list_models", "describe_model", "search_columns", "query_multidimensional",
+        "list_models", "describe_model", "describe_compatibility", "search_columns",
+        "query_multidimensional",
         "list_clusters", "health_status", "diff_clusters",
         "recommend_chart", "build_vega_spec", "build_bi_asset", "compose_dashboard",
         "query_model_graph", "describe_grounding", "validate_query_ontology",
@@ -2136,6 +2147,7 @@ fn server_with_cube_map() -> Server {
         ontology_check: None,
         autolift_base_url: None,
         autolift_cache: None,
+        describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
     }
 }
 
@@ -2195,6 +2207,7 @@ fn qmg_ac1_list_models_flags_cube_vs_dimension() {
         ontology_check: None,
         autolift_base_url: None,
         autolift_cache: None,
+        describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
     };
     let result_b = call_tool(&srv_b, "list_models", json!({}));
     assert_eq!(result_b["isError"], json!(false));
@@ -2368,6 +2381,7 @@ fn qmg_ac5_queryable_cube_query_is_unchanged() {
         ontology_check: None,
         autolift_base_url: None,
         autolift_cache: None,
+        describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
     };
     let mqo = valid_mqo(
         vec![json!({ "hierarchy": "time.calendar", "level": "Year" })],
@@ -2471,6 +2485,7 @@ fn server_with_domains() -> Server {
         ontology_check: None,
         autolift_base_url: None,
         autolift_cache: None,
+        describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
     }
 }
 
@@ -2553,6 +2568,7 @@ fn member_locate_ac2_value_in_multiple_levels() {
         ontology_check: None,
         autolift_base_url: None,
         autolift_cache: None,
+        describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
     };
 
     let result = call_tool(&srv, "search_columns", json!({ "member_value": "SharedValue" }));
@@ -2781,5 +2797,132 @@ fn member_locate_descriptor_includes_member_value() {
     assert!(
         props.get("member_value").is_some(),
         "search_columns schema must include member_value property: {sc}"
+    );
+}
+
+// ── PRD-mqo-describe-model-token-budget acceptance tests ──────────────────
+
+/// AC1 (FR1, FR4): describe_model response must not contain `compatible_hierarchies`
+/// on any column, and must carry `compatibility_available: true`.
+#[test]
+fn describe_model_strips_compatible_hierarchies_and_signals_availability() {
+    let srv = server();
+    let resp = srv.handle(&json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": { "name": "describe_model", "arguments": {} }
+    })).expect("must return a response");
+
+    let text = resp["result"]["content"][0]["text"]
+        .as_str()
+        .expect("describe_model must return text content");
+    let payload: Value = serde_json::from_str(text)
+        .expect("describe_model must return valid JSON");
+
+    // FR1: no column may carry compatible_hierarchies in the default response.
+    if let Some(cols) = payload.get("columns").and_then(Value::as_array) {
+        for col in cols {
+            assert!(
+                col.get("compatible_hierarchies").is_none(),
+                "column must not contain compatible_hierarchies in default describe_model: {col}"
+            );
+        }
+    }
+
+    // FR4: top-level compatibility_available must be present and true.
+    assert_eq!(
+        payload.get("compatibility_available"),
+        Some(&json!(true)),
+        "describe_model must carry compatibility_available:true"
+    );
+}
+
+/// AC2 (FR3): describe_model response payload must be within the token budget.
+#[test]
+fn describe_model_payload_within_token_budget() {
+    let srv = server();
+    let resp = srv.handle(&json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": { "name": "describe_model", "arguments": {} }
+    })).expect("must return a response");
+
+    let text = resp["result"]["content"][0]["text"]
+        .as_str()
+        .expect("describe_model must return text content");
+
+    // chars/4 ≤ budget (default 25_000 tokens = 100_000 chars)
+    let estimated_tokens = text.len().div_ceil(4);
+    assert!(
+        estimated_tokens <= mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        "describe_model response ({estimated_tokens} tokens est.) exceeds budget ({})",
+        mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET
+    );
+}
+
+/// AC3 (FR2): `describe_compatibility` tool is advertised and takes the right params.
+#[test]
+fn describe_compatibility_tool_is_advertised() {
+    let tools = mqo_mcp_server::tool_descriptors();
+    let dc = tools
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "describe_compatibility")
+        .expect("describe_compatibility must be in tool list");
+
+    let props = &dc["inputSchema"]["properties"];
+    assert!(
+        props.get("model_coordinate").is_some(),
+        "describe_compatibility schema must include model_coordinate"
+    );
+    assert!(
+        props.get("hierarchy_name").is_some(),
+        "describe_compatibility schema must include hierarchy_name"
+    );
+    assert_eq!(
+        dc["annotations"]["readOnlyHint"],
+        json!(true),
+        "describe_compatibility must be read-only"
+    );
+}
+
+/// AC4 (FR2): `describe_compatibility` tool is callable and returns valid JSON.
+/// When enriched catalog is not loaded (fixture mode), the tool returns a
+/// structured error rather than panicking or returning invalid JSON.
+#[test]
+fn describe_compatibility_returns_valid_response() {
+    let srv = server();
+    let resp = srv.handle(&json!({
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "tools/call",
+        "params": {
+            "name": "describe_compatibility",
+            "arguments": { "model_coordinate": "", "hierarchy_name": "store_dimension" }
+        }
+    })).expect("must return a response");
+
+    // Must be a tools/call result, not a JSON-RPC method error.
+    assert!(
+        resp.get("error").is_none(),
+        "describe_compatibility must return a tools/call result, not a JSON-RPC error"
+    );
+
+    // Should return text content with valid JSON.
+    let text = resp["result"]["content"][0]["text"]
+        .as_str()
+        .expect("describe_compatibility must return text content");
+    let payload: Value = serde_json::from_str(text)
+        .expect("describe_compatibility must return valid JSON");
+
+    // In fixture mode (no enriched catalog), must return a structured error payload.
+    // In enriched mode, must return hierarchy_name + compatible_measures.
+    // Either way: must be valid JSON, must not panic, result must not be null.
+    assert!(
+        payload.get("error").is_some() || payload.get("hierarchy_name").is_some(),
+        "describe_compatibility must return either an error or a hierarchy_name response: {payload}"
     );
 }

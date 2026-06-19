@@ -735,6 +735,13 @@ fn json_byte_size(v: &Value) -> usize {
     serde_json::to_string(v).map(|s| s.len()).unwrap_or(0)
 }
 
+/// Estimate token count from a serialized JSON value using the chars/4 heuristic.
+fn estimate_tokens(v: &Value) -> usize {
+    serde_json::to_string(v)
+        .map(|s| s.len().div_ceil(4))
+        .unwrap_or(0)
+}
+
 /// Protocol version this server speaks. Matches the MCP spec revision string.
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
@@ -845,6 +852,13 @@ pub struct Server {
     ///
     /// `None` when auto-lift is disabled or no executor is available.
     pub autolift_cache: Option<Arc<AutoliftCache>>,
+    /// Token budget for the default `describe_model` payload (FR3).
+    ///
+    /// Uses chars/4 as a token estimate.  When the payload exceeds this budget
+    /// after stripping `compatible_hierarchies`, the server drops the next
+    /// non-critical field(s) in priority order and emits `truncated_fields`.
+    /// Default: `DEFAULT_DESCRIBE_TOKEN_BUDGET` (25_000).
+    pub describe_token_budget: usize,
 }
 
 /// Default maximum distinct-row estimate for a projection MQO.
@@ -856,6 +870,14 @@ pub struct Server {
 /// Rollback to old behavior: pass `--max-projection-cardinality 10000` (or set
 /// `--max-result-rows 10000`).
 pub const DEFAULT_MAX_PROJECTION_CARDINALITY: usize = mqo_auth_bridge::DEFAULT_MAX_RESULT_ROWS;
+
+/// Default token budget for the `describe_model` payload (PRD-mqo-describe-model-token-budget).
+///
+/// Uses chars/4 as a token estimate (consistent with MCP client behaviour).
+/// The dominant field — `compatible_hierarchies` (697 KB) — is stripped before
+/// this budget is applied.  25 000 tokens ≈ 100 KB of JSON, well within the
+/// MCP client's cap.
+pub const DEFAULT_DESCRIBE_TOKEN_BUDGET: usize = 25_000;
 
 /// The advertised tool list. The three catalog tools are read-only.
 #[must_use]
@@ -879,10 +901,24 @@ fn core_tool_descriptors() -> Vec<Value> {
         }),
         json!({
             "name": "describe_model",
-            "description": "Describe a model: its measures, hierarchies/levels, and calculation groups. Read-only.",
+            "description": "Describe a model: its measures, hierarchies/levels, and calculation groups. Read-only. The default response omits the `compatible_hierarchies` cross-compatibility matrix (it is large) and instead includes `compatibility_available: true`. Call `describe_compatibility` with a hierarchy name to retrieve the compatibility set for that hierarchy.",
             "inputSchema": {
                 "type": "object",
                 "properties": { "model": { "type": "string", "description": "Model unique name." } },
+                "additionalProperties": false
+            },
+            "annotations": { "readOnlyHint": true }
+        }),
+        json!({
+            "name": "describe_compatibility",
+            "description": "Return the cross-fact compatibility set for a named hierarchy: which other hierarchies (and their levels) a measure on that hierarchy can be combined with. Use this when describe_model indicated compatibility_available:true and you need to know which dimensions are safe to cross-combine. Read-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "model_coordinate": { "type": "string", "description": "Model unique name (e.g. 'tpcds_benchmark_model')." },
+                    "hierarchy_name": { "type": "string", "description": "Hierarchy unique name to look up compatibility for (e.g. 'store_dimension')." }
+                },
+                "required": ["model_coordinate", "hierarchy_name"],
                 "additionalProperties": false
             },
             "annotations": { "readOnlyHint": true }
@@ -1167,6 +1203,7 @@ impl Server {
         match name {
             "list_models" => Ok(tool_text_result(&self.list_models())),
             "describe_model" => Ok(tool_text_result(&self.describe_model(&args))),
+            "describe_compatibility" => Ok(tool_text_result(&self.describe_compatibility(&args))),
             "search_columns" => Ok(tool_text_result(&self.search_columns(&args))),
             "query_multidimensional" => Ok(self.query_multidimensional(&args)),
             "next_page" => Ok(self.next_page_tool(&args)),
@@ -1522,8 +1559,11 @@ impl Server {
             })
             .unwrap_or_default();
 
-        // When enriched: annotate each measure with its pre-computed compatible_hierarchies
-        // and channel_scope descriptor (PRD-mqo-channel-scope-measure-grounding, FR1/FR2).
+        // When enriched: annotate each measure with its channel_scope descriptor
+        // (PRD-mqo-channel-scope-measure-grounding, FR1/FR2).
+        // NOTE: compatible_hierarchies is intentionally NOT inlined here per
+        // PRD-mqo-describe-model-token-budget (FR1): the 697 KB matrix is available
+        // on demand via the `describe_compatibility` tool instead.
         // When not enriched: columns are returned unmodified (FR9 — omitted, never null).
         if let Some(ref enriched) = self.enriched {
             for col in &mut columns {
@@ -1533,9 +1573,6 @@ impl Server {
                         .and_then(Value::as_str)
                         .map(str::to_string)
                     {
-                        if let Some(compat) = enriched.compatible_hierarchies.get(&un) {
-                            col["compatible_hierarchies"] = compat.clone();
-                        }
                         // FR1: emit channel_scope descriptor derived from FactBindings.
                         // Only present when the measure appears in tpcds_defaults().
                         // Absent for unknown measures → guard stays silent (OQ4).
@@ -1650,19 +1687,26 @@ impl Server {
         // (PRD-mqo-describe-measure-disambiguation).
         let measure_twins = build_measure_twins(all_columns);
 
-        // FR-5 footprint guard. The original response is columns (with
-        // compatible_hierarchies + FR-1/FR-4 tags) without the near_twins block.
-        // Level twins are few and always kept (the disambiguation-pack contract).
-        // The measure-twin families are the larger, growable block, so they are
-        // the ones trimmed under budget pressure: drop the smallest (least
-        // confusable) families first until the whole near_twins block is within
-        // +15% of the columns payload. Every kept family still has ≥2 members.
-        let base = json!({ "columns": &columns });
-        let base_bytes = json_byte_size(&base);
+        // Footprint guard for near_twins: keep the measure-twin block from
+        // blowing the describe_token_budget. Now that `compatible_hierarchies`
+        // is stripped from the default payload (PRD-mqo-describe-model-token-budget),
+        // columns are much slimmer and the relative-% guard would over-trim.
+        // Use an absolute limit derived from the token budget instead:
+        // near_twins may consume up to 20% of the token budget (in chars).
         let level_bytes = json_byte_size(&json!(level_twins));
         let mut measure_twins = measure_twins;
-        if base_bytes > 0 {
-            // Sort smallest-family-first so `pop()` drops the least confusable.
+        {
+            // Budget: 40% of the describe_token_budget, expressed in chars (×4).
+            // PRD-mqo-describe-model-token-budget: now that compatible_hierarchies
+            // is stripped, columns are slim (~80KB), so we can afford a larger
+            // near_twins budget. The final token-budget check after response assembly
+            // is the safety net; this guard only prevents measure_twins from
+            // monopolising a large fraction of the whole response.
+            let twins_char_budget = self.describe_token_budget
+                .saturating_mul(4)
+                .saturating_mul(2)
+                / 5;
+            // Sort smallest-family-first so trimming drops the least confusable.
             measure_twins.sort_by(|a, b| {
                 let len = |g: &Value| {
                     g.get("near_twins")
@@ -1679,8 +1723,8 @@ impl Server {
             });
             #[allow(clippy::cast_precision_loss)]
             let over_budget = |measures: &[Value]| -> bool {
-                let total = level_bytes + json_byte_size(&json!(measures));
-                (total as f64 / base_bytes as f64) > 0.15
+                let total_chars = level_bytes + json_byte_size(&json!(measures));
+                total_chars > twins_char_budget
             };
             while over_budget(&measure_twins) && !measure_twins.is_empty() {
                 measure_twins.remove(0);
@@ -1819,6 +1863,9 @@ impl Server {
             "near_twins": near_twins,
             "hierarchy_levels": hierarchy_levels_val,
             "describe_model": self.catalog.get("describe_model").cloned().unwrap_or(Value::Null),
+            // FR4: signal that the compatibility matrix is available on demand.
+            "compatibility_available": true,
+            "compatibility_note": "The compatible_hierarchies cross-fact matrix is omitted from the default payload to stay within the context-window budget. Call describe_compatibility(model_coordinate, hierarchy_name) to retrieve the compatibility set for a specific hierarchy.",
             "projection_note": "A measureless projection (projection:true, measures:[]) may be filtered by ANY level in this model — including levels from other dimensions or fact-resident levels not in the dimensions list. The engine resolves such filters via SUMMARIZECOLUMNS auto-exist (semijoin): the result is the distinct attribute set for members that have at least one qualifying fact row. Use this shape for list/which/each questions. Use measures[] for aggregation (sum/avg/count) questions.",
             "ranking_note": "Ranking (top-N, bottom-N, first-N-ordered) is expressed via `limit` (positive integer row cap) and `order` (array of {key: \"<measure-or-level-name>\", direction: \"asc\"|\"desc\"} objects) in the MQO passed to query_multidimensional. The compiler pushes a TOPN bound so the engine returns at most `limit` rows — no full-grain scan, no timeout. Multiple order keys are supported for tie-breaking. NEVER inject a synthetic Rank or Row Number column — that is always wrong and will be rejected (RULE 6)."
         });
@@ -1826,7 +1873,232 @@ impl Server {
         if !candidate_cubes_field.is_null() {
             resp["candidate_cubes"] = candidate_cubes_field;
         }
+
+        // FR3 (PRD-mqo-describe-model-token-budget): apply token budget to the
+        // whole assembled response. Drop non-critical fields in priority order
+        // until the payload fits the budget. Uses chars/4 as a token estimate.
+        //
+        // Priority order (least critical first; grounding-critical fields preserved):
+        //   1. per-column `domain` (captured member enumerations — large, available via search_columns)
+        //   2. `hierarchy_levels` detail block (per-hierarchy level listings — useful but large)
+        //   3. per-column `value_type` annotations
+        //   4. per-column `related_attributes` lists
+        //   4b. per-measure `date_roles` (advisory date hierarchy list, ~19 KB for large catalogs)
+        //   4c. per-column advisory annotations (channel_scope, display_sibling, projectable, etc.)
+        //   5. `near_twins` measure-twin block (grounding aid; last resort — level twins always kept)
+        let mut truncated_fields: Vec<&str> = Vec::new();
+
+        // Phase 1: drop domain from columns (often large: captured member enumerations).
+        if estimate_tokens(&resp) > self.describe_token_budget {
+            if let Some(cols) = resp.get_mut("columns").and_then(Value::as_array_mut) {
+                let mut dropped = false;
+                for col in cols.iter_mut() {
+                    if let Some(obj) = col.as_object_mut() {
+                        if obj.remove("domain").is_some() { dropped = true; }
+                    }
+                }
+                if dropped { truncated_fields.push("domain"); }
+            }
+        }
+
+        // Phase 2: drop hierarchy_levels (per-hierarchy level listing — large block).
+        if estimate_tokens(&resp) > self.describe_token_budget {
+            if resp.get("hierarchy_levels").is_some() {
+                if let Some(obj) = resp.as_object_mut() {
+                    obj.remove("hierarchy_levels");
+                    truncated_fields.push("hierarchy_levels");
+                }
+            }
+        }
+
+        // Phase 3: drop value_type from columns.
+        if estimate_tokens(&resp) > self.describe_token_budget {
+            if let Some(cols) = resp.get_mut("columns").and_then(Value::as_array_mut) {
+                let mut dropped = false;
+                for col in cols.iter_mut() {
+                    if let Some(obj) = col.as_object_mut() {
+                        if obj.remove("value_type").is_some() { dropped = true; }
+                    }
+                }
+                if dropped { truncated_fields.push("value_type"); }
+            }
+        }
+
+        // Phase 4: drop related_attributes from columns.
+        if estimate_tokens(&resp) > self.describe_token_budget {
+            if let Some(cols) = resp.get_mut("columns").and_then(Value::as_array_mut) {
+                let mut dropped = false;
+                for col in cols.iter_mut() {
+                    if let Some(obj) = col.as_object_mut() {
+                        if obj.remove("related_attributes").is_some() { dropped = true; }
+                    }
+                }
+                if dropped { truncated_fields.push("related_attributes"); }
+            }
+        }
+
+        // Phase 4b: drop date_roles from measure columns (19 KB for tpcds: 86 measures ×
+        // 8-element array). date_roles are derivable on demand from hierarchy labels; they
+        // are advisory, not required for query correctness.
+        if estimate_tokens(&resp) > self.describe_token_budget {
+            if let Some(cols) = resp.get_mut("columns").and_then(Value::as_array_mut) {
+                let mut dropped = false;
+                for col in cols.iter_mut() {
+                    if col.get("kind").and_then(Value::as_str) == Some("measure") {
+                        if let Some(obj) = col.as_object_mut() {
+                            if obj.remove("date_roles").is_some() { dropped = true; }
+                        }
+                    }
+                }
+                if dropped { truncated_fields.push("date_roles"); }
+            }
+        }
+
+        // Phase 4c: drop advisory per-column annotations (channel_scope, display_sibling,
+        // projectable, filterable_cross_dimension). These help with query construction but
+        // are not required for the model to issue correct queries. Stripped in one pass.
+        if estimate_tokens(&resp) > self.describe_token_budget {
+            if let Some(cols) = resp.get_mut("columns").and_then(Value::as_array_mut) {
+                let mut dropped = false;
+                const ADVISORY: &[&str] = &[
+                    "channel_scope", "display_sibling", "projectable",
+                    "filterable_cross_dimension", "projectable_per_member_quantity",
+                ];
+                for col in cols.iter_mut() {
+                    if let Some(obj) = col.as_object_mut() {
+                        for key in ADVISORY {
+                            if obj.remove(*key).is_some() { dropped = true; }
+                        }
+                    }
+                }
+                if dropped { truncated_fields.push("advisory_column_annotations"); }
+            }
+        }
+
+        // Phase 5 (last resort): drop near_twins measure-twin entries.
+        // Level-twin groups (wrong_hierarchy_level disambiguation) are ALWAYS kept.
+        if estimate_tokens(&resp) > self.describe_token_budget {
+            if let Some(twins) = resp.get_mut("near_twins").and_then(Value::as_array_mut) {
+                let level_only: Vec<Value> = twins
+                    .iter()
+                    .filter(|g| g.get("twin_kind").and_then(Value::as_str) == Some("level"))
+                    .cloned()
+                    .collect();
+                if level_only.len() < twins.len() {
+                    *twins = level_only;
+                    truncated_fields.push("near_twins_measure_groups");
+                }
+            }
+        }
+
+        if !truncated_fields.is_empty() {
+            resp["truncated_fields"] = json!(truncated_fields);
+            resp["truncation_note"] = json!("Some fields were dropped to stay within the token budget. Use search_columns, describe_compatibility, or targeted describe_model calls for the omitted data.");
+        }
         resp
+    }
+
+    /// FR2 (PRD-mqo-describe-model-token-budget): on-demand compatibility drill-down.
+    ///
+    /// Returns the cross-fact compatibility set for all measures whose
+    /// `compatible_hierarchies` map references `hierarchy_name`.  The data is
+    /// served from the already-loaded `enriched` catalog — no new backend round-trip.
+    fn describe_compatibility(&self, args: &Value) -> Value {
+        let model_coord = args
+            .get("model_coordinate")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let hierarchy_name = args
+            .get("hierarchy_name")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+
+        if hierarchy_name.is_empty() {
+            return json!({
+                "error": {
+                    "code": "invalid_params",
+                    "detail": "hierarchy_name is required"
+                }
+            });
+        }
+
+        let Some(ref enriched) = self.enriched else {
+            return json!({
+                "error": {
+                    "code": "compatibility_unavailable",
+                    "detail": "Enriched catalog not loaded; compatible_hierarchies data is unavailable."
+                }
+            });
+        };
+
+        // Collect all measures and return the compatible_hierarchies entry that
+        // contains this hierarchy, if any, so the caller sees the full compat set
+        // for every measure associated with this hierarchy.
+        let mut results: Vec<Value> = Vec::new();
+        for (measure_un, compat_arr) in &enriched.compatible_hierarchies {
+            // Filter to measures in the requested model (when a model was provided).
+            if !model_coord.is_empty()
+                && !measure_un.starts_with(&format!("{model_coord}."))
+                && measure_un != model_coord
+            {
+                continue;
+            }
+            // Include this measure if its compat set references the requested hierarchy.
+            if let Some(arr) = compat_arr.as_array() {
+                let matching: Vec<&Value> = arr
+                    .iter()
+                    .filter(|entry| {
+                        entry
+                            .get("hierarchy_unique_name")
+                            .and_then(Value::as_str)
+                            .is_some_and(|h| h == hierarchy_name)
+                    })
+                    .collect();
+                if !matching.is_empty() {
+                    // Return the full compat array for this measure (not just the matching entry).
+                    results.push(json!({
+                        "measure_unique_name": measure_un,
+                        "compatible_hierarchies": compat_arr
+                    }));
+                }
+            }
+        }
+
+        if results.is_empty() {
+            // Hierarchy not found in compatibility data — may be a dimension-only hierarchy.
+            // Return the full array for any measure whose unique_name starts with the hierarchy.
+            for (measure_un, compat_arr) in &enriched.compatible_hierarchies {
+                if !model_coord.is_empty()
+                    && !measure_un.starts_with(&format!("{model_coord}."))
+                    && measure_un != model_coord
+                {
+                    continue;
+                }
+                results.push(json!({
+                    "measure_unique_name": measure_un,
+                    "compatible_hierarchies": compat_arr
+                }));
+                // Limit to a few entries to avoid blowing the budget
+                if results.len() >= 5 {
+                    break;
+                }
+            }
+            if results.is_empty() {
+                return json!({
+                    "hierarchy_name": hierarchy_name,
+                    "model_coordinate": model_coord,
+                    "compatible_measures": [],
+                    "note": "No compatibility data found for this hierarchy. It may be a dimension-only hierarchy or not present in the enriched catalog."
+                });
+            }
+        }
+
+        json!({
+            "hierarchy_name": hierarchy_name,
+            "model_coordinate": model_coord,
+            "compatible_measures": results,
+            "note": "Each entry shows a measure and its full compatible_hierarchies set. Combine measures only with hierarchies listed in their compatible_hierarchies array."
+        })
     }
 
     fn search_columns(&self, args: &Value) -> Value {
@@ -3859,6 +4131,7 @@ mod hierarchy_levels_value_type_tests {
             ontology_check: None,
             autolift_base_url: None,
             autolift_cache: None,
+            describe_token_budget: DEFAULT_DESCRIBE_TOKEN_BUDGET,
         }
     }
 
@@ -3962,6 +4235,7 @@ mod hierarchy_levels_value_type_tests {
             ontology_check: None,
             autolift_base_url: None,
             autolift_cache: None,
+            describe_token_budget: DEFAULT_DESCRIBE_TOKEN_BUDGET,
         };
         let resp = srv.describe_model(&json!({"model": "test_model"}));
         let hl = resp
@@ -4047,6 +4321,7 @@ mod hierarchy_levels_value_type_tests {
             ontology_check: None,
             autolift_base_url: None,
             autolift_cache: None,
+            describe_token_budget: DEFAULT_DESCRIBE_TOKEN_BUDGET,
         };
         let resp = srv.describe_model(&json!({}));
 
@@ -4194,6 +4469,7 @@ mod autolift_wiring_tests {
             ontology_check: None,
             autolift_base_url: None,
             autolift_cache: None,
+            describe_token_budget: DEFAULT_DESCRIBE_TOKEN_BUDGET,
         }
     }
 
