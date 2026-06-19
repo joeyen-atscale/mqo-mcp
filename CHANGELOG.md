@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.51.0] - 2026-06-19
+
+### Added
+- **Model coordinate normalization** (`mqo-mcp-server` v0.51.0, PRD-mqo-model-coordinate-resolution):
+  Implements FR1–FR5 to fix the 33% eval failure rate from malformed model coordinates.
+  - **FR1**: `normalize_model_coord` strips embedded double-quotes and splits on `.` to extract
+    the cube segment; `resolve_model_coord` matches case-insensitively against queryable cubes.
+    Embedded-quote 3-part coordinates (`"atscale_catalogs"."tpcds_Databricks"."tpcds_benchmark_model"`)
+    now bind in a single shot.
+  - **FR2**: `NonQueryableDimension` error `detail` now puts queryable cubes on the FIRST LINE
+    (e.g. `model 'X' is a dimension table; use one of: tpcds_benchmark_model`).
+  - **FR3**: No-match and empty/garbage coordinate errors list all available queryable cubes.
+  - **FR4**: Ambiguous bare names (2+ cubes match the same lowercase segment) return a typed
+    `ambiguous_model_coordinate` error listing all candidates; no auto-select.
+  - **FR5**: Wrong catalog/backend segments with an unambiguous cube rewrite the `model` field to
+    the canonical bare cube name and attach a `_coordinate_normalized` advisory note; the pipeline
+    proceeds normally without burning a retry turn.
+  - 5 new acceptance tests (coord_ac1–coord_ac5); 353 total passing.
+
 ## [0.46.0] - 2026-06-17
 
 ### Added
