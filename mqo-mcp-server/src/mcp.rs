@@ -2707,8 +2707,9 @@ fn structured_err(e: &PipelineError) -> Value {
                 "detail": format!(
                     "Projection over level '{level}' has an estimated distinct cardinality \
                      of {estimate}, which exceeds the configured cap of {cap}. \
-                     Add a filter to narrow the set or ask the operator to raise \
-                     --max-projection-cardinality."
+                     FIX: set `limit: <n>` in the MQO to bound the result to the top-N rows \
+                     (the compiler pushes a TOPN so only N rows are returned — no full scan). \
+                     Do NOT add more filters to work around this; use `limit` instead."
                 )
             }),
         ),
