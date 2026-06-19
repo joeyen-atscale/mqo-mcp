@@ -1,5 +1,19 @@
 # Changelog
 
+## [mqo-param-validator 0.12.0] - 2026-06-19
+
+### Changed
+- **RULE 11 NearMissLevelLabel token-overlap guard** (PRD-mqo-nearmiss-label-token-overlap-guard):
+  Adds a shared-content-token floor to NearMissLevelLabel suggestion emission. Before emitting a
+  near-miss correction, the candidate canonical must share at least one normalized content token with
+  the supplied label after excluding the common leading-word prefix of both labels. Suppresses the
+  headline misfire where "Warehouse Square Feet" was incorrectly corrected toward "Warehouse State"
+  (JW=0.906, pure character-shape match, no shared content word). Legitimate typo near-misses that
+  share a suffix token (e.g., "Warehouse Sq Feet" → "Warehouse Square Feet" via shared "feet")
+  continue to fire. Suppressed suggestions fall through to the existing "level not found" listing.
+  9 new unit tests covering the headline case, typo-still-fires case, single-word disjoint
+  suppression, and overlap-passes-disjoint-suppressed scenario.
+
 ## [0.51.0] - 2026-06-19
 
 ### Added
