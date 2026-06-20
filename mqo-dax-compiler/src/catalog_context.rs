@@ -89,6 +89,19 @@ struct ColumnEntryMirror {
     /// `resolve_member_level` for dtype-aware numeric comparison.
     #[serde(default)]
     value_type: Option<String>,
+    /// True LEVEL_CARDINALITY from MDSCHEMA (written by `catalog_ingest`).
+    /// When present, used together with `domain.len()` to determine whether
+    /// the captured domain is complete (all members captured) or partial
+    /// (truncated at the capture cap). Absent in older snapshots or for
+    /// levels with no cardinality metadata → treated conservatively as unknown.
+    #[serde(default)]
+    cardinality: Option<u64>,
+    /// Explicit `domain_complete` flag. When `true`, the capturing agent
+    /// confirmed that the domain was fully enumerated. When `false` or
+    /// absent, the completeness is inferred from `cardinality` vs
+    /// `domain.len()` (or conservatively `false` when neither is available).
+    #[serde(default)]
+    domain_complete: Option<bool>,
 }
 
 /// Minimal mirror of `CatalogSnapshot` from `mqo-catalog-binder`.
@@ -173,6 +186,42 @@ pub struct DaxCatalogContext {
     /// (exact lowercased match).
     pub level_dtypes: HashMap<String, String>,
 
+    /// `level unique_name → domain_complete` flag for levels with a captured domain.
+    ///
+    /// A level is `true` iff the captured domain is **complete** — the ingestion
+    /// enumerated every member of the level (cardinality ≤ cap and capture was
+    /// not truncated). A level with `false` has only a partial sample: the domain
+    /// can still locate the level for `Member` filter grounding, but a query
+    /// driven by a filter on this level may not return all matching rows if the
+    /// projection is scoped to the sampled domain.
+    ///
+    /// **Sources of truth** (first applicable wins):
+    /// 1. An explicit `domain_complete: true` field in the snapshot JSON.
+    /// 2. `cardinality` present in the snapshot AND `domain.len() >= cardinality`
+    ///    (all members were captured before hitting the cap).
+    /// 3. Conservative default: `false` (unknown = possibly-incomplete).
+    ///
+    /// Levels absent from this map have no captured domain and are treated
+    /// as `false` by [`Self::is_domain_complete`].
+    ///
+    /// **NFR1 / AC4 invariant**: codegen changes keyed on this flag MUST produce
+    /// byte-identical DAX for levels where `is_domain_complete` returns `true`.
+    /// Only the `false` path adds new diagnostics / guards.
+    pub level_domain_complete: HashMap<String, bool>,
+
+    /// `level unique_name → captured domain size` for levels with a captured domain.
+    ///
+    /// Stored to enable the operator diagnostic (FR5 / AC6): when a filter on an
+    /// incomplete-domain level drives a projection, the compiler can emit the
+    /// sample size and cardinality so the operator can judge how much is missing.
+    pub level_domain_sizes: HashMap<String, usize>,
+
+    /// `level unique_name → true LEVEL_CARDINALITY` for levels where the ingestion
+    /// recorded the MDSCHEMA cardinality.  Used in the FR5 diagnostic message
+    /// (sample size vs true cardinality).  Absent when the snapshot was produced
+    /// before this field was added or when MDSCHEMA returned no cardinality.
+    pub level_cardinalities: HashMap<String, u64>,
+
     /// Whether the target engine supports "Mark as Date Table" and thus the
     /// `SAMEPERIODLASTYEAR` / `DATESYTD` / `DATESQTD` / `DATESMTD` /
     /// `DATEADD` time-intelligence functions.
@@ -235,6 +284,9 @@ impl DaxCatalogContext {
         let mut hierarchy_levels: HashMap<String, Vec<String>> = HashMap::new();
         let mut level_domains: HashMap<String, Vec<String>> = HashMap::new();
         let mut level_dtypes: HashMap<String, String> = HashMap::new();
+        let mut level_domain_complete: HashMap<String, bool> = HashMap::new();
+        let mut level_domain_sizes: HashMap<String, usize> = HashMap::new();
+        let mut level_cardinalities: HashMap<String, u64> = HashMap::new();
         // Infer date_level_unique_name from the first column with kind "date_level"
         // or "date_dim" when not explicitly provided in the snapshot.
         let mut inferred_date_level: Option<String> = None;
@@ -267,7 +319,36 @@ impl DaxCatalogContext {
                 // domain-aware Member-filter grounding.
                 if let Some(d) = &col.domain {
                     if !d.is_empty() {
+                        let domain_len = d.len();
                         level_domains.insert(col.unique_name.clone(), d.clone());
+                        level_domain_sizes.insert(col.unique_name.clone(), domain_len);
+
+                        // Compute domain_complete (FR1/FR2/AC3):
+                        // Priority 1: explicit flag in the snapshot JSON.
+                        // Priority 2: cardinality from MDSCHEMA — complete iff
+                        //             cardinality > 0 and domain captured all of them.
+                        // Priority 3: conservative false (unknown = possibly-incomplete).
+                        let complete = if let Some(explicit) = col.domain_complete {
+                            // Explicit flag always wins (future-proof for agents that
+                            // know completeness at capture time).
+                            explicit
+                        } else if let Some(card) = col.cardinality {
+                            // card == 0: MDSCHEMA returned empty/unknown → conservative false.
+                            // card > 0 and domain_len >= card: we captured everything.
+                            card > 0 && domain_len as u64 >= card
+                        } else {
+                            // No cardinality metadata and no explicit flag:
+                            // default false (AC3: absent flag → false).
+                            false
+                        };
+                        level_domain_complete.insert(col.unique_name.clone(), complete);
+
+                        // Store cardinality for operator diagnostics (FR5/AC6).
+                        if let Some(card) = col.cardinality {
+                            if card > 0 {
+                                level_cardinalities.insert(col.unique_name.clone(), card);
+                            }
+                        }
                     }
                 }
                 // Record the level's value_type (if present) for dtype-aware
@@ -332,6 +413,9 @@ impl DaxCatalogContext {
             hierarchy_levels,
             level_domains,
             level_dtypes,
+            level_domain_complete,
+            level_domain_sizes,
+            level_cardinalities,
             has_date_table: snapshot.has_date_table,
             date_level_unique_name,
         })
@@ -518,6 +602,62 @@ impl DaxCatalogContext {
             }
         }
         None
+    }
+
+    /// Return `true` when the captured domain of `level_unique_name` is known to be
+    /// complete — every member of the level was enumerated during capture.
+    ///
+    /// Returns `false` conservatively when:
+    /// - the level has no captured domain at all,
+    /// - the snapshot was produced before domain completeness was tracked
+    ///   (no `cardinality` and no `domain_complete` flag), or
+    /// - the cardinality exceeded the domain size (truncated at the cap).
+    ///
+    /// Only returns `true` when there is positive evidence of completeness
+    /// (explicit `domain_complete: true` or `cardinality ≤ domain.len()`).
+    ///
+    /// **Key invariant (NFR1/AC4):** when this returns `true`, the compiler
+    /// MUST produce byte-identical DAX to the pre-domain-completeness build.
+    /// Only the `false` path adds new diagnostics.
+    #[must_use]
+    pub fn is_domain_complete(&self, level_unique_name: &str) -> bool {
+        self.level_domain_complete
+            .get(level_unique_name)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    /// Return a structured diagnostic string for an operator-visible partial-domain
+    /// filter warning (FR5 / AC6).
+    ///
+    /// Returns `Some(diagnostic_str)` when:
+    /// - `level_unique_name` has a captured domain (`level_domains` entry), AND
+    /// - `is_domain_complete` returns `false` (the domain is a partial sample).
+    ///
+    /// Returns `None` when the domain is complete (no diagnostic needed) or
+    /// when the level has no captured domain at all (no signal to report).
+    ///
+    /// The returned string is intended to be embedded as a DAX comment or logged
+    /// by the operator control plane; it names the level, the captured sample
+    /// size, and the true cardinality (when known).
+    #[must_use]
+    pub fn partial_domain_diagnostic(&self, level_unique_name: &str) -> Option<String> {
+        // Only emit when there is a captured (but incomplete) domain.
+        if !self.level_domains.contains_key(level_unique_name) {
+            return None;
+        }
+        if self.is_domain_complete(level_unique_name) {
+            return None;
+        }
+        let sample_size = self.level_domain_sizes.get(level_unique_name).copied().unwrap_or(0);
+        let cardinality_note = self
+            .level_cardinalities
+            .get(level_unique_name)
+            .map(|c| format!(", true_cardinality={c}"))
+            .unwrap_or_default();
+        Some(format!(
+            "partial_domain_filter: level=\"{level_unique_name}\" sample_size={sample_size}{cardinality_note}"
+        ))
     }
 
     /// True when at least one level of `hierarchy` carries a captured domain.
@@ -1124,5 +1264,169 @@ mod string_member_normalization_tests {
         let got = c.resolve_member_level("customer_demographics", &["9".into()], &[]);
         assert_eq!(got, Some("customer_demographics.[Income Band]"),
             "numeric path must be unchanged (FR5)");
+    }
+}
+
+// ── PRD-mqo-member-filter-recall-incomplete-domain: domain completeness flag ──
+#[cfg(test)]
+mod domain_completeness_tests {
+    use super::DaxCatalogContext;
+
+    // ── AC3: domain_complete flag round-trips correctly ───────────────────────
+
+    /// AC3 (complete): cardinality == domain.len() → complete=true.
+    #[test]
+    fn level_with_cardinality_le_domain_is_complete() {
+        // 3 members captured, cardinality=3 → all captured → complete=true.
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level","unique_name":"product_dimension.[Brand]","label":"Product Brand Name",
+           "hierarchy":"product_dimension","level":"Brand",
+           "domain":["alpha","beta","gamma"],"cardinality":3}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        assert!(
+            c.is_domain_complete("product_dimension.[Brand]"),
+            "cardinality==domain.len() must yield domain_complete=true"
+        );
+    }
+
+    /// AC3 (truncated): cardinality > domain.len() → complete=false (domain is a sample).
+    #[test]
+    fn level_with_cardinality_gt_domain_is_incomplete() {
+        // 3 members captured, cardinality=246 (true level size) → truncated at cap.
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level","unique_name":"product_dimension.[Brand]","label":"Product Brand Name",
+           "hierarchy":"product_dimension","level":"Brand",
+           "domain":["alpha","beta","gamma"],"cardinality":246}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        assert!(
+            !c.is_domain_complete("product_dimension.[Brand]"),
+            "cardinality > domain.len() must yield domain_complete=false"
+        );
+    }
+
+    /// AC3 (absent flag / older snapshot): no cardinality, no domain_complete → false.
+    #[test]
+    fn level_without_cardinality_defaults_to_incomplete() {
+        // Old snapshot: domain captured but no cardinality field at all.
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level","unique_name":"product_dimension.[Brand]","label":"Product Brand Name",
+           "hierarchy":"product_dimension","level":"Brand",
+           "domain":["alpha","beta","gamma"]}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        // No cardinality, no explicit flag → conservatively false (AC3 / FR2 migration clause).
+        assert!(
+            !c.is_domain_complete("product_dimension.[Brand]"),
+            "absent cardinality and no domain_complete flag must default to false (conservative)"
+        );
+    }
+
+    /// AC3 (explicit flag=true): explicit domain_complete=true in the snapshot overrides cardinality.
+    #[test]
+    fn explicit_domain_complete_true_wins_over_cardinality() {
+        // Explicit true even with no cardinality field — explicit wins.
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level","unique_name":"product_dimension.[Brand]","label":"Product Brand Name",
+           "hierarchy":"product_dimension","level":"Brand",
+           "domain":["alpha","beta","gamma"],"domain_complete":true}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        assert!(
+            c.is_domain_complete("product_dimension.[Brand]"),
+            "explicit domain_complete=true must yield true regardless of cardinality"
+        );
+    }
+
+    /// AC7 (no domain at all): is_domain_complete returns false for a level with no domain.
+    #[test]
+    fn level_without_domain_is_not_complete() {
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level","unique_name":"store_dimension.[Store Name]","label":"Store Name",
+           "hierarchy":"store_dimension","level":"Store Name"}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        assert!(
+            !c.is_domain_complete("store_dimension.[Store Name]"),
+            "level with no captured domain must return is_domain_complete=false"
+        );
+    }
+
+    // ── AC6: partial_domain_diagnostic emits for incomplete, suppresses for complete ─
+
+    /// AC6 (incomplete level): diagnostic is emitted with level, sample size, cardinality.
+    #[test]
+    fn partial_domain_diagnostic_emitted_for_incomplete_level() {
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level","unique_name":"product_dimension.[Product Manufacturer Name]",
+           "label":"Product Manufacturer Name",
+           "hierarchy":"product_dimension","level":"Manufacturer Name",
+           "domain":["able","b-corp","c-corp"],"cardinality":246}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        let diag = c.partial_domain_diagnostic("product_dimension.[Product Manufacturer Name]");
+        assert!(diag.is_some(), "partial-domain level must produce a diagnostic");
+        let d = diag.unwrap();
+        assert!(
+            d.contains("partial_domain_filter"),
+            "diagnostic must contain 'partial_domain_filter': {d}"
+        );
+        assert!(
+            d.contains("sample_size=3"),
+            "diagnostic must include the captured sample size: {d}"
+        );
+        assert!(
+            d.contains("true_cardinality=246"),
+            "diagnostic must include the true cardinality: {d}"
+        );
+    }
+
+    /// AC6 (complete level): no diagnostic is emitted.
+    #[test]
+    fn partial_domain_diagnostic_suppressed_for_complete_level() {
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level","unique_name":"product_dimension.[Brand]","label":"Brand",
+           "hierarchy":"product_dimension","level":"Brand",
+           "domain":["alpha","beta","gamma"],"cardinality":3}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        let diag = c.partial_domain_diagnostic("product_dimension.[Brand]");
+        assert!(
+            diag.is_none(),
+            "complete-domain level must NOT emit a partial-domain diagnostic"
+        );
+    }
+
+    /// AC6 (no domain at all): no diagnostic emitted — there is nothing to report.
+    #[test]
+    fn partial_domain_diagnostic_suppressed_when_no_domain() {
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level","unique_name":"store_dimension.[Store Name]","label":"Store Name",
+           "hierarchy":"store_dimension","level":"Store Name"}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        let diag = c.partial_domain_diagnostic("store_dimension.[Store Name]");
+        assert!(
+            diag.is_none(),
+            "level with no captured domain must NOT emit a diagnostic (AC7)"
+        );
+    }
+
+    /// AC6 / FR5: diagnostic omits true_cardinality when cardinality was not in snapshot.
+    #[test]
+    fn partial_domain_diagnostic_without_cardinality_note() {
+        // Incomplete domain (explicit domain_complete=false, no cardinality).
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level","unique_name":"product_dimension.[Brand]","label":"Brand",
+           "hierarchy":"product_dimension","level":"Brand",
+           "domain":["alpha","beta"],"domain_complete":false}
+        ]}"#;
+        let c = DaxCatalogContext::from_json(json).unwrap();
+        let diag = c.partial_domain_diagnostic("product_dimension.[Brand]");
+        assert!(diag.is_some(), "explicit domain_complete=false must produce a diagnostic");
+        let d = diag.unwrap();
+        assert!(!d.contains("true_cardinality"), "no cardinality → no true_cardinality note: {d}");
+        assert!(d.contains("sample_size=2"), "must include sample size: {d}");
     }
 }
