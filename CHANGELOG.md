@@ -1,5 +1,15 @@
 # Changelog
 
+## [mqo-mcp-server 0.52.1] - 2026-06-19
+
+### Changed
+- **Catalog fixture: tag `household_demographics.[Income Band]` as `value_type: integer`**
+  (`mqo-mcp-server` v0.52.1, PRD-mqo-catalog-income-band-value-type):
+  The Income Band level in the `household_demographics` dimension was missing a `value_type`
+  annotation, causing the param-validator to treat numeric range filters on this level as
+  untyped and skip Rule-4 integer-range validation. Adding `"value_type": "integer"` enables
+  correct type-aware validation for filters like `{ "level": "Income Band", "range": [1, 8] }`.
+
 ## [0.52.0] - 2026-06-19
 
 ### Added

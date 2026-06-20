@@ -350,7 +350,8 @@
       "kind": "level",
       "hierarchy": "household_demographics",
       "level": "Income Band",
-      "is_calc": false
+      "is_calc": false,
+      "value_type": "integer"
     },
     {
       "unique_name": "income_band.[Income Band Lower Bound]",
