@@ -225,6 +225,12 @@ impl CatalogContext {
 ///
 /// The alias on each measure uses the last `.`-segment of the `unique_name`
 /// so callers can map response columns back to MQO unique names.
+///
+/// When `mqo.order` is non-empty an ORDER BY clause is inserted between the
+/// WHERE clause (if any) and LIMIT:
+/// ```sql
+/// SELECT ... FROM ... [WHERE ...] ORDER BY "Col" ASC, "Col2" DESC [LIMIT n]
+/// ```
 #[must_use]
 pub fn build_sql_projection(
     bound: &mqo_spec::BoundMqo,
@@ -254,6 +260,8 @@ pub fn build_sql_projection(
 
     let col_list = cols.join(", ");
     let from = build_from_clause(&bound.mqo.model, catalog);
+    let where_clause = build_where_clause(bound, catalog);
+    let order_clause = build_order_clause(bound, catalog);
     let limit_clause = bound
         .mqo
         .limit
@@ -261,9 +269,158 @@ pub fn build_sql_projection(
 
     // Projection MQOs emit SELECT DISTINCT (no aggregation, distinct members).
     if bound.mqo.is_projection() {
-        format!("SELECT DISTINCT {col_list} FROM {from}{limit_clause}")
+        match (where_clause, order_clause) {
+            (Some(w), Some(o)) => format!("SELECT DISTINCT {col_list} FROM {from} {w} {o}{limit_clause}"),
+            (Some(w), None)    => format!("SELECT DISTINCT {col_list} FROM {from} {w}{limit_clause}"),
+            (None,    Some(o)) => format!("SELECT DISTINCT {col_list} FROM {from} {o}{limit_clause}"),
+            (None,    None)    => format!("SELECT DISTINCT {col_list} FROM {from}{limit_clause}"),
+        }
     } else {
-        format!("SELECT {col_list} FROM {from}{limit_clause}")
+        match (where_clause, order_clause) {
+            (Some(w), Some(o)) => format!("SELECT {col_list} FROM {from} {w} {o}{limit_clause}"),
+            (Some(w), None)    => format!("SELECT {col_list} FROM {from} {w}{limit_clause}"),
+            (None,    Some(o)) => format!("SELECT {col_list} FROM {from} {o}{limit_clause}"),
+            (None,    None)    => format!("SELECT {col_list} FROM {from}{limit_clause}"),
+        }
+    }
+}
+
+/// Build a SQL ORDER BY clause from `mqo.order`.
+///
+/// Returns `None` when `order` is absent or empty.
+/// Each key resolves via `catalog.labels` when available; falls back to
+/// [`quote_last_segment`] on the `key` unique name.
+fn build_order_clause(
+    bound: &mqo_spec::BoundMqo,
+    catalog: Option<&CatalogContext>,
+) -> Option<String> {
+    use mqo_spec::SortDirection;
+
+    let keys = bound.mqo.order.as_deref()?;
+    if keys.is_empty() {
+        return None;
+    }
+
+    let terms: Vec<String> = keys
+        .iter()
+        .map(|ok| {
+            let col = catalog
+                .and_then(|c| c.labels.get(&ok.key))
+                .map_or_else(|| quote_last_segment(&ok.key), |label| format!("\"{label}\""));
+            let dir = match ok.direction {
+                SortDirection::Asc => "ASC",
+                SortDirection::Desc => "DESC",
+            };
+            format!("{col} {dir}")
+        })
+        .collect();
+
+    Some(format!("ORDER BY {}", terms.join(", ")))
+}
+
+/// Build a SQL WHERE clause from MQO filters.
+///
+/// Returns `None` when there are no filters (or all are untranslatable to SQL).
+fn build_where_clause(
+    bound: &mqo_spec::BoundMqo,
+    catalog: Option<&CatalogContext>,
+) -> Option<String> {
+    let predicates: Vec<String> = bound
+        .mqo
+        .filters
+        .iter()
+        .filter_map(|f| filter_to_sql(f, bound, catalog))
+        .collect();
+
+    if predicates.is_empty() {
+        None
+    } else {
+        Some(format!("WHERE {}", predicates.join(" AND ")))
+    }
+}
+
+/// Translate a single MQO filter to a SQL predicate string.
+///
+/// Returns `None` for filter types that are not expressible in AtScale SQL
+/// (e.g. `CalcGroupMember`).
+fn filter_to_sql(
+    filter: &mqo_spec::Filter,
+    bound: &mqo_spec::BoundMqo,
+    catalog: Option<&CatalogContext>,
+) -> Option<String> {
+    use mqo_spec::{Filter, FilterGroupOp, RangeBound};
+
+    match filter {
+        Filter::MemberLevel { level, members, exclude, .. } => {
+            if members.is_empty() {
+                return None;
+            }
+            let col = catalog
+                .and_then(|c| c.labels.get(level))
+                .map(|label| format!("\"{label}\""))
+                .unwrap_or_else(|| quote_last_segment(level));
+            let op = if *exclude { "NOT IN" } else { "IN" };
+            let list = members
+                .iter()
+                .map(|m| format!("'{}'", m.replace('\'', "''")))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Some(format!("{col} {op} ({list})"))
+        }
+
+        Filter::Member { hierarchy, members } => {
+            if members.is_empty() {
+                return None;
+            }
+            // Resolve the display label via the bound dimension matching this hierarchy.
+            let col = bound
+                .dimensions
+                .iter()
+                .find(|d| d.hierarchy == *hierarchy)
+                .and_then(|d| catalog.and_then(|c| c.labels.get(&d.unique_name)))
+                .map(|label| format!("\"{label}\""))
+                .unwrap_or_else(|| format!("\"{hierarchy}\""));
+            let list = members
+                .iter()
+                .map(|m| format!("'{}'", m.replace('\'', "''")))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Some(format!("{col} IN ({list})"))
+        }
+
+        Filter::Range { level, lo, hi } => {
+            let col = catalog
+                .and_then(|c| c.labels.get(level))
+                .map(|label| format!("\"{label}\""))
+                .unwrap_or_else(|| quote_last_segment(level));
+            let lo_sql = match lo {
+                RangeBound::Number(n) => format!("{n}"),
+                RangeBound::Text(s) => format!("'{}'", s.replace('\'', "''")),
+            };
+            let hi_sql = match hi {
+                RangeBound::Number(n) => format!("{n}"),
+                RangeBound::Text(s) => format!("'{}'", s.replace('\'', "''")),
+            };
+            Some(format!("{col} BETWEEN {lo_sql} AND {hi_sql}"))
+        }
+
+        Filter::Group { op, filters } => {
+            let parts: Vec<String> = filters
+                .iter()
+                .filter_map(|f| filter_to_sql(f, bound, catalog))
+                .collect();
+            if parts.is_empty() {
+                return None;
+            }
+            let sep = match op {
+                FilterGroupOp::And => " AND ",
+                FilterGroupOp::Or => " OR ",
+            };
+            Some(format!("({})", parts.join(sep)))
+        }
+
+        // CalcGroupMember is not expressible in AtScale SQL.
+        Filter::CalcGroupMember { .. } => None,
     }
 }
 
@@ -881,5 +1038,161 @@ mod tests {
             "limit-capped reason must differ from regular DAX reason: {}",
             decision.reason
         );
+    }
+
+    // ── WHERE clause generation ───────────────────────────────────────────────
+
+    #[test]
+    fn sql_projection_member_level_filter_generates_where() {
+        let mut mqo = make_mqo("tpcds_benchmark_model");
+        mqo.projection = true;
+        mqo.measures = vec![];
+        mqo.dimensions.clear();
+        mqo.dimensions.push(LevelSelection {
+            hierarchy: "fulfilling_warehouse".to_string(),
+            level: "Warehouse Name".to_string(),
+        });
+        mqo.filters.push(Filter::MemberLevel {
+            hierarchy: "fulfilling_warehouse".to_string(),
+            level: "fulfilling_warehouse.[Warehouse City]".to_string(),
+            members: vec!["Fairview".to_string()],
+            exclude: false,
+        });
+
+        let bound = BoundMqo {
+            measures: vec![],
+            dimensions: vec![BoundDimension {
+                unique_name: "fulfilling_warehouse.[Warehouse Name]".to_string(),
+                hierarchy: "fulfilling_warehouse".to_string(),
+            }],
+            mqo,
+        };
+
+        let ctx = CatalogContext {
+            catalog: Some("atscale_catalogs".to_string()),
+            schema: Some("tpcds_main".to_string()),
+            labels: [
+                ("fulfilling_warehouse.[Warehouse Name]".to_string(), "Warehouse Name".to_string()),
+                ("fulfilling_warehouse.[Warehouse City]".to_string(), "Warehouse City".to_string()),
+            ].into(),
+        };
+
+        let proj = build_sql_projection(&bound, Some(&ctx));
+
+        assert!(proj.starts_with("SELECT DISTINCT"), "proj = {proj}");
+        assert!(proj.contains(r#""Warehouse Name""#), "proj = {proj}");
+        assert!(
+            proj.contains(r#""atscale_catalogs"."tpcds_main"."tpcds_benchmark_model""#),
+            "proj = {proj}"
+        );
+        assert!(proj.contains("WHERE"), "proj = {proj}");
+        assert!(proj.contains(r#""Warehouse City" IN ('Fairview')"#), "proj = {proj}");
+    }
+
+    #[test]
+    fn sql_projection_no_filters_has_no_where() {
+        let mut mqo = make_mqo("tpcds_benchmark_model");
+        mqo.projection = true;
+        mqo.measures = vec![];
+        mqo.dimensions.clear();
+        mqo.dimensions.push(LevelSelection {
+            hierarchy: "fulfilling_warehouse".to_string(),
+            level: "Warehouse Name".to_string(),
+        });
+
+        let bound = BoundMqo {
+            measures: vec![],
+            dimensions: vec![BoundDimension {
+                unique_name: "fulfilling_warehouse.[Warehouse Name]".to_string(),
+                hierarchy: "fulfilling_warehouse".to_string(),
+            }],
+            mqo,
+        };
+
+        let proj = build_sql_projection(&bound, None);
+        assert!(!proj.contains("WHERE"), "proj should have no WHERE: {proj}");
+    }
+
+    // ── ORDER BY clause generation ────────────────────────────────────────────
+
+    /// AC-OB1: non-empty `order` produces ORDER BY before LIMIT.
+    #[test]
+    fn sql_projection_order_by_appears_before_limit() {
+        use mqo_spec::{OrderKey, SortDirection};
+
+        let mut mqo = make_mqo("sales");
+        mqo.limit = Some(50);
+        mqo.order = Some(vec![
+            OrderKey {
+                key: "sales.revenue".to_string(),
+                direction: SortDirection::Desc,
+            },
+            OrderKey {
+                key: "time.calendar.[Year]".to_string(),
+                direction: SortDirection::Asc,
+            },
+        ]);
+
+        let bound = make_bound(
+            mqo,
+            &[("time.calendar.[Year]", "time.calendar")],
+        );
+
+        let proj = build_sql_projection(&bound, None);
+
+        // ORDER BY must be present
+        assert!(proj.contains("ORDER BY"), "proj should contain ORDER BY: {proj}");
+        // Directions must be spelled out
+        assert!(proj.contains("DESC"), "proj should contain DESC: {proj}");
+        assert!(proj.contains("ASC"), "proj should contain ASC: {proj}");
+        // ORDER BY must come before LIMIT
+        let ob_pos = proj.find("ORDER BY").expect("ORDER BY present");
+        let lim_pos = proj.find("LIMIT").expect("LIMIT present");
+        assert!(ob_pos < lim_pos, "ORDER BY must precede LIMIT: {proj}");
+    }
+
+    /// AC-OB2: empty / absent `order` produces no ORDER BY clause.
+    #[test]
+    fn sql_projection_empty_order_produces_no_order_by() {
+        let mqo = make_mqo("sales");
+        // order is None (make_mqo default)
+        let bound = make_bound(
+            mqo,
+            &[("time.calendar.[Year]", "time.calendar")],
+        );
+        let proj = build_sql_projection(&bound, None);
+        assert!(!proj.contains("ORDER BY"), "proj should have no ORDER BY: {proj}");
+    }
+
+    /// AC-OB3: catalog labels are used in ORDER BY column references.
+    #[test]
+    fn sql_projection_order_by_uses_catalog_labels() {
+        use mqo_spec::{OrderKey, SortDirection};
+
+        let mut mqo = make_mqo("tpcds_benchmark_model");
+        mqo.limit = Some(10);
+        mqo.order = Some(vec![OrderKey {
+            key: "ship_mode.[Carrier]".to_string(),
+            direction: SortDirection::Asc,
+        }]);
+
+        let bound = make_bound(
+            mqo,
+            &[("ship_mode.[Carrier]", "ship_mode")],
+        );
+
+        let ctx = CatalogContext {
+            catalog: Some("atscale_catalogs".to_string()),
+            schema: Some("tpcds_Snowflake".to_string()),
+            labels: [(
+                "ship_mode.[Carrier]".to_string(),
+                "Carrier".to_string(),
+            )]
+            .into(),
+        };
+
+        let proj = build_sql_projection(&bound, Some(&ctx));
+        assert!(proj.contains(r#"ORDER BY "Carrier" ASC"#), "proj = {proj}");
+        assert!(proj.ends_with("LIMIT 10"), "proj = {proj}");
     }
 }
