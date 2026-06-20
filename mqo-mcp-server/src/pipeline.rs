@@ -184,6 +184,18 @@ pub enum PipelineError {
         /// The structured report payload.
         report: Value,
     },
+
+    /// The compiled SQL string failed SQL-level validation (e.g. multi-statement
+    /// injection, ATSCALE-48466). Carries the structured rejection list so the
+    /// agent can correct and retry. No execution occurs when this fires.
+    #[error("sql_rejected: {count} SQL violation(s) detected before execution")]
+    SqlRejected {
+        /// Number of SQL violations.
+        count: usize,
+        /// Structured list of [`mqo_param_validator::sql_validator::SqlRejection`]
+        /// items, each with a `rule` code and `message`.
+        report: Value,
+    },
 }
 
 // ── Error classification ──────────────────────────────────────────────────────
@@ -229,6 +241,7 @@ pub fn error_class(e: &PipelineError) -> &'static str {
         | PipelineError::ProjectionTooLarge { .. }
         | PipelineError::NonQueryableDimension { .. }
         | PipelineError::DimensionNotMaterialized { .. }
+        | PipelineError::SqlRejected { .. }
         | PipelineError::Invalid(_)
         | PipelineError::NotAnMqo(_)
         | PipelineError::Subprocess { .. } => MODEL_PATH,
@@ -470,6 +483,21 @@ pub fn run<S: std::hash::BuildHasher>(
 
     // ── Compile ──────────────────────────────────────────────────────────
     let compiled_query = compile_step(tools, &backend, &bound_path, &decision, &catalog_path)?;
+
+    // ── SQL-string validation (ATSCALE-48466, multi-statement guard) ──────
+    // Gate the compiled SQL before any warehouse round-trip. Only fires for the
+    // `sql` backend; DAX/MDX pass through (their compilers produce non-SQL text).
+    // Conservative: `validate_sql` is stateless and never false-positives on
+    // well-formed single-SELECT output from the router's sql_projection.
+    if backend == "sql" {
+        let sql_violations = mqo_param_validator::sql_validator::validate_sql(&compiled_query);
+        if !sql_violations.is_empty() {
+            let count = sql_violations.len();
+            let report = serde_json::to_value(&sql_violations)
+                .unwrap_or_else(|_| serde_json::json!([]));
+            return Err(PipelineError::SqlRejected { count, report });
+        }
+    }
 
     // ── Map backend string → enum ─────────────────────────────────────────
     let backend_enum = match backend.as_str() {

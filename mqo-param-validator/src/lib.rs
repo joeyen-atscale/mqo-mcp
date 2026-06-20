@@ -2,8 +2,16 @@
 //!
 //! Server-side validator that rejects unmapped MQO fields before execution.
 //! Pure, deterministic — no LLM, no network, no unsafe.
+//!
+//! # Modules
+//!
+//! * `sql_validator` — SQL-string validation layer (server-validator-migration):
+//!   decidable checks on raw SQL before warehouse execution. Entry point:
+//!   [`sql_validator::validate_sql`].
 
 #![forbid(unsafe_code)]
+
+pub mod sql_validator;
 
 use serde::{Deserialize, Serialize};
 use strsim::jaro_winkler;
@@ -5338,6 +5346,7 @@ mod rule12_tests {
                 dimension_unique_name: "store_dimension".into(),
                 levels: vec!["Store Name".into(), "Store Manager".into(), "Store Floor Space".into()],
                 level_meta: vec![],
+                fact_local_facts: vec![],
             }],
             date_roles: vec![],
         };
@@ -5384,6 +5393,7 @@ mod rule12_tests {
                 dimension_unique_name: "store_dimension".into(),
                 levels: vec!["Store Name".into(), "Store Number of Employees".into()],
                 level_meta: vec![],
+                fact_local_facts: vec![],
             }],
             date_roles: vec![],
         };
@@ -5425,6 +5435,7 @@ mod rule12_tests {
                 dimension_unique_name: "store_dimension".into(),
                 levels: vec!["Store Name".into(), "Store Floor Space".into()],
                 level_meta: vec![],
+                fact_local_facts: vec![],
             }],
             date_roles: vec![],
         };
@@ -5456,6 +5467,7 @@ mod rule12_tests {
                 dimension_unique_name: "store_dimension".into(),
                 levels: vec!["Store Name".into(), "Store Floor Space".into()],
                 level_meta: vec![],
+                fact_local_facts: vec![],
             }],
             date_roles: vec![],
         };
