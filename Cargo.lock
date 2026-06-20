@@ -2384,7 +2384,7 @@ dependencies = [
 
 [[package]]
 name = "mqo-backend-router"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "mqo-spec",
@@ -2562,7 +2562,7 @@ dependencies = [
 
 [[package]]
 name = "mqo-mcp-server"
-version = "0.52.0"
+version = "0.52.1"
 dependencies = [
  "aso-ground",
  "aso-lift",
