@@ -119,8 +119,30 @@ pub fn compile_grounded(
     if combine_projection_filters {
         let mut preds: Vec<String> = Vec::new();
         let mut all_cols: Vec<String> = Vec::new();
+        // FR5/AC6: collect partial-domain diagnostics for all Member filters in
+        // the combined projection path (mirrors the single-filter path in filter_expr_ctx).
+        let mut partial_diagnostics: Vec<String> = Vec::new();
         for f in &bound.mqo.filters {
             let (pred, cols) = filter_predicate(f, ctx, &dim_levels, 0)?;
+            // Collect partial-domain diagnostic for Member filters.
+            if let Filter::Member { hierarchy, members } = f {
+                if let Some(c) = ctx {
+                    // Resolve the level to get its unique_name for the diagnostic.
+                    let resolved = c.resolve_member_level(hierarchy, members, &dim_levels)
+                        .or_else(|| {
+                            if c.hierarchy_has_any_domain(hierarchy) {
+                                None
+                            } else {
+                                c.resolve_hierarchy_first_level(hierarchy)
+                            }
+                        });
+                    if let Some(lun) = resolved {
+                        if let Some(diag) = c.partial_domain_diagnostic(lun) {
+                            partial_diagnostics.push(diag);
+                        }
+                    }
+                }
+            }
             preds.push(format!("({pred})"));
             all_cols.extend(cols);
         }
@@ -128,8 +150,13 @@ pub fn compile_grounded(
         all_cols.dedup();
         let combined_pred = preds.join(" && ");
         let all_cols_str = all_cols.join(", ");
+        let diag_suffix = if partial_diagnostics.is_empty() {
+            String::new()
+        } else {
+            format!(" /* {} */", partial_diagnostics.join("; "))
+        };
         filter_exprs.push(format!(
-            "KEEPFILTERS(FILTER(ALL({all_cols_str}), {combined_pred})) /* combined-projection-filter */"
+            "KEEPFILTERS(FILTER(ALL({all_cols_str}), {combined_pred})) /* combined-projection-filter */{diag_suffix}"
         ));
     } else {
         for f in &bound.mqo.filters {
@@ -728,8 +755,19 @@ fn filter_expr_ctx(
 
             let col = level_col_ref_ctx(level_unique_name, ctx);
             let member_list: Vec<String> = members.iter().map(|m| format!("\"{m}\"")).collect();
+            // FR5/AC6: attach a partial_domain_filter diagnostic comment when the
+            // resolved level has an incomplete captured domain (domain is a sample,
+            // not the full set). The KEEPFILTERS(FILTER(ALL(col), ...)) form already
+            // evaluates against the LIVE column, so the filter match is always
+            // correct — the diagnostic is purely an operator signal that the
+            // resolved level's domain was a partial sample, which an adjacent
+            // projection may need to account for independently.
+            let diagnostic_comment = ctx
+                .and_then(|c| c.partial_domain_diagnostic(level_unique_name))
+                .map(|d| format!(" /* {d} */"))
+                .unwrap_or_default();
             Ok(format!(
-                "KEEPFILTERS(FILTER(ALL({col}), {col} IN {{{}}})) /* grounded-from-member */",
+                "KEEPFILTERS(FILTER(ALL({col}), {col} IN {{{}}})) /* grounded-from-member */{diagnostic_comment}",
                 member_list.join(", ")
             ))
         }
@@ -2450,6 +2488,121 @@ mod date_cross_dimension_codegen_tests {
             matches!(err, crate::DaxCompileError::UngroundedMemberFilter { ref hierarchy, .. }
                 if hierarchy == "store_dimension"),
             "should decline naming the non-date filter hierarchy, got: {err:?}"
+        );
+    }
+}
+
+// ── PRD-mqo-member-filter-recall-incomplete-domain: partial-domain diagnostics ──
+#[cfg(test)]
+mod partial_domain_diagnostic_codegen_tests {
+    use super::compile_grounded;
+    use crate::catalog_context::DaxCatalogContext;
+    use crate::input::{BoundMqoInput, BoundDimensionInput};
+    use mqo_spec::{Mqo, Filter, LevelSelection};
+
+    /// Build a catalog where the manufacturer level has cardinality > domain.len()
+    /// (partial domain, like the live tpcds "able" case), and the brand level has
+    /// a complete domain (cardinality == domain.len()).
+    fn mfg_brand_ctx() -> DaxCatalogContext {
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level",
+           "unique_name":"product_dimension.[Product Manufacturer Name]",
+           "label":"Product Manufacturer Name",
+           "hierarchy":"product_dimension","level":"Product Manufacturer Name",
+           "domain":["able","b-corp","c-corp"],
+           "cardinality":246},
+          {"kind":"level",
+           "unique_name":"product_dimension.[Product Brand Name]",
+           "label":"Product Brand Name",
+           "hierarchy":"product_dimension","level":"Product Brand Name",
+           "domain":["brand-a","brand-b","brand-c"],
+           "cardinality":3}
+        ]}"#;
+        DaxCatalogContext::from_json(json).unwrap()
+    }
+
+    /// Build a projection BoundMqoInput: project `brand_level_un`, filter on
+    /// `filter_hierarchy` / `member_value`.
+    fn proj_with_member_filter(
+        brand_level_un: &str,
+        filter_hierarchy: &str,
+        member_value: &str,
+    ) -> BoundMqoInput {
+        let hierarchy = brand_level_un.split('.').next().unwrap_or("").to_string();
+        BoundMqoInput {
+            mqo: Mqo {
+                model: "tpcds".into(),
+                measures: vec![],
+                dimensions: vec![LevelSelection {
+                    hierarchy: hierarchy.clone(),
+                    level: brand_level_un.to_string(),
+                }],
+                filters: vec![
+                    Filter::Member {
+                        hierarchy: filter_hierarchy.to_string(),
+                        members: vec![member_value.to_string()],
+                    }
+                ],
+                limit: None,
+                order: None,
+                time_intelligence: vec![],
+                non_empty: false,
+                projection: true,
+            },
+            dimensions: vec![BoundDimensionInput {
+                unique_name: brand_level_un.to_string(),
+                hierarchy,
+            }],
+            measures: vec![],
+            calc_group_members: vec![],
+        }
+    }
+
+    /// AC2/AC6: when the Member filter resolves to an incomplete-domain level,
+    /// the emitted DAX includes a partial_domain_filter diagnostic comment.
+    #[test]
+    fn incomplete_domain_filter_emits_partial_domain_diagnostic() {
+        let ctx = mfg_brand_ctx();
+        let brand_un = "product_dimension.[Product Brand Name]";
+        // Filter on "product_dimension" with value "able" → resolves to manufacturer level
+        // (incomplete domain: cardinality=246 > domain.len()=3).
+        let bound = proj_with_member_filter(brand_un, "product_dimension", "able");
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        assert!(
+            dax.contains("partial_domain_filter"),
+            "emitted DAX must contain partial_domain_filter diagnostic for incomplete-domain filter; got:\n{dax}"
+        );
+        assert!(
+            dax.contains("sample_size=3"),
+            "diagnostic must name the captured sample size; got:\n{dax}"
+        );
+        assert!(
+            dax.contains("true_cardinality=246"),
+            "diagnostic must name the true cardinality; got:\n{dax}"
+        );
+    }
+
+    /// AC4/NFR1: when the Member filter resolves to a COMPLETE-domain level,
+    /// the emitted DAX does NOT include a partial_domain_filter diagnostic comment.
+    #[test]
+    fn complete_domain_filter_no_partial_domain_diagnostic() {
+        // Brand level is complete (cardinality==3, domain.len()==3).
+        // Filter on "brand-a" → resolves to brand level (complete domain).
+        let json = r#"{"catalog":"atscale_catalogs","columns":[
+          {"kind":"level",
+           "unique_name":"product_dimension.[Product Brand Name]",
+           "label":"Product Brand Name",
+           "hierarchy":"product_dimension","level":"Product Brand Name",
+           "domain":["brand-a","brand-b","brand-c"],
+           "cardinality":3}
+        ]}"#;
+        let ctx = DaxCatalogContext::from_json(json).unwrap();
+        let brand_un = "product_dimension.[Product Brand Name]";
+        let bound = proj_with_member_filter(brand_un, "product_dimension", "brand-a");
+        let dax = compile_grounded(&bound, Some(&ctx)).unwrap();
+        assert!(
+            !dax.contains("partial_domain_filter"),
+            "complete-domain filter must NOT emit partial_domain_filter diagnostic (NFR1/AC4); got:\n{dax}"
         );
     }
 }
