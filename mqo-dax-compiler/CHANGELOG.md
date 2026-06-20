@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.18.0 — 2026-06-20
+
+domain completeness flag + partial-domain filter diagnostic (PRD-mqo-member-filter-recall-incomplete-domain)
+- DaxCatalogContext.level_domain_complete: per-level complete/incomplete flag (FR1/AC3)
+- Completeness inferred from cardinality vs domain.len(); explicit flag wins; absent → false (FR2/AC3)
+- is_domain_complete() accessor; partial_domain_diagnostic() emits structured operator warning (FR5/AC6)
+- filter_expr_ctx: appends /* partial_domain_filter */ comment for incomplete-domain Member filters (FR5/AC6)
+- 11 new unit tests covering AC3/AC4/AC6/AC7; zero regression on 122 prior tests
+
 ## v0.15.0 — 2026-06-17
 
 String member filter: normalize whitespace/case/punctuation in resolve_member_level and check_member_filters for robust catalog lookup (fixes able-manufacturer-brands 188/246 row undercount)
