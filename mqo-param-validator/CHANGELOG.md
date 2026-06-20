@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.14.0 — 2026-06-19
+
+RULE 9: NonLocalDimensionPath guard (PRD-mqo-store-local-dimension-path-preference). Fixes `store-quantity-sold-per-brand` grouping by generic `Product Brand Name` instead of store-local `Store Item Product Brand Name`, causing ~26% per-brand inflation (row_recall 0.0, silent wrong numbers).
+
+New `CatalogHierarchy.fact_local_facts: Vec<String>` field (empty = conformed; non-empty = fact-local to those facts, derived from FactBindings). New `RejectReason::NonLocalDimensionPath { measure, generic_level, suggested_level, fact }` variant. `check_nonlocal_dimension_path()` fires when a fact-local (single-channel) measure is grouped by a generic conformed level that has a fact-local sibling on a hierarchy bound to the measure's fact. Guard stays silent for all-channel measures (FR5) and when no fact-local sibling exists (FR4). `r9_core_label()` strips scope qualifiers (store/item/catalog/web) for robust sibling matching. 6 new unit tests in `tests/rule9_nonlocal_dim_path.rs` (AC1–AC4, AC5 suggestion one-step, AC6 no-scope silent, coexistence guardrail). All 142 tests pass; cargo clippy clean.
+
 ## v0.13.0 — 2026-06-19
 
 PRD-mqo-unique-name-bracket-label-guard acceptance-criteria tests. The PRD's bracket-label guard (Path B of `check_non_canonical_level_label`) was already implemented in v0.9.2; this version adds 4 explicitly PRD-named tests tracing AC1 (Floor Space bracket corrected unique_name), AC5 (Number of Employees bracket corrected unique_name), AC7/FR5 (zero-match bracket defers to Unmapped, RULE 8 silent), and AC8/FR7 (level + bracket same canonical → exactly 1 rejection). All 66 unit tests pass; cargo clippy clean. Cloudbuild unavailable (MISSING); local cargo used (fallback per instructions).
