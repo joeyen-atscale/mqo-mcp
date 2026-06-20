@@ -5061,4 +5061,161 @@ mod rule12_tests {
             .count();
         assert_eq!(r12_count, 0, "AC5: unresolved name must keep RULE 12 silent; got: {rejections:?}");
     }
+
+    // ── RULE 8 unique_name bracket guard (PRD-mqo-unique-name-bracket-label-guard) ─
+
+    /// PRD AC1: midway-stores case — bracket "Floor Space" in unique_name with level=None
+    /// fires NonCanonicalLevelLabel with corrected unique_name in the suggestion.
+    #[test]
+    fn prd_bracket_guard_ac1_floor_space_corrected_unique_name() {
+        // Catalog: Store dimension with "Store Floor Space" level (the canonical).
+        let catalog = CatalogSnapshot {
+            measures: vec![CatalogMeasure {
+                unique_name: "Net Profit".into(),
+                label: Some("Net Profit".into()),
+                ..Default::default()
+            }],
+            dimensions: vec![CatalogDimension { unique_name: "store_dimension".into(), subject_areas: vec![] }],
+            hierarchies: vec![CatalogHierarchy {
+                hierarchy_unique_name: "store_dimension".into(),
+                dimension_unique_name: "store_dimension".into(),
+                levels: vec!["Store Name".into(), "Store Manager".into(), "Store Floor Space".into()],
+                level_meta: vec![],
+            }],
+            date_roles: vec![],
+        };
+        // Agent sends: unique_name = "store_dimension.[Floor Space]", level = None
+        // (the bracket-form bypass this PRD targets).
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_dimension.[Floor Space]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let rule8 = rejections.iter().find(|r| {
+            matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. })
+        });
+        assert!(rule8.is_some(), "PRD AC1: bracket 'Floor Space' must fire RULE 8; got: {rejections:?}");
+        if let Some(r) = rule8 {
+            if let RejectReason::NonCanonicalLevelLabel { supplied, canonical } = &r.reason {
+                assert_eq!(supplied, "Floor Space", "supplied must be 'Floor Space'");
+                assert_eq!(canonical, "Store Floor Space", "canonical must be 'Store Floor Space'");
+            }
+            // FR3: suggestion must carry the corrected unique_name.
+            assert!(
+                r.suggestions.iter().any(|s| s.name == "store_dimension.[Store Floor Space]"),
+                "PRD FR3: suggestion must be corrected unique_name 'store_dimension.[Store Floor Space]'; got: {:?}",
+                r.suggestions
+            );
+        }
+    }
+
+    /// PRD AC5 / store-employee-counts case: bracket "Number of Employees" →
+    /// "Store Number of Employees" with corrected unique_name suggestion.
+    #[test]
+    fn prd_bracket_guard_ac5_number_of_employees_corrected_unique_name() {
+        // Catalog: Store dimension with "Store Number of Employees" level (the canonical).
+        let catalog = CatalogSnapshot {
+            measures: vec![],
+            dimensions: vec![CatalogDimension { unique_name: "store_dimension".into(), subject_areas: vec![] }],
+            hierarchies: vec![CatalogHierarchy {
+                hierarchy_unique_name: "store_dimension".into(),
+                dimension_unique_name: "store_dimension".into(),
+                levels: vec!["Store Name".into(), "Store Number of Employees".into()],
+                level_meta: vec![],
+            }],
+            date_roles: vec![],
+        };
+        // Agent sends: unique_name = "store_dimension.[Number of Employees]", level = None
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_dimension.[Number of Employees]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let rule8 = rejections.iter().find(|r| {
+            matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. })
+        });
+        assert!(rule8.is_some(), "PRD AC5: '[Number of Employees]' must fire RULE 8; got: {rejections:?}");
+        if let Some(r) = rule8 {
+            if let RejectReason::NonCanonicalLevelLabel { supplied, canonical } = &r.reason {
+                assert_eq!(supplied, "Number of Employees");
+                assert_eq!(canonical, "Store Number of Employees");
+            }
+            assert!(
+                r.suggestions.iter().any(|s| s.name == "store_dimension.[Store Number of Employees]"),
+                "PRD FR3: suggestion must carry corrected unique_name; got: {:?}", r.suggestions
+            );
+        }
+    }
+
+    /// PRD AC7 / FR5: zero-match bracket label defers to Unmapped, RULE 8 silent.
+    #[test]
+    fn prd_bracket_guard_ac7_zero_match_defers_to_unmapped() {
+        let catalog = CatalogSnapshot {
+            measures: vec![],
+            dimensions: vec![CatalogDimension { unique_name: "store_dimension".into(), subject_areas: vec![] }],
+            hierarchies: vec![CatalogHierarchy {
+                hierarchy_unique_name: "store_dimension".into(),
+                dimension_unique_name: "store_dimension".into(),
+                levels: vec!["Store Name".into(), "Store Floor Space".into()],
+                level_meta: vec![],
+            }],
+            date_roles: vec![],
+        };
+        // "Footage" is not a suffix of any catalog level (cf. NG1 fairview-warehouses).
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_dimension.[Square Footage]".into(),
+                level: None,
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        assert!(
+            rejections.iter().all(|r| !matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. })),
+            "PRD AC7/FR5: zero-match bracket must not fire RULE 8; got: {rejections:?}"
+        );
+    }
+
+    /// PRD AC8 / FR7 de-dup: both dref.level and bracket trigger same canonical → one rejection.
+    #[test]
+    fn prd_bracket_guard_ac8_dedup_level_and_bracket_one_rejection() {
+        let catalog = CatalogSnapshot {
+            measures: vec![CatalogMeasure { unique_name: "Net Profit".into(), ..Default::default() }],
+            dimensions: vec![CatalogDimension { unique_name: "store_dimension".into(), subject_areas: vec![] }],
+            hierarchies: vec![CatalogHierarchy {
+                hierarchy_unique_name: "store_dimension".into(),
+                dimension_unique_name: "store_dimension".into(),
+                levels: vec!["Store Name".into(), "Store Floor Space".into()],
+                level_meta: vec![],
+            }],
+            date_roles: vec![],
+        };
+        // Both level="Floor Space" AND unique_name bracket "[Floor Space]" — same canonical → 1 rejection.
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Net Profit".into(), aggregation: None }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_dimension.[Floor Space]".into(),
+                level: Some("Floor Space".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let count = rejections.iter()
+            .filter(|r| matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. }))
+            .count();
+        assert_eq!(count, 1, "PRD AC8/FR7: must emit exactly 1 rejection when level+bracket agree; got: {rejections:?}");
+    }
 }
