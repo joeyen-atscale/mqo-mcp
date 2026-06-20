@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.15.0 — 2026-06-20
+
+SQL multi-statement validator: rejects multi-statement SQL before execution (R-MS rule). Server wiring in mqo-mcp-server pipeline.rs. New `sql_validator` module with `SqlRule::MultiStatement` enum, `SqlRejection` typed error, and `validate_sql()` function. `PipelineError::SqlRejected` variant added to server pipeline for clean typed rejection before warehouse execution. 14 regression tests covering multi-statement variants, semicolons-in-strings (admit case), empty SQL. No stack-trace text in rejections. (PRD-mcp-server-validator-migration iter-1+iter-2)
+
 ## v0.14.0 — 2026-06-19
 
 RULE 9: NonLocalDimensionPath guard (PRD-mqo-store-local-dimension-path-preference). Fixes `store-quantity-sold-per-brand` grouping by generic `Product Brand Name` instead of store-local `Store Item Product Brand Name`, causing ~26% per-brand inflation (row_recall 0.0, silent wrong numbers).
