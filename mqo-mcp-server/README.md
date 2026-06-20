@@ -27,9 +27,9 @@ disk per each tool's documented CLI contract:
 
 `mqo-spec` is a library path-dependency (the `Mqo` / `BoundMqo` types). The
 fixture engine (`src/engine.rs`) deterministically synthesizes bounded result
-rows so the acceptance tests run with no live cluster; replacing it with a real
-executor is the `mqo-auth-bridge` follow-on (SQL over PGWire `:15432`, MDX and
-DAX over XMLA `/v1/xmla`).
+rows so the acceptance tests run with no live cluster. With `--endpoint` and the
+OIDC flags, the server swaps in a live executor via `mqo-auth-bridge` (SQL over
+PGWire, MDX and DAX over XMLA `/v1/xmla`).
 
 ## Transport
 
