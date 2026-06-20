@@ -39,6 +39,7 @@ impl mqo_auth_bridge::executor::RowSource for FakeRowSource {
         _pg_pass: &str,
         _query: &str,
         _limit: usize,
+        _deadline_secs: u64,
     ) -> Result<Vec<serde_json::Value>, mqo_auth_bridge::EngineError> {
         self.calls.lock().unwrap().push("pgwire");
         Ok(self.pgwire_rows.clone())
@@ -52,6 +53,7 @@ impl mqo_auth_bridge::executor::RowSource for FakeRowSource {
         _catalog: &str,
         _cube: &str,
         _limit: usize,
+        _deadline_secs: u64,
     ) -> Result<Vec<serde_json::Value>, mqo_auth_bridge::EngineError> {
         self.calls.lock().unwrap().push("xmla");
         Ok(self.xmla_rows.clone())
@@ -83,6 +85,8 @@ async fn make_executor_with_token_stub(token_uri: String) -> (LiveExecutor, Arc<
         pg_user: None,
         pg_pass: None,
         max_result_rows: mqo_auth_bridge::DEFAULT_MAX_RESULT_ROWS,
+        query_deadline_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_SECS,
+        query_deadline_max_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_MAX_SECS,
     };
     let fake = Arc::new(FakeRowSource {
         calls: Mutex::new(vec![]),

@@ -37,6 +37,9 @@ pub use engine::{
     Engine, EngineResult, DEFAULT_MAX_RESULT_ROWS, HARD_ROW_CAP, MAX_RESULT_ROWS_CEILING,
 };
 pub use error::EngineError;
-pub use executor::{EndpointConfig, LiveExecutor, RowSource};
+pub use executor::{
+    EndpointConfig, LiveExecutor, RowSource, DEFAULT_QUERY_DEADLINE_MAX_SECS,
+    DEFAULT_QUERY_DEADLINE_SECS, DEADLINE_EXCEEDED_HINT,
+};
 pub use fixture::FixtureEngine;
 pub use oidc::OidcConfig;

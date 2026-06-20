@@ -33,6 +33,7 @@ impl RowSource for OverflowRowSource {
         _pg_pass: &str,
         _query: &str,
         _limit: usize,
+        _deadline_secs: u64,
     ) -> Result<Vec<serde_json::Value>, EngineError> {
         let rows = (0..self.row_count).map(|i| json!({"n": i})).collect();
         Ok(rows)
@@ -46,6 +47,7 @@ impl RowSource for OverflowRowSource {
         _catalog: &str,
         _cube: &str,
         _limit: usize,
+        _deadline_secs: u64,
     ) -> Result<Vec<serde_json::Value>, EngineError> {
         let rows = (0..self.row_count).map(|i| json!({"n": i})).collect();
         Ok(rows)
@@ -69,6 +71,7 @@ impl RowSource for ErrorRowSource {
         _pg_pass: &str,
         _query: &str,
         _limit: usize,
+        _deadline_secs: u64,
     ) -> Result<Vec<serde_json::Value>, EngineError> {
         Err(EngineError::ConnectionFailure {
             reason: "simulated connection failure".to_string(),
@@ -83,6 +86,7 @@ impl RowSource for ErrorRowSource {
         _catalog: &str,
         _cube: &str,
         _limit: usize,
+        _deadline_secs: u64,
     ) -> Result<Vec<serde_json::Value>, EngineError> {
         Err(EngineError::ConnectionFailure {
             reason: "simulated XMLA connection failure".to_string(),
@@ -114,6 +118,8 @@ fn make_config_budget(token_url: String, secret_var: &str, budget: usize) -> End
         pg_user: None,
         pg_pass: None,
         max_result_rows: budget,
+        query_deadline_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_SECS,
+        query_deadline_max_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_MAX_SECS,
     }
 }
 

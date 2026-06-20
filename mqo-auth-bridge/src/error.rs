@@ -61,4 +61,27 @@ pub enum EngineError {
     /// `PGWire` / tokio-postgres error.
     #[error("PGWire error: {0}")]
     Postgres(#[from] tokio_postgres::Error),
+
+    /// The query exceeded its per-request execution deadline.
+    ///
+    /// Returned when a `tokio::time::timeout` fires before the backend returns
+    /// a result. The caller should surface `elapsed_secs`, `deadline_secs`,
+    /// and `hint` to the agent so it can retry a cheaper shape or decline
+    /// honestly — never retry the same shape on the same backend.
+    ///
+    /// On the PGWire path the warehouse `statement_timeout` GUC is set equal
+    /// to the deadline before the query is issued, so the query is *cancelled*
+    /// (not merely abandoned) when this fires. On the XMLA path cancellation
+    /// is best-effort (the HTTP client is dropped).
+    #[error(
+        "query exceeded the {deadline_secs}s deadline (elapsed {elapsed_secs}s): {hint}"
+    )]
+    QueryDeadlineExceeded {
+        /// Wall-clock seconds that elapsed before the deadline fired.
+        elapsed_secs: u64,
+        /// The configured deadline (server default or per-request override).
+        deadline_secs: u64,
+        /// One-line actionable hint for the agent or operator.
+        hint: String,
+    },
 }

@@ -140,6 +140,11 @@ pub fn run_query(cfg: &QueryConfig, sql: &str) -> Result<QueryOutput, QueryError
         pg_pass: cfg.pg_pass_resolved.clone(),
         // Fetch cap+1 so the executor can detect oversize without streaming all rows.
         max_result_rows: cap.saturating_add(1),
+        // Use the oracle's own timeout_secs (sourced from --timeout-secs / config)
+        // as the execution deadline so long analytic queries don't hang the oracle.
+        // Default to the bridge default if not configured.
+        query_deadline_secs: cfg.timeout_secs,
+        query_deadline_max_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_MAX_SECS,
     };
 
     let executor = LiveExecutor::new(endpoint);

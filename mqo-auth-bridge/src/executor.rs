@@ -11,6 +11,7 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use futures::StreamExt;
 
@@ -22,6 +23,28 @@ use crate::{
     error::EngineError,
     oidc::{OidcConfig, TokenCache},
 };
+
+// ─── Deadline defaults ────────────────────────────────────────────────────────
+
+/// Default per-query execution deadline in seconds (FR4).
+///
+/// Well inside the 300s agent harness budget; leaves ≥ 240s for the agent to
+/// recover, retry a cheaper shape, or decline honestly (G4).
+/// Sourced from `--query-deadline-secs` / `MQO_QUERY_DEADLINE_SECS`.
+pub const DEFAULT_QUERY_DEADLINE_SECS: u64 = 60;
+
+/// Default upper bound for per-request deadline overrides (FR5).
+///
+/// A caller-supplied `deadline_secs` is silently clamped to this value so
+/// it can never disable the execution bound entirely.
+/// Sourced from `--query-deadline-max-secs`.
+pub const DEFAULT_QUERY_DEADLINE_MAX_SECS: u64 = 120;
+
+/// Actionable hint returned in [`EngineError::QueryDeadlineExceeded`] (FR6).
+pub const DEADLINE_EXCEEDED_HINT: &str =
+    "query exceeded the deadline; this MQO is likely cross-dimensional or \
+     fine-grain — try a coarser grain, fewer projected levels, or a \
+     measure-bearing shape.";
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -53,6 +76,25 @@ pub struct EndpointConfig {
     /// clamped to `1..=`[`MAX_RESULT_ROWS_CEILING`]. Set to 1000 to reproduce
     /// the pre-fix behavior exactly (rollback, AC-4).
     pub max_result_rows: usize,
+
+    /// Per-query execution deadline in seconds (FR1–FR3, G1).
+    ///
+    /// Every backend execution (PGWire and XMLA) is wrapped in a
+    /// `tokio::time::timeout` equal to this value. On elapse the executor
+    /// returns [`EngineError::QueryDeadlineExceeded`] instead of hanging
+    /// indefinitely. A `statement_timeout` equal to this value is also set on
+    /// the PGWire session so the warehouse cancels the query (G3).
+    ///
+    /// Sourced from `--query-deadline-secs` / `MQO_QUERY_DEADLINE_SECS`
+    /// (default [`DEFAULT_QUERY_DEADLINE_SECS`]). An unparseable or zero value
+    /// falls back to the default with a warning (NFR2).
+    pub query_deadline_secs: u64,
+
+    /// Maximum value a caller may supply as a per-request deadline override
+    /// (FR5). Overrides above this threshold are silently clamped; a warning
+    /// is logged. Sourced from `--query-deadline-max-secs`
+    /// (default [`DEFAULT_QUERY_DEADLINE_MAX_SECS`]).
+    pub query_deadline_max_secs: u64,
 }
 
 // ─── Internal RowSource abstraction ─────────────────────────────────────────
@@ -67,9 +109,15 @@ pub trait RowSource: Send + Sync {
     /// `pg_user` / `pg_pass` are already-resolved credentials (either
     /// `"token"` / OIDC bearer, or a direct email / password).
     ///
+    /// `deadline_secs` is the per-query execution deadline (FR1–FR2). The
+    /// implementation wraps the query in a `tokio::time::timeout` and, on the
+    /// PGWire path, sets `statement_timeout` on the session before issuing the
+    /// query. A deadline of `u64::MAX` disables the bound (rollback path).
+    ///
     /// # Errors
     ///
-    /// Returns [`EngineError`] on connection or query failure.
+    /// Returns [`EngineError`] on connection or query failure, or
+    /// [`EngineError::QueryDeadlineExceeded`] when the deadline fires.
     #[allow(clippy::too_many_arguments)]
     fn pgwire_query(
         &self,
@@ -79,13 +127,18 @@ pub trait RowSource: Send + Sync {
         pg_pass: &str,
         query: &str,
         limit: usize,
+        deadline_secs: u64,
     ) -> Result<Vec<Value>, EngineError>;
 
     /// POST `query` to the XMLA endpoint and parse the cellset response.
     ///
+    /// `deadline_secs` bounds the HTTP client timeout (FR3). A deadline of
+    /// `u64::MAX` disables the bound.
+    ///
     /// # Errors
     ///
-    /// Returns [`EngineError`] on HTTP or parse failure.
+    /// Returns [`EngineError`] on HTTP or parse failure, or
+    /// [`EngineError::QueryDeadlineExceeded`] when the deadline fires.
     #[allow(clippy::too_many_arguments)]
     fn xmla_query(
         &self,
@@ -95,6 +148,7 @@ pub trait RowSource: Send + Sync {
         catalog: &str,
         cube: &str,
         limit: usize,
+        deadline_secs: u64,
     ) -> Result<Vec<Value>, EngineError>;
 
     /// Send a `DBSCHEMA_CATALOGS` Discover request to verify XMLA endpoint
@@ -123,6 +177,7 @@ impl RowSource for WireRowSource {
         pg_pass: &str,
         query: &str,
         limit: usize,
+        deadline_secs: u64,
     ) -> Result<Vec<Value>, EngineError> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -131,7 +186,7 @@ impl RowSource for WireRowSource {
                 reason: format!("failed to build tokio runtime: {e}"),
             })?;
 
-        rt.block_on(async { pgwire_execute(host, port, pg_user, pg_pass, query, limit).await })
+        rt.block_on(async { pgwire_execute(host, port, pg_user, pg_pass, query, limit, deadline_secs).await })
     }
 
     fn xmla_query(
@@ -142,6 +197,7 @@ impl RowSource for WireRowSource {
         catalog: &str,
         cube: &str,
         limit: usize,
+        deadline_secs: u64,
     ) -> Result<Vec<Value>, EngineError> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -150,7 +206,7 @@ impl RowSource for WireRowSource {
                 reason: format!("failed to build tokio runtime: {e}"),
             })?;
 
-        rt.block_on(async { xmla_execute(xmla_url, bearer_token, query, catalog, cube, limit).await })
+        rt.block_on(async { xmla_execute(xmla_url, bearer_token, query, catalog, cube, limit, deadline_secs).await })
     }
 
     fn xmla_discover(&self, xmla_url: &str, bearer_token: &str) -> Result<(), EngineError> {
@@ -172,6 +228,13 @@ impl RowSource for WireRowSource {
 ///
 /// Auth is either bearer-token (`user=token password=<oidc>`) or direct
 /// (`user=<email> password=<pass>`), depending on what the caller passes.
+///
+/// `deadline_secs` wraps the entire execution (connection + query) in a
+/// `tokio::time::timeout` and sets `statement_timeout` on the session so the
+/// warehouse cancels an in-flight query on breach (FR1–FR2, G3). A deadline
+/// of `u64::MAX` disables both bounds (rollback path). If the backend rejects
+/// `SET statement_timeout`, the client-side `tokio` timeout still applies
+/// (FR2 fallback); a one-line operator warning is logged.
 async fn pgwire_execute(
     host: &str,
     port: u16,
@@ -179,9 +242,11 @@ async fn pgwire_execute(
     pg_pass: &str,
     query: &str,
     limit: usize,
+    deadline_secs: u64,
 ) -> Result<Vec<Value>, EngineError> {
     use native_tls::TlsConnector;
     use postgres_native_tls::MakeTlsConnector;
+    use tokio::time::{timeout, Duration};
 
     let conn_str = format!(
         "host={host} port={port} dbname=atscale_catalogs user={pg_user} password={pg_pass} sslmode=require"
@@ -196,43 +261,88 @@ async fn pgwire_execute(
             })?,
     );
 
-    let (client, connection) = tokio_postgres::connect(&conn_str, tls).await?;
+    let start = Instant::now();
 
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("pgwire connection error: {e}");
-        }
-    });
+    // Build the deadline duration; u64::MAX is the "no deadline" sentinel.
+    let deadline = if deadline_secs == u64::MAX {
+        None
+    } else {
+        Some(Duration::from_secs(deadline_secs))
+    };
 
-    // AtScale PGWire requires the simple (text-only) query protocol.
-    let messages = client.simple_query(query).await?;
+    // Wrap connect + query in the client-side deadline (FR1).
+    let execute_fut = async {
+        let (client, connection) = tokio_postgres::connect(&conn_str, tls).await?;
 
-    let mut result: Vec<Value> = Vec::new();
-    for msg in messages {
-        if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
-            if result.len() >= limit {
-                break;
+        tokio::spawn(async move {
+            if let Err(e) = connection.await {
+                eprintln!("pgwire connection error: {e}");
             }
-            let mut obj = serde_json::Map::new();
-            for (i, col) in row.columns().iter().enumerate() {
-                let v = match row.get(i) {
-                    Some(s) => {
-                        // Try numeric parse; fall back to string.
-                        if let Ok(n) = s.parse::<f64>() {
-                            serde_json::json!(n)
-                        } else {
-                            Value::String(s.to_string())
+        });
+
+        // Set warehouse-side statement_timeout so the query is *cancelled* on
+        // breach, not just abandoned (FR2, G3). If the backend rejects this GUC,
+        // fall back gracefully (client-side timeout still applies — NFR2, AC4).
+        if let Some(d) = deadline {
+            let timeout_ms = d.as_millis();
+            let set_stmt = format!("SET statement_timeout = {timeout_ms}");
+            if let Err(e) = client.simple_query(&set_stmt).await {
+                eprintln!(
+                    "event=statement_timeout_set_failed backend=pgwire deadline={deadline_secs} err={e}; \
+                     falling back to client-side tokio deadline only"
+                );
+                // Non-fatal: client-side deadline (FR1) still applies.
+            }
+        }
+
+        // AtScale PGWire requires the simple (text-only) query protocol.
+        let messages = client.simple_query(query).await?;
+
+        let mut result: Vec<Value> = Vec::new();
+        for msg in messages {
+            if let tokio_postgres::SimpleQueryMessage::Row(row) = msg {
+                if result.len() >= limit {
+                    break;
+                }
+                let mut obj = serde_json::Map::new();
+                for (i, col) in row.columns().iter().enumerate() {
+                    let v = match row.get(i) {
+                        Some(s) => {
+                            // Try numeric parse; fall back to string.
+                            if let Ok(n) = s.parse::<f64>() {
+                                serde_json::json!(n)
+                            } else {
+                                Value::String(s.to_string())
+                            }
                         }
-                    }
-                    None => Value::Null,
-                };
-                obj.insert(col.name().to_string(), v);
+                        None => Value::Null,
+                    };
+                    obj.insert(col.name().to_string(), v);
+                }
+                result.push(Value::Object(obj));
             }
-            result.push(Value::Object(obj));
         }
-    }
 
-    Ok(result)
+        Ok::<Vec<Value>, EngineError>(result)
+    };
+
+    match deadline {
+        None => execute_fut.await,
+        Some(d) => match timeout(d, execute_fut).await {
+            Ok(result) => result,
+            Err(_elapsed) => {
+                let elapsed_secs = start.elapsed().as_secs();
+                eprintln!(
+                    "event=query_deadline_exceeded backend=pgwire elapsed={elapsed_secs} deadline={deadline_secs}"
+                );
+                Err(EngineError::QueryDeadlineExceeded {
+                    elapsed_secs,
+                    deadline_secs,
+                    hint: DEADLINE_EXCEEDED_HINT.to_string(),
+                })
+            }
+        },
+    }
 }
 
 /// POST an MDX or DAX query to the XMLA endpoint and parse the response.
@@ -243,6 +353,10 @@ async fn pgwire_execute(
 /// [`crate::xmla::parse_xmla_cellset`].  Both the Tabular rowset and
 /// `<MDDataSet>` response shapes are handled there.  A parse failure or a SOAP
 /// `<Fault>` always returns `Err` — synthetic rows are never fabricated.
+///
+/// `deadline_secs` sets the HTTP client timeout (FR3). On elapse the HTTP
+/// client is dropped (best-effort XMLA cancellation — NG4) and
+/// [`EngineError::QueryDeadlineExceeded`] is returned.
 async fn xmla_execute(
     xmla_url: &str,
     bearer_token: &str,
@@ -250,7 +364,10 @@ async fn xmla_execute(
     catalog: &str,
     cube: &str,
     limit: usize,
+    deadline_secs: u64,
 ) -> Result<Vec<Value>, EngineError> {
+    use std::time::Duration;
+
     let body = format!(
         r#"<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
@@ -273,14 +390,43 @@ async fn xmla_execute(
         xmla_escape(cube),
     );
 
-    let client = reqwest::Client::new();
-    let resp = client
+    let start = Instant::now();
+
+    // Build the reqwest client with or without a connection/request timeout.
+    // A timeout fires as a reqwest::Error; we map it to QueryDeadlineExceeded
+    // below (FR3). u64::MAX is the "no deadline" sentinel (rollback path).
+    let mut client_builder = reqwest::Client::builder();
+    if deadline_secs != u64::MAX {
+        client_builder = client_builder.timeout(Duration::from_secs(deadline_secs));
+    }
+    let client = client_builder.build().map_err(|e| EngineError::ConnectionFailure {
+        reason: format!("XMLA reqwest client build failed: {e}"),
+    })?;
+
+    let send_result = client
         .post(xmla_url)
         .header("Authorization", format!("Bearer {bearer_token}"))
         .header("Content-Type", "application/xml")
         .body(body)
         .send()
-        .await?;
+        .await;
+
+    // Map a reqwest timeout to QueryDeadlineExceeded (FR3).
+    let resp = match send_result {
+        Ok(r) => r,
+        Err(e) if e.is_timeout() => {
+            let elapsed_secs = start.elapsed().as_secs();
+            eprintln!(
+                "event=query_deadline_exceeded backend=xmla elapsed={elapsed_secs} deadline={deadline_secs}"
+            );
+            return Err(EngineError::QueryDeadlineExceeded {
+                elapsed_secs,
+                deadline_secs,
+                hint: DEADLINE_EXCEEDED_HINT.to_string(),
+            });
+        }
+        Err(e) => return Err(EngineError::Http(e)),
+    };
 
     if !resp.status().is_success() {
         let status = resp.status();
@@ -689,6 +835,10 @@ impl Engine for LiveExecutor {
             .map_or(budget, |l| usize::try_from(l).unwrap_or(budget))
             .min(budget);
 
+        // Use the server-level deadline for this execute call.
+        // Per-request overrides are handled by execute_with_deadline (FR5).
+        let deadline_secs = self.config.query_deadline_secs;
+
         let raw_rows = match backend {
             Backend::Sql => {
                 // PGWire: direct credentials take priority over OIDC token.
@@ -709,6 +859,7 @@ impl Engine for LiveExecutor {
                     pg_pass,
                     compiled_query,
                     fetch_limit,
+                    deadline_secs,
                 )?
             }
             Backend::Dax | Backend::Mdx => {
@@ -728,6 +879,7 @@ impl Engine for LiveExecutor {
                     catalog,
                     cube,
                     fetch_limit,
+                    deadline_secs,
                 )?
             }
         };
@@ -749,6 +901,115 @@ impl Engine for LiveExecutor {
             return Ok(EngineResult::new(rows));
         }
 
+        Ok(EngineResult::new(raw_rows))
+    }
+}
+
+impl LiveExecutor {
+    /// Resolve a per-request deadline override against the server maximum (FR5).
+    ///
+    /// - `None` → use `self.config.query_deadline_secs` (server default).
+    /// - `Some(n)` → clamp to `self.config.query_deadline_max_secs`; log a
+    ///   warning if clamping occurred (AC6).
+    /// - `Some(0)` → treated as "no override" (server default applies).
+    #[must_use]
+    pub fn resolve_deadline(&self, per_request: Option<u64>) -> u64 {
+        match per_request {
+            None | Some(0) => self.config.query_deadline_secs,
+            Some(n) => {
+                let max = self.config.query_deadline_max_secs;
+                if n > max {
+                    eprintln!(
+                        "event=deadline_override_clamped requested={n} max={max}; \
+                         clamped to {max} (FR5)"
+                    );
+                    max
+                } else {
+                    n
+                }
+            }
+        }
+    }
+
+    /// Execute `compiled_query` with an explicit per-request deadline override.
+    ///
+    /// Identical to [`Engine::execute`] but accepts an optional
+    /// `deadline_secs_override` that replaces the server-level default for this
+    /// one call, clamped to `query_deadline_max_secs` (FR5). Pass `None` to use
+    /// the server default.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EngineError`] including
+    /// [`EngineError::QueryDeadlineExceeded`] on a breach.
+    pub fn execute_with_deadline(
+        &self,
+        compiled_query: &str,
+        backend: Backend,
+        limit: Option<u64>,
+        model: Option<&str>,
+        deadline_secs_override: Option<u64>,
+    ) -> Result<EngineResult, EngineError> {
+        let deadline_secs = self.resolve_deadline(deadline_secs_override);
+
+        let budget = self.config.max_result_rows.max(1);
+        let fetch_limit = budget.saturating_add(1);
+        let user_limit = limit
+            .map_or(budget, |l| usize::try_from(l).unwrap_or(budget))
+            .min(budget);
+
+        let raw_rows = match backend {
+            Backend::Sql => {
+                let (pg_user, pg_pass_owned);
+                let pg_pass: &str = if let Some(ref p) = self.config.pg_pass {
+                    pg_user = self.config.pg_user.as_deref().unwrap_or("token");
+                    p.as_str()
+                } else {
+                    let token = self.fetch_token_sync()?;
+                    pg_pass_owned = token.access_token;
+                    pg_user = self.config.pg_user.as_deref().unwrap_or("token");
+                    pg_pass_owned.as_str()
+                };
+                self.row_source.pgwire_query(
+                    &self.config.pgwire_host,
+                    self.config.pgwire_port,
+                    pg_user,
+                    pg_pass,
+                    compiled_query,
+                    fetch_limit,
+                    deadline_secs,
+                )?
+            }
+            Backend::Dax | Backend::Mdx => {
+                let (catalog, cube) = match model {
+                    Some(m) => parse_model_catalog_cube(m)?,
+                    None => {
+                        return Err(EngineError::QueryError {
+                            reason: "XMLA dispatch (DAX/MDX) requires a model path but none was provided".to_string(),
+                        })
+                    }
+                };
+                let token = self.fetch_token_sync()?;
+                self.row_source.xmla_query(
+                    &self.config.xmla_url,
+                    &token.access_token,
+                    compiled_query,
+                    catalog,
+                    cube,
+                    fetch_limit,
+                    deadline_secs,
+                )?
+            }
+        };
+
+        if raw_rows.len() > budget {
+            let rows: Vec<Value> = raw_rows.into_iter().take(budget).collect();
+            return Ok(EngineResult::capped(rows));
+        }
+        if raw_rows.len() > user_limit {
+            let rows: Vec<Value> = raw_rows.into_iter().take(user_limit).collect();
+            return Ok(EngineResult::new(rows));
+        }
         Ok(EngineResult::new(raw_rows))
     }
 }
