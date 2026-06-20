@@ -252,17 +252,11 @@ async fn pgwire_execute(
         .unwrap_or_else(|_| "atscale_catalogs".to_string());
     let pg_sslmode = std::env::var("ATSCALE_PG_SSLMODE")
         .unwrap_or_else(|_| "require".to_string());
+    // sslmode=disable in the connection string is ignored by tokio-postgres when a
+    // TlsConnector is passed — it attempts TLS regardless. Must pass NoTls explicitly.
+    let use_tls = pg_sslmode != "disable";
     let conn_str = format!(
         "host={host} port={port} dbname={pg_dbname} user={pg_user} password={pg_pass} sslmode={pg_sslmode}"
-    );
-
-    let tls = MakeTlsConnector::new(
-        TlsConnector::builder()
-            .danger_accept_invalid_certs(true)
-            .build()
-            .map_err(|e| EngineError::ConnectionFailure {
-                reason: format!("TLS builder error: {e}"),
-            })?,
     );
 
     let start = Instant::now();
@@ -276,13 +270,35 @@ async fn pgwire_execute(
 
     // Wrap connect + query in the client-side deadline (FR1).
     let execute_fut = async {
-        let (client, connection) = tokio_postgres::connect(&conn_str, tls).await?;
+        // tokio-postgres connect() returns different stream types for TLS vs NoTls,
+        // so we cannot unify them in one binding. Spawn the connection task inside
+        // each branch and unify on Client (same type either way).
+        let client: tokio_postgres::Client = if use_tls {
+            let tls = MakeTlsConnector::new(
+                TlsConnector::builder()
+                    .danger_accept_invalid_certs(true)
+                    .build()
+                    .map_err(|e| EngineError::ConnectionFailure {
+                        reason: format!("TLS builder error: {e}"),
+                    })?,
+            );
+            let (client, connection) = tokio_postgres::connect(&conn_str, tls).await?;
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    eprintln!("pgwire connection error: {e}");
+                }
+            });
+            client
+        } else {
+            let (client, connection) = tokio_postgres::connect(&conn_str, tokio_postgres::NoTls).await?;
+            tokio::spawn(async move {
+                if let Err(e) = connection.await {
+                    eprintln!("pgwire connection error: {e}");
+                }
+            });
+            client
+        };
 
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("pgwire connection error: {e}");
-            }
-        });
 
         // Set warehouse-side statement_timeout so the query is *cancelled* on
         // breach, not just abandoned (FR2, G3). If the backend rejects this GUC,
