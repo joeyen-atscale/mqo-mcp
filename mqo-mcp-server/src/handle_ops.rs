@@ -1177,6 +1177,7 @@ fn build_attr_guard_snapshot(catalog: &Value) -> CatalogSnapshot {
             hierarchy_unique_name: h.clone(),
             levels,
             level_meta: vec![],
+            fact_local_facts: vec![],
         })
         .collect();
 

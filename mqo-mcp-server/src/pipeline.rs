@@ -252,7 +252,8 @@ fn engine_error_class(e: &mqo_auth_bridge::EngineError) -> &'static str {
         | EngineError::ConnectionFailure { .. }
         | EngineError::Http(_)
         | EngineError::Postgres(_)
-        | EngineError::RowCapTripped { .. } => INFRASTRUCTURE,
+        | EngineError::RowCapTripped { .. }
+        | EngineError::QueryDeadlineExceeded { .. } => INFRASTRUCTURE,
     }
 }
 
@@ -834,6 +835,7 @@ fn param_validate(
             hierarchy_unique_name: h.clone(),
             levels: levels.clone(),
             level_meta: hier_meta.get(h).cloned().unwrap_or_default(),
+            fact_local_facts: vec![],
         })
         .collect();
 
