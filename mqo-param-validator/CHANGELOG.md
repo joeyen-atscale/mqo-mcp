@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.13.0 — 2026-06-19
+
+PRD-mqo-unique-name-bracket-label-guard acceptance-criteria tests. The PRD's bracket-label guard (Path B of `check_non_canonical_level_label`) was already implemented in v0.9.2; this version adds 4 explicitly PRD-named tests tracing AC1 (Floor Space bracket corrected unique_name), AC5 (Number of Employees bracket corrected unique_name), AC7/FR5 (zero-match bracket defers to Unmapped, RULE 8 silent), and AC8/FR7 (level + bracket same canonical → exactly 1 rejection). All 66 unit tests pass; cargo clippy clean. Cloudbuild unavailable (MISSING); local cargo used (fallback per instructions).
+
+## v0.12.0 — 2026-06-19
+
 ## v0.11.0 — 2026-06-18
 
 RULE 12 role-confusion guard (PRD-mqo-grounding-enforcement-dedup): rejects MQO params where a measure name appears in the `dimensions` slot or a level name appears in the `measures` slot. Catalog-driven check; fires only when the name resolves unambiguously to exactly one kind (ambiguous names and unresolved names are deferred to the binder). New `RejectReason::RoleConfusion { entity, actual_kind, correct_slot }` variant. New `check_role_confusion()` function wired after RULE 11 in `validate()`. 5 new tests (AC1–AC5): measure-as-dim fired, level-as-measure fired, ambiguous silent, correct usage silent, unresolved silent.
