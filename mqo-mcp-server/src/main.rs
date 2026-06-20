@@ -105,6 +105,35 @@ struct Args {
     #[arg(long, default_value_t = mqo_mcp_server::DEFAULT_MAX_RESULT_ROWS)]
     max_result_rows: usize,
 
+    /// Per-query execution deadline in seconds (FR4, PRD-mqo-execution-deadline-fast-fail).
+    ///
+    /// Every backend execution (PGWire SQL and XMLA DAX/MDX) is wrapped in a
+    /// `tokio::time::timeout` equal to this value.  On elapse the executor
+    /// returns a typed `query_deadline_exceeded` error so the agent can retry a
+    /// cheaper shape rather than stalling until the harness wall.  The
+    /// warehouse-side `statement_timeout` is set to the same value on the
+    /// PGWire session so the query is cancelled (not merely abandoned), freeing
+    /// warehouse credits. Default 60s (well inside the 300s agent harness
+    /// budget).  Set to 300 to reproduce the pre-change (unbounded) behavior.
+    /// Can also be set via `MQO_QUERY_DEADLINE_SECS` environment variable.
+    #[arg(
+        long,
+        default_value_t = mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_SECS,
+        env = "MQO_QUERY_DEADLINE_SECS"
+    )]
+    query_deadline_secs: u64,
+
+    /// Maximum per-request deadline override (FR5, PRD-mqo-execution-deadline-fast-fail).
+    ///
+    /// A caller may supply a per-request `deadline_secs` override; values
+    /// above this limit are silently clamped so a caller can never disable the
+    /// execution bound entirely.  Default 120s.
+    #[arg(
+        long,
+        default_value_t = mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_MAX_SECS
+    )]
+    query_deadline_max_secs: u64,
+
     /// Live-mode only: at startup, probe the cluster for each dimension level's
     /// enumerated member domain (one bounded query per level) and layer
     /// value_type/domain onto the in-memory catalog — the live source for the
@@ -813,6 +842,31 @@ fn build_engine(args: &Args) -> ServerEngine {
     }
     eprintln!("mqo-mcp-server: materialization budget: max_result_rows={max_result_rows}");
 
+    // Validate and log the query deadline (NFR2: unparseable/zero → default with warning).
+    let query_deadline_secs = if args.query_deadline_secs == 0 {
+        eprintln!(
+            "mqo-mcp-server: --query-deadline-secs 0 is invalid; \
+             falling back to default {}s (NFR2)",
+            mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_SECS
+        );
+        mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_SECS
+    } else {
+        args.query_deadline_secs
+    };
+    let query_deadline_max_secs = if args.query_deadline_max_secs == 0 {
+        eprintln!(
+            "mqo-mcp-server: --query-deadline-max-secs 0 is invalid; \
+             falling back to default {}s (NFR2)",
+            mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_MAX_SECS
+        );
+        mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_MAX_SECS
+    } else {
+        args.query_deadline_max_secs
+    };
+    eprintln!(
+        "mqo-mcp-server: query deadline: {query_deadline_secs}s (max override: {query_deadline_max_secs}s)"
+    );
+
     let config = EndpointConfig {
         pgwire_host,
         pgwire_port,
@@ -821,6 +875,8 @@ fn build_engine(args: &Args) -> ServerEngine {
         pg_user,
         pg_pass,
         max_result_rows,
+        query_deadline_secs,
+        query_deadline_max_secs,
     };
 
     let executor = LiveExecutor::new(config);

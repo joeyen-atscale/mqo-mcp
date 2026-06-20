@@ -586,6 +586,7 @@ fn new_ac2_live_mode_routes_through_live_executor() {
             _pg_pass: &str,
             _query: &str,
             _limit: usize,
+            _deadline_secs: u64,
         ) -> Result<Vec<Value>, mqo_mcp_server::EngineError> {
             Ok(vec![json!({"live_col": "live_val"})])
         }
@@ -597,6 +598,7 @@ fn new_ac2_live_mode_routes_through_live_executor() {
             _catalog: &str,
             _cube: &str,
             _limit: usize,
+            _deadline_secs: u64,
         ) -> Result<Vec<Value>, mqo_mcp_server::EngineError> {
             Ok(vec![json!({"xmla_col": "xmla_val"})])
         }
@@ -648,6 +650,8 @@ fn new_ac2_live_mode_routes_through_live_executor() {
         pg_user: None,
         pg_pass: None,
         max_result_rows: mqo_mcp_server::DEFAULT_MAX_RESULT_ROWS,
+        query_deadline_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_SECS,
+        query_deadline_max_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_MAX_SECS,
     };
     let executor = LiveExecutor::with_row_source(config, Arc::new(FakeRowSource));
     let srv = Server {
@@ -724,6 +728,7 @@ fn new_ac4_engine_error_surfaces_as_structured_engine_error() {
             _pg_pass: &str,
             _query: &str,
             _limit: usize,
+            _deadline_secs: u64,
         ) -> Result<Vec<Value>, mqo_mcp_server::EngineError> {
             Err(mqo_mcp_server::EngineError::QueryError {
                 reason: "simulated query failure".to_string(),
@@ -737,6 +742,7 @@ fn new_ac4_engine_error_surfaces_as_structured_engine_error() {
             _catalog: &str,
             _cube: &str,
             _limit: usize,
+            _deadline_secs: u64,
         ) -> Result<Vec<Value>, mqo_mcp_server::EngineError> {
             Err(mqo_mcp_server::EngineError::QueryError {
                 reason: "simulated xmla failure".to_string(),
@@ -781,6 +787,8 @@ fn new_ac4_engine_error_surfaces_as_structured_engine_error() {
         pg_user: None,
         pg_pass: None,
         max_result_rows: mqo_mcp_server::DEFAULT_MAX_RESULT_ROWS,
+        query_deadline_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_SECS,
+        query_deadline_max_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_MAX_SECS,
     };
     let executor = LiveExecutor::with_row_source(config, Arc::new(AlwaysFailRowSource));
     let srv = Server {
@@ -1933,6 +1941,8 @@ fn live_dax_parity_total_store_sales() {
         pg_user: None,
         pg_pass: None,
         max_result_rows: mqo_mcp_server::DEFAULT_MAX_RESULT_ROWS,
+        query_deadline_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_SECS,
+        query_deadline_max_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_MAX_SECS,
     };
 
     // Real wire executor (no fake): this is the live path.
