@@ -248,8 +248,12 @@ async fn pgwire_execute(
     use postgres_native_tls::MakeTlsConnector;
     use tokio::time::{timeout, Duration};
 
+    let pg_dbname = std::env::var("ATSCALE_PG_DBNAME")
+        .unwrap_or_else(|_| "atscale_catalogs".to_string());
+    let pg_sslmode = std::env::var("ATSCALE_PG_SSLMODE")
+        .unwrap_or_else(|_| "require".to_string());
     let conn_str = format!(
-        "host={host} port={port} dbname=atscale_catalogs user={pg_user} password={pg_pass} sslmode=require"
+        "host={host} port={port} dbname={pg_dbname} user={pg_user} password={pg_pass} sslmode={pg_sslmode}"
     );
 
     let tls = MakeTlsConnector::new(
