@@ -3135,6 +3135,19 @@ fn structured_err(e: &PipelineError) -> Value {
                 "report": report,
             }),
         ),
+        PipelineError::SqlRejected { count, report } => (
+            "sql_rejected",
+            json!({
+                "count": count,
+                "detail": format!(
+                    "The compiled SQL failed validation with {count} violation(s) before \
+                     execution. Submit a single SELECT statement per query_multidimensional \
+                     call — multi-statement SQL is not supported (ATSCALE-48466). \
+                     See `violations` for the machine-readable rule codes and fix guidance."
+                ),
+                "violations": report,
+            }),
+        ),
     };
     let payload = json!({
         "error": {
