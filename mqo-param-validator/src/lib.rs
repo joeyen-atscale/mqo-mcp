@@ -114,6 +114,19 @@ pub struct CatalogHierarchy {
     /// without enrichment — see PRD OQ-1). Indexed by level label.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub level_meta: Vec<LevelDomainMeta>,
+    /// Optional list of fact-table identifiers this hierarchy is *locally* bound
+    /// to (derived from `FactBindings`, PRD-mqo-store-local-dimension-path-preference).
+    /// When present (non-empty), this hierarchy is fact-local: it is available
+    /// only in the listed facts (e.g. `["store_sales", "store_returns"]`).
+    /// When absent (or empty), the hierarchy is conformed — available in all facts.
+    ///
+    /// Used by RULE 9 (`NonLocalDimensionPath`) to detect the case where a
+    /// fact-local measure is grouped by the generic conformed sibling of a level
+    /// that also lives on a fact-local hierarchy bound to the measure's fact.
+    ///
+    /// `None`/`[]` → conformed or unknown; RULE 9 guard stays silent for this hier.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fact_local_facts: Vec<String>,
 }
 
 /// The data type a filter value must satisfy to bind to a level.
@@ -338,6 +351,22 @@ pub enum RejectReason {
         supplied: String,
         /// The exact canonical label from the catalog (use this instead).
         canonical: String,
+    },
+    /// RULE 9 (PRD-mqo-store-local-dimension-path-preference): a fact-local
+    /// measure is grouped by a generic conformed level when a fact-local sibling
+    /// level with the same core label exists on a hierarchy bound to the measure's
+    /// single fact. The generic path is conformed (reaches the fact), but the
+    /// fact-local path produces the correct join cardinality — grouping by the
+    /// generic level silently inflates values (e.g. ~26% for store brand queries).
+    NonLocalDimensionPath {
+        /// The measure that is fact-local (display name).
+        measure: String,
+        /// The generic conformed level the MQO picked (full `hierarchy.[Level]` key).
+        generic_level: String,
+        /// The fact-local sibling level to use instead (full `hierarchy.[Level]` key).
+        suggested_level: String,
+        /// The single fact this measure is scoped to (e.g. `"store_sales"`).
+        fact: String,
     },
     /// RULE 10 (PRD-mqo-validator-ambiguous-level-dimension-resolution): same as
     /// RULE 8 but fires when the suffix-match is ambiguous globally (≥2 candidates)
@@ -635,6 +664,14 @@ pub fn validate(mqo: &BoundMqoInput, catalog: &CatalogSnapshot) -> Vec<ParamReje
     // Guard stays silent when no sibling exists (FR4) — additive, never
     // replaces prior rejections.
     check_channel_scope_mismatch(mqo, catalog, &mut rejections);
+
+    // RULE 9 (PRD-mqo-store-local-dimension-path-preference): reject a generic
+    // conformed level pick when the bound measure is fact-local and a fact-local
+    // sibling level with the same core label exists on a hierarchy bound to the
+    // measure's single fact. The generic path is conformed but produces the wrong
+    // join cardinality. Guard stays silent when no fact-local sibling exists (FR4)
+    // or when the measure is all-channel/conformed (FR5).
+    check_nonlocal_dimension_path(mqo, catalog, &mut rejections);
 
     // RULE 8 (PRD-mqo-projected-level-label-fidelity): reject a projected level
     // whose label is a suffix of exactly one canonical catalog level label.
@@ -2048,6 +2085,7 @@ fn check_filter_level(
 ///         hierarchy_unique_name: "Store".into(),
 ///         levels: vec!["Store Name".into(), "Store Number of Employees".into()],
 ///         level_meta: vec![],
+///         fact_local_facts: vec![],
 ///     }],
 ///     ..Default::default()
 /// };
@@ -2423,6 +2461,211 @@ fn check_channel_scope_mismatch(
                          ({}); use [{suggested_name}] which is scoped to \
                          [{named_channel}] only.",
                         scope.join(", ")
+                    )),
+                }],
+            ));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RULE 9: non-local dimension path guard
+// (PRD-mqo-store-local-dimension-path-preference, FR1–FR7)
+// ---------------------------------------------------------------------------
+
+/// Derive the "core label" for RULE 9 sibling matching.
+///
+/// Strips leading qualifier words (store/catalog/web/item/product/total/…) so that
+/// `"Store Item Product Brand Name"` and `"Product Brand Name"` map to the same core
+/// (e.g. `"brand name"`). This is the same concept as `nt_core_label` but without the
+/// trailing-`name`-drop (we want brand/category/manufacturer, not just the root noun)
+/// and using the LAST TWO meaningful tokens after stripping leading qualifiers.
+///
+/// The qualifiers to strip are the channel/scope prefixes that distinguish a
+/// fact-local hierarchy from its generic conformed sibling — exactly what makes
+/// `"Store Item Product Brand Name"` and `"Product Brand Name"` twins.
+const RULE9_STRIP_PREFIXES: &[&str] = &[
+    "store", "item", "catalog", "web", "total", "and", "incl",
+];
+
+/// Strip RULE9_STRIP_PREFIXES from the front of a space-split word list, then
+/// return the last 2 meaningful tokens joined with a space. This is the "core
+/// concept" two-token key used to match a generic level against its fact-local
+/// sibling. Returns `None` when fewer than 1 token remains after stripping.
+fn r9_core_label(label: &str) -> Option<String> {
+    let toks: Vec<&str> = label
+        .split_whitespace()
+        .map(|t| t)
+        .collect();
+    // Drop leading qualifier tokens.
+    let stripped: Vec<&str> = {
+        let mut i = 0;
+        while i < toks.len()
+            && RULE9_STRIP_PREFIXES.contains(&toks[i].to_lowercase().as_str())
+        {
+            i += 1;
+        }
+        toks[i..].to_vec()
+    };
+    if stripped.is_empty() {
+        return None;
+    }
+    // Take last 2 tokens as the concept core (mirrors RULE 1 / near-twin grouping).
+    let core_toks = if stripped.len() >= 2 {
+        &stripped[stripped.len() - 2..]
+    } else {
+        &stripped[..]
+    };
+    Some(core_toks.join(" ").to_lowercase())
+}
+
+/// RULE 9 — flag a generic conformed dimension level pick when the bound measure
+/// is fact-local and a fact-local sibling hierarchy carries a level with the
+/// same core label.
+///
+/// Fires when ALL hold (FR1–FR3, FR5, FR6):
+///   1. A bound measure has `channel_scope` with exactly ONE channel group
+///      (it is a fact-local, not all-channel, measure).
+///   2. The MQO groups by a level on a hierarchy that is NOT fact-local to
+///      that channel (i.e. `fact_local_facts` is empty / conformed).
+///   3. There exists at least one OTHER hierarchy in the catalog whose
+///      `fact_local_facts` contains the measure's channel group AND that
+///      hierarchy carries a level whose `r9_core_label` matches the picked
+///      generic level's `r9_core_label`.
+///
+/// Does NOT fire (FR4/FR5) when:
+///   - The measure's `channel_scope` is absent/empty or has >1 channel.
+///   - The picked hierarchy's `fact_local_facts` already contains the measure's
+///     channel (meaning the agent ALREADY picked the fact-local path — correct).
+///   - No fact-local hierarchy for this channel carries a same-core-label level.
+///
+/// The `suggested_level` in the rejection names the full `hierarchy.[Level]`
+/// path the agent should use instead (FR3 — one-step rebind).
+fn check_nonlocal_dimension_path(
+    mqo: &BoundMqoInput,
+    catalog: &CatalogSnapshot,
+    rejections: &mut Vec<ParamRejection>,
+) {
+    for mref in &mqo.measures {
+        // Look up in catalog (skip unknowns — Unmapped already fired).
+        let bound_norm = normalize(&mref.unique_name);
+        let Some(bound_cat) = catalog.measures.iter().find(|m| {
+            normalize(&m.unique_name) == bound_norm
+                || m.label.as_deref().map(normalize).as_deref() == Some(&bound_norm)
+        }) else {
+            continue;
+        };
+
+        // FR5: only act on a fact-local (single-channel) measure.
+        let Some(ref scope) = bound_cat.channel_scope else {
+            continue;
+        };
+        if scope.len() != 1 {
+            // All-channel or unknown scope — guard must stay silent (FR5/NG6).
+            continue;
+        }
+        let measure_fact = &scope[0];
+        let measure_display = bound_cat.display_name().to_string();
+
+        // For each dimension the MQO groups by, check if a fact-local sibling exists.
+        for dref in &mqo.dimensions {
+            let picked_level_label = match &dref.level {
+                Some(l) => l,
+                None => continue, // no level specified → can't check
+            };
+            let picked_hier_norm = normalize(&dref.unique_name);
+
+            // Find the hierarchy for the picked dimension.
+            let picked_hier = catalog.hierarchies.iter().find(|h| {
+                normalize(&h.hierarchy_unique_name) == picked_hier_norm
+            });
+            let picked_hier = match picked_hier {
+                Some(h) => h,
+                None => continue, // unknown hierarchy → Unmapped handles it
+            };
+
+            // FR4/FR5 gate: if the picked hierarchy IS already fact-local to the
+            // measure's fact, the agent made the correct pick — guard stays silent.
+            if picked_hier.fact_local_facts.iter().any(|f| f == measure_fact) {
+                continue;
+            }
+
+            // Compute the core label of the picked generic level.
+            let picked_core = match r9_core_label(picked_level_label) {
+                Some(c) => c,
+                None => continue,
+            };
+
+            // FR1: look for a fact-local hierarchy bound to the measure's fact
+            // that carries a level with the same core label.
+            let mut best_sibling: Option<(&CatalogHierarchy, &String)> = None;
+            'outer: for hier in &catalog.hierarchies {
+                // Must be fact-local to the measure's specific fact.
+                if !hier.fact_local_facts.iter().any(|f| f == measure_fact) {
+                    continue;
+                }
+                // Must be a different hierarchy from the one already picked.
+                if normalize(&hier.hierarchy_unique_name) == picked_hier_norm {
+                    continue;
+                }
+                // Look for a level in this hierarchy whose core label matches.
+                for lvl in &hier.levels {
+                    if let Some(lvl_core) = r9_core_label(lvl) {
+                        if lvl_core == picked_core {
+                            best_sibling = Some((hier, lvl));
+                            break 'outer;
+                        }
+                    }
+                }
+            }
+
+            let (fact_local_hier, fact_local_level) = match best_sibling {
+                Some(s) => s,
+                None => continue, // FR4: no sibling → guard silent
+            };
+
+            let generic_key = format!(
+                "{}.[{}]",
+                dref.unique_name, picked_level_label
+            );
+            let suggested_key = format!(
+                "{}.[{}]",
+                fact_local_hier.hierarchy_unique_name, fact_local_level
+            );
+
+            // De-dup: don't emit the same (measure, generic_level) pair twice.
+            let already = rejections.iter().any(|r| {
+                matches!(
+                    &r.reason,
+                    RejectReason::NonLocalDimensionPath {
+                        generic_level: gl,
+                        measure: m,
+                        ..
+                    }
+                    if gl == &generic_key && m == &measure_display
+                )
+            });
+            if already {
+                continue;
+            }
+
+            rejections.push(ParamRejection::new(
+                generic_key.clone(),
+                FieldClass::Dimension,
+                RejectReason::NonLocalDimensionPath {
+                    measure: measure_display.clone(),
+                    generic_level: generic_key.clone(),
+                    suggested_level: suggested_key.clone(),
+                    fact: measure_fact.clone(),
+                },
+                vec![Suggestion {
+                    name: suggested_key.clone(),
+                    similarity: 0.95,
+                    note: Some(format!(
+                        "measure [{measure_display}] is scoped to [{measure_fact}]; \
+                         grouping by the generic conformed level [{generic_key}] produces the \
+                         wrong join cardinality — use the fact-local sibling [{suggested_key}] \
+                         which is bound to [{measure_fact}] and yields the correct per-group values."
                     )),
                 }],
             ));
@@ -3070,12 +3313,14 @@ mod tests {
                     hierarchy_unique_name: "product_dimension".into(),
                     levels: vec!["Product Brand Name".into()],
                     level_meta: vec![],
+                    fact_local_facts: vec![],
                 },
                 CatalogHierarchy {
                     dimension_unique_name: "store_item_product_dimension".into(),
                     hierarchy_unique_name: "store_item_product_dimension".into(),
                     levels: vec!["Store Item Product Brand Name".into()],
                     level_meta: vec![],
+                    fact_local_facts: vec![],
                 },
             ],
             date_roles: vec![],
@@ -3200,6 +3445,7 @@ mod tests {
                     "Store Number of Employees".into(),
                 ],
                 level_meta: vec![],
+                fact_local_facts: vec![],
             }],
             date_roles: vec![],
         }
@@ -3305,6 +3551,7 @@ mod tests {
                 hierarchy_unique_name: "Dim".into(),
                 levels: vec!["Dual Column".into()],
                 level_meta: vec![],
+                fact_local_facts: vec![],
             }],
             ..Default::default()
         };
@@ -3374,6 +3621,7 @@ mod tests {
                 hierarchy_unique_name: "product_dimension".into(),
                 levels: vec!["Product Category".into(), "Product Name".into()],
                 level_meta: vec![],
+                fact_local_facts: vec![],
             }],
             ..Default::default()
         };
@@ -3447,6 +3695,7 @@ mod tests {
                 hierarchy_unique_name: "product_dimension".into(),
                 levels: vec!["Product Brand Name".into()],
                 level_meta: vec![],
+                fact_local_facts: vec![],
             }],
             date_roles: vec![],
         }
@@ -3653,12 +3902,14 @@ mod tests {
                         "Gender".into(),
                     ],
                     level_meta: vec![],
+                    fact_local_facts: vec![],
                 },
                 CatalogHierarchy {
                     dimension_unique_name: "Customer".into(),
                     hierarchy_unique_name: "Customer".into(),
                     levels: vec!["Customer State Name".into()],
                     level_meta: vec![],
+                    fact_local_facts: vec![],
                 },
             ],
             date_roles: vec![],
@@ -4027,6 +4278,7 @@ mod tests {
                 dimension_unique_name: "Store".into(),
                 levels: vec!["Store".into(), "Store Floor Space".into(), "Store Name".into()],
                 level_meta: vec![],
+                fact_local_facts: vec![],
             }],
             date_roles: vec![],
         }
@@ -4219,6 +4471,7 @@ mod tests {
                 dimension_unique_name: "Store".into(),
                 levels: vec!["Store Name".into(), "Store Number of Employees".into()],
                 level_meta: vec![],
+                fact_local_facts: vec![],
             }],
             date_roles: vec![],
         };
@@ -4628,6 +4881,7 @@ mod tests {
                     "Warehouse State".into(),
                 ],
                 level_meta: vec![],
+                fact_local_facts: vec![],
             }],
             date_roles: vec![],
         }
@@ -4704,6 +4958,7 @@ mod tests {
                 hierarchy_unique_name: "carrier_dimension".into(),
                 levels: vec!["Carrier State".into()],
                 level_meta: vec![],
+                fact_local_facts: vec![],
             }],
             date_roles: vec![],
         };
@@ -4752,6 +5007,7 @@ mod tests {
                     "Warehouse State".into(),
                 ],
                 level_meta: vec![],
+                fact_local_facts: vec![],
             }],
             date_roles: vec![],
         };
@@ -4950,6 +5206,7 @@ mod rule12_tests {
                     hierarchy_unique_name: "Store".into(),
                     levels: vec!["Store Name".into(), "Store City".into()],
                     level_meta: vec![],
+                    fact_local_facts: vec![],
                 },
             ],
             date_roles: vec![],

@@ -45,6 +45,7 @@ fn catalog() -> CatalogSnapshot {
                         expected_key_shape: None,
                     },
                 ],
+            fact_local_facts: vec![],
             },
             CatalogHierarchy {
                 dimension_unique_name: "date_week_dimension".to_string(),
@@ -58,6 +59,7 @@ fn catalog() -> CatalogSnapshot {
                         "sequential week number 1..N, not a YYYYWW key".to_string(),
                     ),
                 }],
+            fact_local_facts: vec![],
             },
         ],
         ..Default::default()
@@ -263,6 +265,7 @@ fn member_no_level_rejected_when_hierarchy_fully_enumerated() {
                 domain: Some(vec!["Y".to_string(), "N".to_string()]),
                 expected_key_shape: None,
             }],
+        fact_local_facts: vec![],
         }],
         ..Default::default()
     };
