@@ -1,8 +1,12 @@
 # Changelog
 
+## v0.16.0 — 2026-06-20
+
+SQL validator iter-2: two new SQL-text rules in `sql_validator.rs`. (1) **NonSelectStatement** (`non_select_statement`): rejects DML/DDL that does not begin with SELECT or WITH — catches single-statement UPDATE/DELETE/DROP/INSERT before it reaches the warehouse. (2) **WindowFunctionInSelect** (`window_function_in_select`): rejects SQL containing `OVER (` outside string/comment context — AtScale's MQO compiler never emits window functions; their presence indicates the agent injected a synthetic rank column; message guides to ORDER BY + LIMIT. Window check is suppressed when NonSelectStatement already fired. 37 sql_validator tests pass (23 new). (PRD-mcp-server-validator-migration iter-2)
+
 ## v0.15.0 — 2026-06-20
 
-SQL multi-statement validator: rejects multi-statement SQL before execution (R-MS rule). Server wiring in mqo-mcp-server pipeline.rs. New `sql_validator` module with `SqlRule::MultiStatement` enum, `SqlRejection` typed error, and `validate_sql()` function. `PipelineError::SqlRejected` variant added to server pipeline for clean typed rejection before warehouse execution. 14 regression tests covering multi-statement variants, semicolons-in-strings (admit case), empty SQL. No stack-trace text in rejections. (PRD-mcp-server-validator-migration iter-1+iter-2)
+SQL multi-statement validator: rejects multi-statement SQL before execution (R-MS rule). Server wiring in mqo-mcp-server pipeline.rs. New `sql_validator` module with `SqlRule::MultiStatement` enum, `SqlRejection` typed error, and `validate_sql()` function. `PipelineError::SqlRejected` variant added to server pipeline for clean typed rejection before warehouse execution. 14 regression tests covering multi-statement variants, semicolons-in-strings (admit case), empty SQL. No stack-trace text in rejections. (PRD-mcp-server-validator-migration iter-1)
 
 ## v0.14.0 — 2026-06-19
 
