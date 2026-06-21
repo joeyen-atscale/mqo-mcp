@@ -3230,9 +3230,12 @@ fn fuzzy_single_match(
                 continue;
             }
             let orig_lower = orig_label.to_lowercase();
-            // Skip exact matches (no correction needed).
+            // Exact match found — no correction needed. Return None immediately so we
+            // don't misfire a NearMissLevelLabel on a different-but-similar level that
+            // happens to share content tokens (e.g. "Warehouse Name" is exact but
+            // "Warehouse State Name" scores 0.91 JW and would become the sole hit).
             if orig_lower == supplied_lower {
-                continue;
+                return None;
             }
             let sim = jaro_winkler(&supplied_lower, &orig_lower);
             if sim < NEAR_MISS_JW_THRESHOLD {
@@ -5486,5 +5489,54 @@ mod rule12_tests {
             .filter(|r| matches!(&r.reason, RejectReason::NonCanonicalLevelLabel { .. }))
             .count();
         assert_eq!(count, 1, "PRD AC8/FR7: must emit exactly 1 rejection when level+bracket agree; got: {rejections:?}");
+    }
+
+    #[test]
+    fn rule11_exact_label_with_similar_neighbor_silent() {
+        // Regression: "Warehouse Name" is an exact level label in fulfilling_warehouse,
+        // but "Warehouse State Name" has JW ~0.91 and shares the "name" content token.
+        // The near-miss must NOT fire because the supplied value IS exact.
+        // (Bug: the old `continue` skipped the exact match and let the neighbor become
+        //  the sole hit; fix: `return None` on exact match suppresses the check entirely.)
+        let catalog = CatalogSnapshot {
+            measures: vec![],
+            dimensions: vec![CatalogDimension {
+                unique_name: "fulfilling_warehouse".into(),
+                subject_areas: vec![],
+            }],
+            hierarchies: vec![CatalogHierarchy {
+                dimension_unique_name: "fulfilling_warehouse".into(),
+                hierarchy_unique_name: "fulfilling_warehouse".into(),
+                levels: vec![
+                    "Warehouse Name".into(),
+                    "Warehouse Square Feet".into(),
+                    "Warehouse State Name".into(), // JW ~0.91 with "Warehouse Name"
+                    "Warehouse City".into(),
+                ],
+                level_meta: vec![],
+                fact_local_facts: vec![],
+            }],
+            date_roles: vec![],
+        };
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "fulfilling_warehouse".into(),
+                level: Some("Warehouse Name".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let near_miss_count = rejections
+            .iter()
+            .filter(|r| matches!(&r.reason, RejectReason::NearMissLevelLabel { .. }))
+            .count();
+        assert_eq!(
+            near_miss_count, 0,
+            "exact label 'Warehouse Name' must not trigger NearMissLevelLabel \
+             even when 'Warehouse State Name' (JW ~0.91) is in the same hierarchy; \
+             got: {rejections:?}"
+        );
     }
 }
