@@ -3089,6 +3089,24 @@ fn structured_err(e: &PipelineError) -> Value {
             json!({ "tool": tool, "detail": detail }),
         ),
         PipelineError::Io(d) => ("io_error", json!(d)),
+        PipelineError::Engine(mqo_auth_bridge::EngineError::EngineErrorRetriedExhausted {
+            attempts,
+            total_backoff_ms,
+            message,
+        }) => (
+            "engine_error_retried_exhausted",
+            json!({
+                "attempts": attempts,
+                "total_backoff_ms": total_backoff_ms,
+                "message": message,
+                "detail": format!(
+                    "The engine returned a transient error that persisted after {attempts} \
+                     attempt(s) ({total_backoff_ms}ms total backoff). The server already \
+                     retried this query — change the query shape or try a different backend \
+                     rather than re-issuing the same query."
+                ),
+            }),
+        ),
         PipelineError::Engine(e) => ("engine_error", json!(e.to_string())),
         PipelineError::NoBackendAvailable { dax, mdx, sql } => (
             "no_backend_available",

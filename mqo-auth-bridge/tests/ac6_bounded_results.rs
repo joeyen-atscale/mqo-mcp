@@ -120,6 +120,7 @@ fn make_config_budget(token_url: String, secret_var: &str, budget: usize) -> End
         max_result_rows: budget,
         query_deadline_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_SECS,
         query_deadline_max_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_MAX_SECS,
+        retry: Default::default(),
     }
 }
 

@@ -84,4 +84,26 @@ pub enum EngineError {
         /// One-line actionable hint for the agent or operator.
         hint: String,
     },
+
+    /// A transient infrastructure-class engine error was retried up to the
+    /// configured limit and still failed (R4).
+    ///
+    /// Distinct from a bare [`EngineError::Postgres`] / [`EngineError::ConnectionFailure`]
+    /// so the agent knows the server already retried and it should change query
+    /// shape, not re-issue the same query.
+    ///
+    /// `total_backoff_ms` is the cumulative wall-clock time spent in backoff
+    /// waits (excludes the attempt execution times themselves).
+    #[error(
+        "engine error persisted after {attempts} attempt(s) \
+         (total_backoff_ms={total_backoff_ms}): {message}"
+    )]
+    EngineErrorRetriedExhausted {
+        /// Number of attempts made (1 = no retry, 2+ = at least one retry).
+        attempts: u32,
+        /// Cumulative milliseconds spent sleeping between attempts.
+        total_backoff_ms: u64,
+        /// The underlying error message from the final attempt.
+        message: String,
+    },
 }

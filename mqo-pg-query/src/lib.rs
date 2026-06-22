@@ -145,6 +145,7 @@ pub fn run_query(cfg: &QueryConfig, sql: &str) -> Result<QueryOutput, QueryError
         // Default to the bridge default if not configured.
         query_deadline_secs: cfg.timeout_secs,
         query_deadline_max_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_MAX_SECS,
+        retry: Default::default(),
     };
 
     let executor = LiveExecutor::new(endpoint);
