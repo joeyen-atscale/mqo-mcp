@@ -170,6 +170,10 @@ pub struct CatalogContext {
     pub schema: Option<String>,
     /// Maps every column `unique_name` → its human-readable display label.
     pub labels: HashMap<String, String>,
+    /// Maps every level `unique_name` → its catalog `value_type` string
+    /// (e.g. `"integer"`, `"decimal"`). Only present when the catalog carries
+    /// the tag; absent means default-quoted (string) behaviour.
+    pub value_types: HashMap<String, String>,
 }
 
 impl CatalogContext {
@@ -184,23 +188,31 @@ impl CatalogContext {
             .get("schema")
             .and_then(serde_json::Value::as_str)
             .map(str::to_string);
-        let labels = v
+        let columns_arr: &[serde_json::Value] = v
             .get("columns")
             .and_then(serde_json::Value::as_array)
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|col| {
-                        let un = col.get("unique_name")?.as_str()?.to_string();
-                        let label = col.get("label")?.as_str()?.to_string();
-                        Some((un, label))
-                    })
-                    .collect()
+            .map_or_else(|| [].as_slice(), Vec::as_slice);
+        let labels: HashMap<String, String> = columns_arr
+            .iter()
+            .filter_map(|col| {
+                let un = col.get("unique_name")?.as_str()?.to_string();
+                let label = col.get("label")?.as_str()?.to_string();
+                Some((un, label))
             })
-            .unwrap_or_default();
+            .collect();
+        let value_types: HashMap<String, String> = columns_arr
+            .iter()
+            .filter_map(|col| {
+                let un = col.get("unique_name")?.as_str()?.to_string();
+                let vt = col.get("value_type")?.as_str()?.to_string();
+                Some((un, vt))
+            })
+            .collect();
         Self {
             catalog,
             schema,
             labels,
+            value_types,
         }
     }
 }
@@ -318,6 +330,40 @@ fn build_order_clause(
     Some(format!("ORDER BY {}", terms.join(", ")))
 }
 
+/// True when a catalog `value_type` denotes a numeric column (emit literals bare).
+fn is_numeric_value_type(vt: &str) -> bool {
+    matches!(
+        vt.to_ascii_lowercase().as_str(),
+        "integer"
+            | "int"
+            | "bigint"
+            | "long"
+            | "smallint"
+            | "tinyint"
+            | "decimal"
+            | "numeric"
+            | "number"
+            | "float"
+            | "double"
+            | "real"
+    )
+}
+
+/// Render a member literal: bare when the level is numeric AND the value parses
+/// as a number; otherwise single-quoted (with `''` escaping) — the safe default.
+///
+/// FR3: a non-numeric value on a numeric level falls back to quoted — never
+/// emits a bare malformed token.
+fn render_member_literal(value: &str, value_type: Option<&str>) -> String {
+    let numeric = value_type.is_some_and(is_numeric_value_type)
+        && value.trim().parse::<f64>().is_ok();
+    if numeric {
+        value.trim().to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "''"))
+    }
+}
+
 /// Build a SQL WHERE clause from MQO filters.
 ///
 /// Returns `None` when there are no filters (or all are untranslatable to SQL).
@@ -341,7 +387,7 @@ fn build_where_clause(
 
 /// Translate a single MQO filter to a SQL predicate string.
 ///
-/// Returns `None` for filter types that are not expressible in AtScale SQL
+/// Returns `None` for filter types that are not expressible in `AtScale` SQL
 /// (e.g. `CalcGroupMember`).
 fn filter_to_sql(
     filter: &mqo_spec::Filter,
@@ -357,12 +403,12 @@ fn filter_to_sql(
             }
             let col = catalog
                 .and_then(|c| c.labels.get(level))
-                .map(|label| format!("\"{label}\""))
-                .unwrap_or_else(|| quote_last_segment(level));
+                .map_or_else(|| quote_last_segment(level), |label| format!("\"{label}\""));
             let op = if *exclude { "NOT IN" } else { "IN" };
+            let vt = catalog.and_then(|c| c.value_types.get(level)).map(String::as_str);
             let list = members
                 .iter()
-                .map(|m| format!("'{}'", m.replace('\'', "''")))
+                .map(|m| render_member_literal(m, vt))
                 .collect::<Vec<_>>()
                 .join(", ");
             Some(format!("{col} {op} ({list})"))
@@ -373,16 +419,16 @@ fn filter_to_sql(
                 return None;
             }
             // Resolve the display label via the bound dimension matching this hierarchy.
-            let col = bound
-                .dimensions
-                .iter()
-                .find(|d| d.hierarchy == *hierarchy)
+            let bound_dim = bound.dimensions.iter().find(|d| d.hierarchy == *hierarchy);
+            let col = bound_dim
                 .and_then(|d| catalog.and_then(|c| c.labels.get(&d.unique_name)))
-                .map(|label| format!("\"{label}\""))
-                .unwrap_or_else(|| format!("\"{hierarchy}\""));
+                .map_or_else(|| format!("\"{hierarchy}\""), |label| format!("\"{label}\""));
+            let vt = bound_dim
+                .and_then(|d| catalog.and_then(|c| c.value_types.get(&d.unique_name)))
+                .map(String::as_str);
             let list = members
                 .iter()
-                .map(|m| format!("'{}'", m.replace('\'', "''")))
+                .map(|m| render_member_literal(m, vt))
                 .collect::<Vec<_>>()
                 .join(", ");
             Some(format!("{col} IN ({list})"))
@@ -391,8 +437,7 @@ fn filter_to_sql(
         Filter::Range { level, lo, hi } => {
             let col = catalog
                 .and_then(|c| c.labels.get(level))
-                .map(|label| format!("\"{label}\""))
-                .unwrap_or_else(|| quote_last_segment(level));
+                .map_or_else(|| quote_last_segment(level), |label| format!("\"{label}\""));
             let lo_sql = match lo {
                 RangeBound::Number(n) => format!("{n}"),
                 RangeBound::Text(s) => format!("'{}'", s.replace('\'', "''")),
@@ -595,8 +640,8 @@ mod tests {
         let dimensions = dim_names
             .iter()
             .map(|(unique_name, hierarchy)| BoundDimension {
-                unique_name: unique_name.to_string(),
-                hierarchy: hierarchy.to_string(),
+                unique_name: (*unique_name).to_string(),
+                hierarchy: (*hierarchy).to_string(),
             })
             .collect();
 
@@ -609,7 +654,7 @@ mod tests {
 
     fn low_card_stats(levels: &[(&str, u64)]) -> StatBundle {
         StatBundle {
-            level_cardinalities: levels.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
+            level_cardinalities: levels.iter().map(|(k, v)| ((*k).to_string(), *v)).collect(),
             shape_flags: ShapeFlags::default(),
         }
     }
@@ -661,7 +706,7 @@ mod tests {
         let mqo = make_mqo("sales");
         let bound = make_bound(mqo, &[]);
         let stats = StatBundle {
-            level_cardinalities: Default::default(),
+            level_cardinalities: HashMap::default(),
             shape_flags: ShapeFlags {
                 asymmetric_axes: true,
                 ..Default::default()
@@ -677,7 +722,7 @@ mod tests {
         let mqo = make_mqo("sales");
         let bound = make_bound(mqo, &[]);
         let stats = StatBundle {
-            level_cardinalities: Default::default(),
+            level_cardinalities: HashMap::default(),
             shape_flags: ShapeFlags {
                 cellset_requested: true,
                 ..Default::default()
@@ -899,6 +944,7 @@ mod tests {
                 ),
             ]
             .into(),
+            value_types: HashMap::default(),
         };
 
         let proj = build_sql_projection(&bound, Some(&ctx));
@@ -1075,6 +1121,7 @@ mod tests {
                 ("fulfilling_warehouse.[Warehouse Name]".to_string(), "Warehouse Name".to_string()),
                 ("fulfilling_warehouse.[Warehouse City]".to_string(), "Warehouse City".to_string()),
             ].into(),
+            value_types: HashMap::default(),
         };
 
         let proj = build_sql_projection(&bound, Some(&ctx));
@@ -1189,10 +1236,236 @@ mod tests {
                 "Carrier".to_string(),
             )]
             .into(),
+            value_types: HashMap::default(),
         };
 
         let proj = build_sql_projection(&bound, Some(&ctx));
         assert!(proj.contains(r#"ORDER BY "Carrier" ASC"#), "proj = {proj}");
         assert!(proj.ends_with("LIMIT 10"), "proj = {proj}");
+    }
+
+    // ── Numeric member-filter quoting (PRD-mqo-sql-backend-member-filter-type-quoting) ──
+
+    /// AC1: `MemberLevel` filter on an integer-typed level emits a bare numeric literal.
+    /// Regression witness: `household_demographics.[Income Band]` = "9" must emit `IN (9)`.
+    #[test]
+    fn numeric_member_level_single_emits_bare_literal() {
+        let mut mqo = make_mqo("tpcds_benchmark_model");
+        mqo.measures = vec![MeasureRef {
+            unique_name: "tpcds_benchmark_model.customer_count".to_string(),
+        }];
+        mqo.dimensions.push(LevelSelection {
+            hierarchy: "household_demographics".to_string(),
+            level: "Income Band".to_string(),
+        });
+        mqo.filters.push(Filter::MemberLevel {
+            hierarchy: "household_demographics".to_string(),
+            level: "household_demographics.[Income Band]".to_string(),
+            members: vec!["9".to_string()],
+            exclude: false,
+        });
+
+        let bound = BoundMqo {
+            measures: vec![BoundMeasure {
+                unique_name: "tpcds_benchmark_model.customer_count".to_string(),
+                is_calc: false,
+                semi_additive: false,
+                required_dimension: None,
+            }],
+            dimensions: vec![BoundDimension {
+                unique_name: "household_demographics.[Income Band]".to_string(),
+                hierarchy: "household_demographics".to_string(),
+            }],
+            mqo,
+        };
+
+        let ctx = CatalogContext {
+            catalog: Some("atscale_catalogs".to_string()),
+            schema: Some("tpcds_Snowflake".to_string()),
+            labels: [
+                (
+                    "tpcds_benchmark_model.customer_count".to_string(),
+                    "Customer Count".to_string(),
+                ),
+                (
+                    "household_demographics.[Income Band]".to_string(),
+                    "Income Band".to_string(),
+                ),
+            ]
+            .into(),
+            value_types: [(
+                "household_demographics.[Income Band]".to_string(),
+                "integer".to_string(),
+            )]
+            .into(),
+        };
+
+        let proj = build_sql_projection(&bound, Some(&ctx));
+        assert!(
+            proj.contains(r#""Income Band" IN (9)"#),
+            "expected bare numeric IN (9), got: {proj}"
+        );
+        assert!(
+            !proj.contains("'9'"),
+            "must NOT contain quoted '9': {proj}"
+        );
+    }
+
+    /// AC2: `MemberLevel` filter on an integer-typed level with multiple members emits all bare.
+    #[test]
+    fn numeric_member_level_multi_emits_bare_in_list() {
+        let mut mqo = make_mqo("tpcds_benchmark_model");
+        mqo.measures = vec![MeasureRef {
+            unique_name: "tpcds_benchmark_model.customer_count".to_string(),
+        }];
+        mqo.dimensions.push(LevelSelection {
+            hierarchy: "household_demographics".to_string(),
+            level: "Income Band".to_string(),
+        });
+        mqo.filters.push(Filter::MemberLevel {
+            hierarchy: "household_demographics".to_string(),
+            level: "household_demographics.[Income Band]".to_string(),
+            members: vec!["9".to_string(), "10".to_string(), "11".to_string()],
+            exclude: false,
+        });
+
+        let bound = BoundMqo {
+            measures: vec![BoundMeasure {
+                unique_name: "tpcds_benchmark_model.customer_count".to_string(),
+                is_calc: false,
+                semi_additive: false,
+                required_dimension: None,
+            }],
+            dimensions: vec![BoundDimension {
+                unique_name: "household_demographics.[Income Band]".to_string(),
+                hierarchy: "household_demographics".to_string(),
+            }],
+            mqo,
+        };
+
+        let ctx = CatalogContext {
+            catalog: Some("atscale_catalogs".to_string()),
+            schema: Some("tpcds_Snowflake".to_string()),
+            labels: [(
+                "household_demographics.[Income Band]".to_string(),
+                "Income Band".to_string(),
+            )]
+            .into(),
+            value_types: [(
+                "household_demographics.[Income Band]".to_string(),
+                "integer".to_string(),
+            )]
+            .into(),
+        };
+
+        let proj = build_sql_projection(&bound, Some(&ctx));
+        assert!(
+            proj.contains(r#""Income Band" IN (9, 10, 11)"#),
+            "expected bare multi-member IN (9, 10, 11), got: {proj}"
+        );
+        assert!(
+            !proj.contains("'9'") && !proj.contains("'10'") && !proj.contains("'11'"),
+            "must NOT contain quoted members: {proj}"
+        );
+    }
+
+    /// AC3: `MemberLevel` filter on a level with NO `value_type` emits single-quoted (unchanged behaviour).
+    #[test]
+    fn string_member_level_no_value_type_emits_quoted() {
+        let mut mqo = make_mqo("tpcds_benchmark_model");
+        mqo.projection = true;
+        mqo.measures = vec![];
+        mqo.dimensions.push(LevelSelection {
+            hierarchy: "store".to_string(),
+            level: "Store City".to_string(),
+        });
+        mqo.filters.push(Filter::MemberLevel {
+            hierarchy: "store".to_string(),
+            level: "store.[Store City]".to_string(),
+            members: vec!["Midway".to_string()],
+            exclude: false,
+        });
+
+        let bound = BoundMqo {
+            measures: vec![],
+            dimensions: vec![BoundDimension {
+                unique_name: "store.[Store City]".to_string(),
+                hierarchy: "store".to_string(),
+            }],
+            mqo,
+        };
+
+        let ctx = CatalogContext {
+            catalog: None,
+            schema: None,
+            labels: [("store.[Store City]".to_string(), "Store City".to_string())].into(),
+            // No value_types entry for this level → defaults to quoted
+            value_types: HashMap::default(),
+        };
+
+        let proj = build_sql_projection(&bound, Some(&ctx));
+        assert!(
+            proj.contains(r#""Store City" IN ('Midway')"#),
+            "expected quoted string member, got: {proj}"
+        );
+    }
+
+    /// AC4 (FR3): Non-numeric value on a numeric-typed level falls back to quoted — no bare token.
+    #[test]
+    fn non_numeric_value_on_integer_level_falls_back_to_quoted() {
+        let mut mqo = make_mqo("tpcds_benchmark_model");
+        mqo.measures = vec![MeasureRef {
+            unique_name: "tpcds_benchmark_model.customer_count".to_string(),
+        }];
+        mqo.dimensions.push(LevelSelection {
+            hierarchy: "household_demographics".to_string(),
+            level: "Income Band".to_string(),
+        });
+        mqo.filters.push(Filter::MemberLevel {
+            hierarchy: "household_demographics".to_string(),
+            level: "household_demographics.[Income Band]".to_string(),
+            members: vec!["east".to_string()],
+            exclude: false,
+        });
+
+        let bound = BoundMqo {
+            measures: vec![BoundMeasure {
+                unique_name: "tpcds_benchmark_model.customer_count".to_string(),
+                is_calc: false,
+                semi_additive: false,
+                required_dimension: None,
+            }],
+            dimensions: vec![BoundDimension {
+                unique_name: "household_demographics.[Income Band]".to_string(),
+                hierarchy: "household_demographics".to_string(),
+            }],
+            mqo,
+        };
+
+        let ctx = CatalogContext {
+            catalog: Some("atscale_catalogs".to_string()),
+            schema: Some("tpcds_Snowflake".to_string()),
+            labels: [(
+                "household_demographics.[Income Band]".to_string(),
+                "Income Band".to_string(),
+            )]
+            .into(),
+            value_types: [(
+                "household_demographics.[Income Band]".to_string(),
+                "integer".to_string(),
+            )]
+            .into(),
+        };
+
+        let proj = build_sql_projection(&bound, Some(&ctx));
+        assert!(
+            proj.contains("'east'"),
+            "non-numeric value on integer level must be quoted, got: {proj}"
+        );
+        // Must NOT emit bare `east` token (which would be invalid SQL)
+        assert!(
+            !proj.contains("IN (east)"),
+            "must NOT emit bare non-numeric token: {proj}"
+        );
     }
 }
