@@ -2448,30 +2448,93 @@ fn check_channel_scope_mismatch(
         }
 
         if let Some(sibling) = best_sibling {
-            let named_channel = sibling.channel_scope.as_ref()
-                .and_then(|s| s.first())
-                .cloned()
-                .unwrap_or_default();
-            let suggested_name = sibling.display_name().to_string();
-            rejections.push(ParamRejection::new(
-                mref.unique_name.clone(),
-                FieldClass::Measure,
-                RejectReason::ChannelScopeMismatch {
-                    measure: bound_display.to_string(),
-                    named_channel: named_channel.clone(),
-                    suggested_measure: suggested_name.clone(),
-                },
-                vec![Suggestion {
-                    name: suggested_name.clone(),
-                    similarity: 0.9,
-                    note: Some(format!(
-                        "[{bound_display}] aggregates all channels \
-                         ({}); use [{suggested_name}] which is scoped to \
-                         [{named_channel}] only.",
-                        scope.join(", ")
-                    )),
-                }],
-            ));
+            // ----------------------------------------------------------------
+            // R1/R2 (PRD-mqo-rule7-conformed-dimension-allowance):
+            // Before rejecting, evaluate whether any requested dimension is
+            // channel-specific (has fact_local_facts that is a strict subset
+            // of the measure's channel scope).  If every dimension is
+            // conformed (empty fact_local_facts) or has no channel-specific
+            // binding, the canonical all-channel measure is correct — skip
+            // the rejection.
+            // ----------------------------------------------------------------
+            let mut channel_specific_driver: Option<String> = None;
+            let mut conformance_unknown_dims: Vec<String> = Vec::new();
+
+            for dref in &mqo.dimensions {
+                let hier_norm = normalize(&dref.unique_name);
+                let hier = catalog.hierarchies.iter().find(|h| {
+                    normalize(&h.hierarchy_unique_name) == hier_norm
+                });
+
+                match hier {
+                    None => {
+                        // No catalog entry for this hierarchy — unknown binding.
+                        // Fail-open (R2: "level with no captured channel binding
+                        // is treated as conformed"), but record for R5 diagnostic.
+                        conformance_unknown_dims.push(dref.unique_name.clone());
+                    }
+                    Some(h) if h.fact_local_facts.is_empty() => {
+                        // Conformed — binds to all facts; no channel restriction.
+                        // (R2: empty fact_local_facts → conformed → allow)
+                    }
+                    Some(h) => {
+                        // Check if the dimension's fact bindings are a strict
+                        // subset of the measure's channel scope (R2).
+                        let dim_facts: std::collections::BTreeSet<&str> =
+                            h.fact_local_facts.iter().map(String::as_str).collect();
+                        // Strict subset: dim_facts ⊂ scope_set
+                        if dim_facts.len() < scope_set.len()
+                            && dim_facts.iter().all(|f| scope_set.contains(*f))
+                        {
+                            // This dimension is channel-specific and conflicts.
+                            channel_specific_driver = Some(dref.unique_name.clone());
+                            break;
+                        }
+                        // dim_facts == scope_set (or a superset) → conformed
+                    }
+                }
+            }
+
+            // R5: if dimension bindings are absent but measure scope is present,
+            // emit a one-line operator diagnostic (but still allow).
+            if channel_specific_driver.is_none() && !conformance_unknown_dims.is_empty() {
+                // Log the diagnostic at trace level (no-std-safe: eprintln).
+                // This satisfies R5 without adding a new dependency.
+                eprintln!(
+                    "[mqo-param-validator] channel_conformance_unknown: measure={bound_display} \
+                     dims_without_binding={:?} — treating as conformed (fail-open)",
+                    conformance_unknown_dims
+                );
+            }
+
+            if let Some(ref driver) = channel_specific_driver {
+                // At least one channel-specific dimension conflicts — reject (R3).
+                let named_channel = sibling.channel_scope.as_ref()
+                    .and_then(|s| s.first())
+                    .cloned()
+                    .unwrap_or_default();
+                let suggested_name = sibling.display_name().to_string();
+                rejections.push(ParamRejection::new(
+                    mref.unique_name.clone(),
+                    FieldClass::Measure,
+                    RejectReason::ChannelScopeMismatch {
+                        measure: bound_display.to_string(),
+                        named_channel: named_channel.clone(),
+                        suggested_measure: suggested_name.clone(),
+                    },
+                    vec![Suggestion {
+                        name: suggested_name.clone(),
+                        similarity: 0.9,
+                        note: Some(format!(
+                            "[{bound_display}] aggregates all channels \
+                             ({}); use [{suggested_name}] which is scoped to \
+                             [{named_channel}] only. (conformance_driver: {driver})",
+                            scope.join(", ")
+                        )),
+                    }],
+                ));
+            }
+            // else: all dimensions are conformed → allow the canonical measure (R1).
         }
     }
 }
@@ -3712,19 +3775,37 @@ mod tests {
         }
     }
 
-    /// AC3: guard flags all-channel measure when channel-scoped sibling exists.
+    /// AC3 (updated for PRD-mqo-rule7-conformed-dimension-allowance):
+    /// guard fires for all-channel measure ONLY when a channel-specific dimension
+    /// is present (fact_local_facts ⊂ measure scope).  With a conformed dimension
+    /// (empty fact_local_facts), the canonical measure is now allowed.
     #[test]
-    fn channel_scope_mismatch_fires_for_all_channel_pick() {
-        let catalog = channel_scope_catalog();
-        // Agent bound the all-channel total
+    fn channel_scope_mismatch_fires_for_channel_specific_dimension() {
+        // Build a catalog that also has a store-local hierarchy so RULE 7 can
+        // detect the channel conflict.
+        let mut catalog = channel_scope_catalog();
+        // Add a store-local dimension (binds only to store_sales — strict subset).
+        catalog.dimensions.push(CatalogDimension {
+            unique_name: "store_dimension".into(),
+            subject_areas: vec![],
+        });
+        catalog.hierarchies.push(CatalogHierarchy {
+            dimension_unique_name: "store_dimension".into(),
+            hierarchy_unique_name: "store_dimension".into(),
+            levels: vec!["Store Name".into()],
+            level_meta: vec![],
+            fact_local_facts: vec!["store_sales".into()],  // strict subset of {store,catalog,web}
+        });
+
+        // Agent bound the all-channel total WITH a store-local dimension.
         let mqo = BoundMqoInput {
             measures: vec![MqoMeasureRef {
                 unique_name: "tpcds_benchmark_model.total_quantity_sold".into(),
                 aggregation: None,
             }],
             dimensions: vec![MqoDimensionRef {
-                unique_name: "product_dimension".into(),
-                level: Some("Product Brand Name".into()),
+                unique_name: "store_dimension".into(),
+                level: Some("Store Name".into()),
                 ..Default::default()
             }],
             filters: vec![],
@@ -3735,7 +3816,7 @@ mod tests {
         });
         assert!(
             mismatch.is_some(),
-            "ChannelScopeMismatch should fire for all-channel measure with channel sibling, got {:?}",
+            "ChannelScopeMismatch should fire for all-channel measure with channel-specific dimension and sibling, got {:?}",
             rejections
         );
         // AC6: suggestion must name a channel-scoped sibling.
@@ -3864,6 +3945,167 @@ mod tests {
             rejections
         );
     }
+    // ── RULE 7 new tests (PRD-mqo-rule7-conformed-dimension-allowance) ──────
+
+    /// AC1 (PRD-mqo-rule7-conformed-dimension-allowance):
+    /// All-channel measure + conformed dimension (empty fact_local_facts) →
+    /// ALLOWED (no ChannelScopeMismatch), even when a single-channel sibling exists.
+    #[test]
+    fn rule7_conformed_dimension_allows_all_channel_measure() {
+        let catalog = channel_scope_catalog();
+        // product_dimension has fact_local_facts: [] → conformed.
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef {
+                unique_name: "tpcds_benchmark_model.total_quantity_sold".into(),
+                aggregation: None,
+            }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "product_dimension".into(),
+                level: Some("Product Brand Name".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let mismatch = rejections.iter().find(|r| {
+            matches!(r.reason, RejectReason::ChannelScopeMismatch { .. })
+        });
+        assert!(
+            mismatch.is_none(),
+            "AC1: conformed dimension must ALLOW all-channel measure (no ChannelScopeMismatch), got {:?}",
+            rejections
+        );
+    }
+
+    /// AC2 (PRD-mqo-rule7-conformed-dimension-allowance):
+    /// All-channel measure + genuinely channel-specific dimension → still REJECTED.
+    #[test]
+    fn rule7_channel_specific_dimension_rejects_all_channel_measure() {
+        let mut catalog = channel_scope_catalog();
+        // Add a store-local dimension — binds only to store_sales.
+        catalog.dimensions.push(CatalogDimension {
+            unique_name: "store_dimension".into(),
+            subject_areas: vec![],
+        });
+        catalog.hierarchies.push(CatalogHierarchy {
+            dimension_unique_name: "store_dimension".into(),
+            hierarchy_unique_name: "store_dimension".into(),
+            levels: vec!["Store Type".into()],
+            level_meta: vec![],
+            fact_local_facts: vec!["store_sales".into()],
+        });
+
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef {
+                unique_name: "tpcds_benchmark_model.total_quantity_sold".into(),
+                aggregation: None,
+            }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "store_dimension".into(),
+                level: Some("Store Type".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let mismatch = rejections.iter().find(|r| {
+            matches!(r.reason, RejectReason::ChannelScopeMismatch { .. })
+        });
+        assert!(
+            mismatch.is_some(),
+            "AC2: channel-specific dimension must REJECT all-channel measure, got {:?}",
+            rejections
+        );
+        if let Some(r) = mismatch {
+            if let RejectReason::ChannelScopeMismatch { ref suggested_measure, ref named_channel, .. } =
+                r.reason
+            {
+                assert!(!suggested_measure.is_empty(), "AC2: suggested_measure must be named");
+                assert!(!named_channel.is_empty(), "AC2: named_channel must be set");
+                assert!(
+                    suggested_measure.contains("Quantity Sold"),
+                    "AC2: suggested should be a quantity measure, got: {suggested_measure}"
+                );
+            }
+        }
+    }
+
+    /// AC4 (PRD-mqo-rule7-conformed-dimension-allowance):
+    /// Dimension with no captured channel binding (not in catalog hierarchies) on a
+    /// model whose measure scope is present → ALLOWED (fail-open) and diagnostic emitted.
+    #[test]
+    fn rule7_unknown_dimension_binding_allows_all_channel_measure_failopen() {
+        let catalog = channel_scope_catalog();
+        // Use a dimension name that is NOT in catalog.hierarchies
+        // (no entry → unknown binding → fail-open).
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef {
+                unique_name: "tpcds_benchmark_model.total_quantity_sold".into(),
+                aggregation: None,
+            }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "unknown_dimension_xyz".into(),
+                level: Some("Some Level".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let mismatch = rejections.iter().find(|r| {
+            matches!(r.reason, RejectReason::ChannelScopeMismatch { .. })
+        });
+        assert!(
+            mismatch.is_none(),
+            "AC4: dimension with no captured channel binding must fail-open (allow), got {:?}",
+            rejections
+        );
+    }
+
+    /// Additional: conformed dimension with fact_local_facts covering all 3 channels
+    /// (full set, not a strict subset) → still ALLOWED.
+    #[test]
+    fn rule7_fully_covered_dimension_allows_all_channel_measure() {
+        let mut catalog = channel_scope_catalog();
+        // Add a dimension whose fact_local_facts covers all 3 channels (NOT a strict subset).
+        catalog.dimensions.push(CatalogDimension {
+            unique_name: "cross_channel_dim".into(),
+            subject_areas: vec![],
+        });
+        catalog.hierarchies.push(CatalogHierarchy {
+            dimension_unique_name: "cross_channel_dim".into(),
+            hierarchy_unique_name: "cross_channel_dim".into(),
+            levels: vec!["Channel Name".into()],
+            level_meta: vec![],
+            fact_local_facts: vec![
+                "store_sales".into(),
+                "catalog_sales".into(),
+                "web_sales".into(),
+            ],
+        });
+
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef {
+                unique_name: "tpcds_benchmark_model.total_quantity_sold".into(),
+                aggregation: None,
+            }],
+            dimensions: vec![MqoDimensionRef {
+                unique_name: "cross_channel_dim".into(),
+                level: Some("Channel Name".into()),
+                ..Default::default()
+            }],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let mismatch = rejections.iter().find(|r| {
+            matches!(r.reason, RejectReason::ChannelScopeMismatch { .. })
+        });
+        assert!(
+            mismatch.is_none(),
+            "dimension covering all channels must ALLOW all-channel measure, got {:?}",
+            rejections
+        );
+    }
+
     // ── RULE 6: synthetic rank / row-number guard ──────────────────────────
 
     /// Minimal catalog for RULE6 tests: real measures, a "Net Profit Tier"
