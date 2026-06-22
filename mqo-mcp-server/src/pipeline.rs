@@ -154,6 +154,12 @@ pub enum PipelineError {
         cap: usize,
     },
 
+    /// A projection MQO carries a `limit` but no `order`, making the top-N
+    /// non-deterministic.  The caller must add a well-defined `order` so that
+    /// the TOPN is deterministic.  No execution occurred.
+    #[error("projection_unordered_limit: limit is set but order is absent — result is non-deterministic")]
+    ProjectionUnorderedLimit,
+
     /// The requested model is a non-queryable dimension — it exists in the
     /// catalog but has no XMLA cube mapping.  The caller should retry against
     /// one of the cubes listed in `candidate_cubes`.
@@ -239,6 +245,7 @@ pub fn error_class(e: &PipelineError) -> &'static str {
         | PipelineError::CrossFactIncompatible { .. }
         | PipelineError::ParamRejected { .. }
         | PipelineError::ProjectionTooLarge { .. }
+        | PipelineError::ProjectionUnorderedLimit
         | PipelineError::NonQueryableDimension { .. }
         | PipelineError::DimensionNotMaterialized { .. }
         | PipelineError::SqlRejected { .. }

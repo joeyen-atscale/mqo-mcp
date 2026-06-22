@@ -85,6 +85,57 @@ pub struct ProjectionTooLarge {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+/// The outcome of `check_projection_guard` — the limit-and-order-aware entry
+/// point for the projection cardinality check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectionGuardDecision {
+    /// Projection is admitted.  Either (a) the estimated cardinality is within
+    /// cap, or (b) it carries both `limit >= 1` and a non-empty `order` (an
+    /// ordered top-N is bounded by the TOPN the compiler already pushes).
+    Admit,
+    /// Projection is declined because the estimated cardinality exceeds the cap
+    /// and no ordered limit was set.  The caller should return
+    /// `projection_too_large`.
+    TooLarge(ProjectionTooLarge),
+    /// Projection carries a `limit` but no `order`.  A top-N without ordering is
+    /// non-deterministic.  The caller should return `projection_unordered_limit`.
+    UnorderedLimit,
+}
+
+/// Limit-and-order-aware pre-execution guard for projection MQOs
+/// (PRD-mqo-projection-cardinality-respect-limit, R1/R2/R3).
+///
+/// This is the PREFERRED entry point over `check_projection_cardinality`.
+/// It adds an early-admit path for ordered, bounded projections:
+///
+/// | `limit`       | `order`        | Result                         |
+/// |---------------|----------------|--------------------------------|
+/// | `Some(n>=1)`  | non-empty      | `Admit` (R1 — safe TOPN)       |
+/// | `Some(_)`     | empty/absent   | `UnorderedLimit` (R3)          |
+/// | `None`        | any            | cardinality estimate vs cap    |
+///
+/// When `limit` is `None`, delegates to `check_projection_cardinality` for the
+/// full level-cardinality estimate (R2 — existing behavior preserved).
+pub fn check_projection_guard(
+    mqo: &Mqo,
+    catalog: &CatalogSnapshot,
+    cap: usize,
+) -> ProjectionGuardDecision {
+    match (mqo.limit, &mqo.order) {
+        // R1: ordered + bounded → admit regardless of level cardinality.
+        (Some(n), Some(order)) if n >= 1 && !order.is_empty() => {
+            ProjectionGuardDecision::Admit
+        }
+        // R3: limit present but order absent/empty → non-deterministic top-N.
+        (Some(_), _) => ProjectionGuardDecision::UnorderedLimit,
+        // R2: unbounded → fall through to the full cardinality guard.
+        (None, _) => match check_projection_cardinality(mqo, catalog, cap) {
+            Ok(()) => ProjectionGuardDecision::Admit,
+            Err(too_large) => ProjectionGuardDecision::TooLarge(too_large),
+        },
+    }
+}
+
 /// Pre-execution cardinality check for projection MQOs.
 ///
 /// Returns `Ok(())` when the estimated distinct cardinality is within `cap`,
@@ -1243,6 +1294,138 @@ mod tests {
             result.is_ok(),
             "Range filter on non-projected hierarchy must reduce estimate or demote to advisory; \
              products-price-above-70 shape: 206021 / 10 ≈ 20602 < 50000; got: {result:?}"
+        );
+    }
+
+    // ── PRD-mqo-projection-cardinality-respect-limit: check_projection_guard ─
+
+    use super::{check_projection_guard, ProjectionGuardDecision};
+    use mqo_spec::{OrderKey, SortDirection};
+
+    /// Build a high-cardinality catalog (50,001 members — above the 50,000 default cap).
+    fn make_high_cardinality_catalog() -> CatalogSnapshot {
+        make_catalog_with_known_cardinality(
+            "customer_dimension",
+            "Customer Id",
+            0,
+            Some(50_001),
+        )
+    }
+
+    /// Build a projection MQO with configurable limit and order.
+    fn make_guard_mqo(
+        limit: Option<u64>,
+        order: Option<Vec<OrderKey>>,
+    ) -> Mqo {
+        Mqo {
+            model: "tpcds_benchmark_model".to_string(),
+            measures: vec![],
+            dimensions: vec![LevelSelection {
+                hierarchy: "customer_dimension".to_string(),
+                level: "Customer Id".to_string(),
+            }],
+            filters: vec![],
+            time_intelligence: vec![],
+            order,
+            limit,
+            non_empty: false,
+            projection: true,
+        }
+    }
+
+    fn one_order() -> Vec<OrderKey> {
+        vec![OrderKey {
+            key: "customer_dimension.[Customer Id]".to_string(),
+            direction: SortDirection::Asc,
+        }]
+    }
+
+    // AC (a): limit >= 1 + non-empty order → Admit, regardless of level cardinality.
+    // This is the core fix: a high-cardinality level that previously was rejected
+    // with projection_too_large must now be admitted when limit+order are set.
+    #[test]
+    fn guard_ordered_bounded_projection_is_admitted() {
+        let catalog = make_high_cardinality_catalog();
+        // Without the fix (old check_projection_cardinality), this would be Err.
+        // With the limit-aware guard, it must be Admit.
+        let decision = check_projection_guard(
+            &make_guard_mqo(Some(20), Some(one_order())),
+            &catalog,
+            50_000,
+        );
+        assert_eq!(
+            decision,
+            ProjectionGuardDecision::Admit,
+            "ordered + bounded projection over a high-cardinality level must be admitted (R1)"
+        );
+    }
+
+    // AC (b): limit set but order absent → UnorderedLimit (R3).
+    #[test]
+    fn guard_limit_without_order_returns_unordered_limit() {
+        let catalog = make_high_cardinality_catalog();
+        // order is None → non-deterministic top-N → UnorderedLimit
+        let decision = check_projection_guard(
+            &make_guard_mqo(Some(20), None),
+            &catalog,
+            50_000,
+        );
+        assert_eq!(
+            decision,
+            ProjectionGuardDecision::UnorderedLimit,
+            "limit without order must return UnorderedLimit (R3)"
+        );
+    }
+
+    // AC (b) variant: limit set but order is Some(empty vec) → UnorderedLimit.
+    #[test]
+    fn guard_limit_with_empty_order_returns_unordered_limit() {
+        let catalog = make_high_cardinality_catalog();
+        let decision = check_projection_guard(
+            &make_guard_mqo(Some(20), Some(vec![])),
+            &catalog,
+            50_000,
+        );
+        assert_eq!(
+            decision,
+            ProjectionGuardDecision::UnorderedLimit,
+            "limit with empty order vec must return UnorderedLimit (R3)"
+        );
+    }
+
+    // AC (c): no limit → TooLarge (existing behavior preserved).
+    #[test]
+    fn guard_no_limit_high_cardinality_returns_too_large() {
+        let catalog = make_high_cardinality_catalog();
+        let decision = check_projection_guard(
+            &make_guard_mqo(None, None),
+            &catalog,
+            50_000,
+        );
+        assert!(
+            matches!(decision, ProjectionGuardDecision::TooLarge(_)),
+            "unbounded projection over high-cardinality level must return TooLarge (R2); got: {decision:?}"
+        );
+    }
+
+    // AC (c) variant: no limit, low-cardinality level → Admit (existing passing behavior preserved).
+    #[test]
+    fn guard_no_limit_low_cardinality_is_admitted() {
+        let catalog = make_catalog_with_known_cardinality(
+            "customer_dimension",
+            "Customer Id",
+            0,
+            Some(100),
+        );
+        let decision = check_projection_guard(
+            &make_guard_mqo(None, None),
+            &catalog,
+            50_000,
+        );
+        assert_eq!(
+            decision,
+            ProjectionGuardDecision::Admit,
+            "unbounded projection over a low-cardinality level must be admitted; got: {decision:?}"
         );
     }
 }
