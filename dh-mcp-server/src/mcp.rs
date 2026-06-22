@@ -642,6 +642,28 @@ fn pipeline_err(e: &PipelineError) -> Value {
         PipelineError::DimensionNotMaterialized { report, .. } => {
             ("dimension_not_materialized", report.clone())
         }
+        PipelineError::ProjectionUnorderedLimit => (
+            "projection_unordered_limit",
+            json!({
+                "detail": "Projection has a `limit` but no `order`: the top-N result would be \
+                           non-deterministic. FIX: add a non-empty `order` field to the MQO so \
+                           the top-N is well-defined. Example: add `\"order\": [{\"key\": \
+                           \"<measure_or_level_unique_name>\", \"direction\": \"desc\"}]`."
+            }),
+        ),
+        PipelineError::SqlRejected { count, report } => (
+            "sql_rejected",
+            json!({
+                "count": count,
+                "detail": format!(
+                    "The compiled SQL failed validation with {count} violation(s) before \
+                     execution. Submit a single SELECT statement per query_multidimensional \
+                     call — multi-statement SQL is not supported (ATSCALE-48466). \
+                     See `violations` for the machine-readable rule codes and fix guidance."
+                ),
+                "violations": report,
+            }),
+        ),
     };
     structured_err(code, detail)
 }

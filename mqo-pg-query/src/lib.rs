@@ -97,6 +97,24 @@ impl From<mqo_auth_bridge::EngineError> for QueryError {
             EngineError::Postgres(inner) => QueryError::QueryFailure {
                 message: inner.to_string(),
             },
+            EngineError::QueryDeadlineExceeded {
+                elapsed_secs,
+                deadline_secs,
+                hint,
+            } => QueryError::QueryFailure {
+                message: format!(
+                    "query exceeded the {deadline_secs}s deadline (elapsed {elapsed_secs}s): {hint}"
+                ),
+            },
+            EngineError::EngineErrorRetriedExhausted {
+                attempts,
+                total_backoff_ms,
+                message,
+            } => QueryError::QueryFailure {
+                message: format!(
+                    "engine error persisted after {attempts} attempt(s) (total_backoff_ms={total_backoff_ms}): {message}"
+                ),
+            },
         }
     }
 }
