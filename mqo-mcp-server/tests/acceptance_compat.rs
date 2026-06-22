@@ -129,6 +129,8 @@ fn enriched_server() -> Server {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     }
 }
 
@@ -157,6 +159,8 @@ fn plain_server() -> Server {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     }
 }
 
@@ -755,6 +759,8 @@ fn disambig_measures_carry_date_roles() {
         autolift_cache: None,
         // usize::MAX so no budget phase ever fires during this test.
         describe_token_budget: usize::MAX,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     };
     let result = call_tool(&srv, "describe_model", json!({}));
     let columns = result["structuredContent"]["columns"]

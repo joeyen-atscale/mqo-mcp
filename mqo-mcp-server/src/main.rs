@@ -53,7 +53,7 @@ use mqo_mcp_server::{
     cursor::{CursorStore, DEFAULT_CURSOR_TTL_SECS, DEFAULT_PAGE_SIZE},
     mcp::{discover_xmla_coords, DEFAULT_MAX_PROJECTION_CARDINALITY},
     run_health_check_sync, BackendCapabilities, EndpointConfig, LiveExecutor, OidcConfig, Server,
-    ServerEnrichedData, ServerEngine, ToolPaths,
+    ServerEnrichedData, ServerEngine, ToolPaths, UnknownMemberMode,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -268,6 +268,19 @@ struct Args {
     /// NO `rows` — the structural anti-calculator guarantee. Default: 25.
     #[arg(long, default_value_t = mqo_mcp_server::INLINE_THRESHOLD)]
     inline_threshold: usize,
+
+    /// How to annotate query results that contain blank/NULL dimension members
+    /// (the "unknown" member). `annotate` (default) adds a `blank_member_rows`
+    /// count + advisory note while leaving rows unchanged; `caption` also
+    /// replaces blank dimension cells in the inline rows with
+    /// `--unknown-member-caption`; `off` disables the signal entirely.
+    #[arg(long, value_enum, default_value_t = UnknownMemberMode::Annotate, env = "MQO_UNKNOWN_MEMBER_MODE")]
+    unknown_member_mode: UnknownMemberMode,
+
+    /// Caption substituted for blank dimension cells when
+    /// `--unknown-member-mode caption` is set. Default `(blank)`.
+    #[arg(long)]
+    unknown_member_caption: Option<String>,
 
     /// Path to a pre-derived `enriched-catalog.v1` JSON file (from
     /// `mqoguard-column-group-enrichment`). When provided, skip auto-derivation
@@ -769,6 +782,8 @@ fn main() {
         autolift_base_url,
         autolift_cache,
         describe_token_budget: args.describe_token_budget,
+        unknown_member_mode: args.unknown_member_mode,
+        unknown_member_caption: args.unknown_member_caption.clone(),
     };
 
     serve(&server);

@@ -95,6 +95,8 @@ fn plain_server() -> Server {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     }
 }
 

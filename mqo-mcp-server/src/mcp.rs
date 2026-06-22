@@ -757,6 +757,38 @@ pub enum ServerEngine {
     Live(Box<LiveExecutor>),
 }
 
+/// How the server annotates query results that contain blank/NULL dimension
+/// members (PRD-mqo-blank-member-answer-fidelity). The blank/"unknown" member is
+/// a real result row; without a signal the consuming LLM silently drops it (the
+/// `product-count-per-category` failure: 11 rows incl. a null-category row, model
+/// reports 10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+pub enum UnknownMemberMode {
+    /// Default: add a `blank_member_rows` count + advisory note. Rows are left
+    /// unchanged (a blank member stays NULL), so existing scoring is unaffected.
+    #[default]
+    Annotate,
+    /// Everything `Annotate` does, plus replace blank dimension cells in the
+    /// inline rows with the configured caption (SHOULD, FR5; the handle/summary
+    /// are untouched).
+    Caption,
+    /// No annotation at all — byte-identical to the pre-feature response (FR4).
+    Off,
+}
+
+impl UnknownMemberMode {
+    /// Lenient parse used for the env-var path; unknown values fall back to the
+    /// default (`Annotate`).
+    #[must_use]
+    pub fn from_str_loose(s: &str) -> Self {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "off" | "none" | "false" | "disabled" => Self::Off,
+            "caption" => Self::Caption,
+            _ => Self::Annotate,
+        }
+    }
+}
+
 /// Server-side state needed to answer requests.
 pub struct Server {
     /// The recorded catalog snapshot (the JSON `list_models`/`search_columns`/
@@ -859,6 +891,13 @@ pub struct Server {
     /// non-critical field(s) in priority order and emits `truncated_fields`.
     /// Default: `DEFAULT_DESCRIBE_TOKEN_BUDGET` (25_000).
     pub describe_token_budget: usize,
+    /// How to annotate results containing blank/NULL dimension members
+    /// (PRD-mqo-blank-member-answer-fidelity). Default [`UnknownMemberMode::Annotate`].
+    /// Sourced from `--unknown-member-mode` / `MQO_UNKNOWN_MEMBER_MODE`.
+    pub unknown_member_mode: UnknownMemberMode,
+    /// Caption substituted for blank dimension cells in `Caption` mode (FR5).
+    /// `None` → `"(blank)"`. Sourced from `--unknown-member-caption`.
+    pub unknown_member_caption: Option<String>,
 }
 
 /// Default maximum distinct-row estimate for a projection MQO.
@@ -2677,6 +2716,8 @@ impl Server {
                                     cluster_used.as_deref(),
                                     latency_ms,
                                     handle.as_ref(),
+                                    self.unknown_member_mode,
+                                    self.unknown_member_caption.as_deref(),
                                 );
                             }
                             Err(e) => {
@@ -2698,6 +2739,8 @@ impl Server {
                     latency_ms,
                     handle.as_ref(),
                     self.inline_threshold,
+                    self.unknown_member_mode,
+                    self.unknown_member_caption.as_deref(),
                 );
                 if let Some(warn) = calc_null_warning {
                     if let Some(obj) = resp.get_mut("content")
@@ -2881,6 +2924,8 @@ fn structured_ok(
     latency_ms: u64,
     handle: Option<&DatasetHandle>,
     inline_threshold: usize,
+    unknown_member_mode: UnknownMemberMode,
+    unknown_member_caption: Option<&str>,
 ) -> Value {
     let row_count = out.rows.len();
     let mut payload = json!({
@@ -2912,6 +2957,11 @@ fn structured_ok(
     // (and handle) are a truncated prefix. Surface a typed over-budget signal so
     // a consumer never mistakes a clamped set for the full answer.
     attach_over_budget_signal(&mut payload, out);
+
+    // PRD-mqo-blank-member-answer-fidelity: when the result has blank/NULL
+    // dimension members, surface a count + advisory note so the consumer keeps
+    // the blank row in its answer instead of silently dropping it.
+    attach_blank_member_signal(&mut payload, out, unknown_member_mode, unknown_member_caption);
 
     // AC8: include federation metadata when active.
     if let Some(cluster) = cluster_used {
@@ -2951,6 +3001,8 @@ fn structured_cursor_ok(
     cluster_used: Option<&str>,
     latency_ms: u64,
     handle: Option<&DatasetHandle>,
+    unknown_member_mode: UnknownMemberMode,
+    unknown_member_caption: Option<&str>,
 ) -> Value {
     let total_rows = first_page.total_rows;
 
@@ -3023,6 +3075,10 @@ fn structured_cursor_ok(
     // FR-3: typed over-budget signal when the result exceeded the budget.
     attach_over_budget_signal(&mut payload, out);
 
+    // Blank-member fidelity: the count is computed over the FULL result (out.rows),
+    // not just the first page, so the handle path reports the true blank count (FR7).
+    attach_blank_member_signal(&mut payload, out, unknown_member_mode, unknown_member_caption);
+
     if let Some(cluster) = cluster_used {
         payload["cluster_used"] = json!(cluster);
         payload["latency_ms"] = json!(latency_ms);
@@ -3070,6 +3126,56 @@ fn attach_over_budget_signal(payload: &mut Value, out: &PipelineOutput) {
     match payload.get_mut("notes").and_then(Value::as_array_mut) {
         Some(arr) => arr.push(json!(note)),
         None => payload["notes"] = json!([note]),
+    }
+}
+
+/// Attach the blank-member fidelity signal (PRD-mqo-blank-member-answer-fidelity).
+///
+/// When the result contains rows whose dimension member is blank/NULL (the
+/// "unknown" member — records with no value for that attribute), surface an
+/// explicit `blank_member_rows` count plus an advisory note so the consuming LLM
+/// keeps the blank row in its answer instead of silently dropping it (the
+/// `product-count-per-category` failure: the tool returns 11 rows incl. a
+/// null-category row, the model reports 10).
+///
+/// - `Off`  → no-op, byte-identical to the pre-feature response (FR4).
+/// - no blank members → no-op, byte-identical (FR4).
+/// - `Annotate` (default) → set `blank_member_rows` + append the note; rows
+///   unchanged (blank members stay NULL, so scoring is unaffected).
+/// - `Caption` → as `Annotate`, plus replace blank dimension cells in the inline
+///   `rows` with `caption` (FR5); the handle/summary are untouched.
+fn attach_blank_member_signal(
+    payload: &mut Value,
+    out: &PipelineOutput,
+    mode: UnknownMemberMode,
+    caption: Option<&str>,
+) {
+    if mode == UnknownMemberMode::Off {
+        return;
+    }
+    let blank_rows = handle_ops::count_blank_dimension_member_rows(&out.rows, &out.bound);
+    if blank_rows == 0 {
+        return; // FR4: no blank members → byte-identical output.
+    }
+    payload["blank_member_rows"] = json!(blank_rows);
+    let total = out.rows.len();
+    let note = format!(
+        "BLANK MEMBERS: {blank_rows} of {total} result row(s) have a blank/NULL \
+         dimension member (the \"unknown\" member — records with no value for this \
+         attribute). These are real result rows: include them in counts, sums, and \
+         any per-member answer. Do NOT silently drop blank-member rows."
+    );
+    match payload.get_mut("notes").and_then(Value::as_array_mut) {
+        Some(arr) => arr.push(json!(note)),
+        None => payload["notes"] = json!([note]),
+    }
+    // FR5 (SHOULD): caption mode rewrites blank dimension cells in the INLINE
+    // rows only. Large/omitted-row responses keep the count but skip the rewrite.
+    if mode == UnknownMemberMode::Caption {
+        let cap = caption.unwrap_or("(blank)");
+        if let Some(rows) = payload.get_mut("rows").and_then(Value::as_array_mut) {
+            handle_ops::apply_blank_member_caption(rows, &out.bound, cap);
+        }
     }
 }
 
@@ -3528,7 +3634,7 @@ mod size_gate_tests {
     fn ac2_query_small_result_inlines_rows() {
         let out = synth_output(10); // ≤ K=25
         let (_hs, h) = store_handle(&out);
-        let resp = structured_ok(&out, None, 1, Some(&h), 25);
+        let resp = structured_ok(&out, None, 1, Some(&h), 25, UnknownMemberMode::Annotate, None);
         let sc = &resp["structuredContent"];
         assert_eq!(sc["row_count"], json!(10));
         assert!(sc.get("rows").is_some(), "≤K must inline rows: {sc}");
@@ -3547,7 +3653,7 @@ mod size_gate_tests {
         let mut out = synth_output(5);
         out.row_cap_tripped = true;
         let (_hs, h) = store_handle(&out);
-        let resp = structured_ok(&out, None, 1, Some(&h), 25);
+        let resp = structured_ok(&out, None, 1, Some(&h), 25, UnknownMemberMode::Annotate, None);
         let sc = &resp["structuredContent"];
         // isError stays false (a handle + prefix is still usable) but the typed
         // signal is explicit.
@@ -3568,7 +3674,7 @@ mod size_gate_tests {
     fn no_over_budget_signal_when_within_budget() {
         let out = synth_output(5); // row_cap_tripped = false
         let (_hs, h) = store_handle(&out);
-        let resp = structured_ok(&out, None, 1, Some(&h), 25);
+        let resp = structured_ok(&out, None, 1, Some(&h), 25, UnknownMemberMode::Annotate, None);
         let sc = &resp["structuredContent"];
         assert!(sc.get("result_too_large").is_none(), "no signal within budget: {sc}");
         assert!(sc.get("truncated").is_none(), "no truncated marker within budget: {sc}");
@@ -3583,7 +3689,7 @@ mod size_gate_tests {
         let mut out = synth_output(100); // > inline_threshold=25
         out.row_cap_tripped = true;
         let (_hs, h) = store_handle(&out);
-        let resp = structured_ok(&out, None, 1, Some(&h), 25);
+        let resp = structured_ok(&out, None, 1, Some(&h), 25, UnknownMemberMode::Annotate, None);
         let sc = &resp["structuredContent"];
         assert!(
             sc.get("rows").is_none(),
@@ -3598,7 +3704,7 @@ mod size_gate_tests {
     fn ac2_query_at_threshold_inlines() {
         let out = synth_output(25);
         let (_hs, h) = store_handle(&out);
-        let resp = structured_ok(&out, None, 1, Some(&h), 25);
+        let resp = structured_ok(&out, None, 1, Some(&h), 25, UnknownMemberMode::Annotate, None);
         let sc = &resp["structuredContent"];
         assert!(sc.get("rows").is_some(), "exactly K inlines: {sc}");
     }
@@ -3608,7 +3714,7 @@ mod size_gate_tests {
     fn ac3_query_large_result_is_gated_no_rows() {
         let out = synth_output(26); // K+1
         let (_hs, h) = store_handle(&out);
-        let resp = structured_ok(&out, None, 1, Some(&h), 25);
+        let resp = structured_ok(&out, None, 1, Some(&h), 25, UnknownMemberMode::Annotate, None);
         let sc = &resp["structuredContent"];
         assert_eq!(sc["row_count"], json!(26));
         assert!(
@@ -3625,9 +3731,107 @@ mod size_gate_tests {
     fn ac4_threshold_override_inlines_60_rows() {
         let out = synth_output(60);
         let (_hs, h) = store_handle(&out);
-        let resp = structured_ok(&out, None, 1, Some(&h), 100);
+        let resp = structured_ok(&out, None, 1, Some(&h), 100, UnknownMemberMode::Annotate, None);
         let sc = &resp["structuredContent"];
         assert!(sc.get("rows").is_some(), "60 ≤ 100 inlines: {sc}");
+    }
+
+    // ── Blank-member answer fidelity (PRD-mqo-blank-member-answer-fidelity) ──
+
+    /// A small result with a string dimension (`Product Category`), one of whose
+    /// rows carries the blank/NULL "unknown" member — the `product-count-per-category`
+    /// shape that the model silently drops.
+    fn blank_member_output() -> PipelineOutput {
+        let rows = vec![
+            json!({ "Product Category": "Electronics", "product_count": 100 }),
+            json!({ "Product Category": "Books", "product_count": 50 }),
+            json!({ "Product Category": Value::Null, "product_count": 43 }),
+        ];
+        PipelineOutput {
+            backend: "sql".to_string(),
+            estimated_rows: 3,
+            routing_reason: "test".to_string(),
+            compiled_query: "SELECT".to_string(),
+            rows,
+            bound: json!({}),
+            filters_applied: vec![],
+            filters_dropped: vec![],
+            row_cap_tripped: false,
+        }
+    }
+
+    /// AC: Annotate (default) sets `blank_member_rows` + an advisory note, and
+    /// leaves the blank cell NULL (so gold scoring is unaffected).
+    #[test]
+    fn blank_member_annotate_sets_count_and_note() {
+        let out = blank_member_output();
+        let (_hs, h) = store_handle(&out);
+        let resp = structured_ok(&out, None, 1, Some(&h), 25, UnknownMemberMode::Annotate, None);
+        let sc = &resp["structuredContent"];
+        assert_eq!(sc["blank_member_rows"], json!(1), "one blank dim row counted: {sc}");
+        let rows = sc["rows"].as_array().expect("rows inlined");
+        let blank = rows
+            .iter()
+            .find(|r| r["product_count"] == json!(43))
+            .expect("blank row inlined");
+        assert!(blank["Product Category"].is_null(), "annotate leaves NULL: {blank}");
+        let notes = sc["notes"].as_array().expect("notes array");
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.as_str().unwrap_or("").contains("BLANK MEMBERS")),
+            "blank-member note present: {notes:?}"
+        );
+    }
+
+    /// AC (FR4): Off mode is byte-identical to the pre-feature response — no
+    /// `blank_member_rows`, no note.
+    #[test]
+    fn blank_member_off_is_silent() {
+        let out = blank_member_output();
+        let (_hs, h) = store_handle(&out);
+        let resp = structured_ok(&out, None, 1, Some(&h), 25, UnknownMemberMode::Off, None);
+        let sc = &resp["structuredContent"];
+        assert!(sc.get("blank_member_rows").is_none(), "off → no signal: {sc}");
+    }
+
+    /// AC (FR5): Caption mode rewrites the blank dimension cell in the INLINE
+    /// rows with the supplied caption, and still sets the count.
+    #[test]
+    fn blank_member_caption_rewrites_inline_rows() {
+        let out = blank_member_output();
+        let (_hs, h) = store_handle(&out);
+        let resp = structured_ok(
+            &out,
+            None,
+            1,
+            Some(&h),
+            25,
+            UnknownMemberMode::Caption,
+            Some("(blank)"),
+        );
+        let sc = &resp["structuredContent"];
+        assert_eq!(sc["blank_member_rows"], json!(1));
+        let rows = sc["rows"].as_array().expect("rows inlined");
+        let blank = rows
+            .iter()
+            .find(|r| r["product_count"] == json!(43))
+            .expect("blank row inlined");
+        assert_eq!(blank["Product Category"], json!("(blank)"), "caption rewrites cell: {blank}");
+    }
+
+    /// AC (FR4): a result with no blank members is a no-op even in Annotate.
+    #[test]
+    fn blank_member_no_blanks_is_noop() {
+        let mut out = blank_member_output();
+        out.rows.retain(|r| !r["Product Category"].is_null());
+        let (_hs, h) = store_handle(&out);
+        let resp = structured_ok(&out, None, 1, Some(&h), 25, UnknownMemberMode::Annotate, None);
+        let sc = &resp["structuredContent"];
+        assert!(
+            sc.get("blank_member_rows").is_none(),
+            "no blanks → no signal (FR4): {sc}"
+        );
     }
 }
 
@@ -3672,7 +3876,15 @@ mod handle_first_contract_tests {
             .put_and_first_page(out.rows.clone(), page_size)
             .expect("put succeeds");
 
-        let resp = structured_cursor_ok(&out, &first_page, None, 0, None);
+        let resp = structured_cursor_ok(
+            &out,
+            &first_page,
+            None,
+            0,
+            None,
+            UnknownMemberMode::Annotate,
+            None,
+        );
         let sc = &resp["structuredContent"];
 
         // Handle is present (= cursor_id)
@@ -3721,7 +3933,7 @@ mod handle_first_contract_tests {
             let h = hs.put_rows(&out.rows).expect("put_rows");
             (hs, h)
         };
-        let resp = structured_ok(&out, None, 1, Some(&h), 25);
+        let resp = structured_ok(&out, None, 1, Some(&h), 25, UnknownMemberMode::Annotate, None);
         let sc = &resp["structuredContent"];
         // Small result still inlines rows
         assert!(sc.get("rows").is_some(), "small result must inline rows: {sc}");
@@ -4397,6 +4609,8 @@ mod hierarchy_levels_value_type_tests {
             autolift_base_url: None,
             autolift_cache: None,
             describe_token_budget: DEFAULT_DESCRIBE_TOKEN_BUDGET,
+            unknown_member_mode: UnknownMemberMode::Annotate,
+            unknown_member_caption: None,
         }
     }
 
@@ -4501,6 +4715,8 @@ mod hierarchy_levels_value_type_tests {
             autolift_base_url: None,
             autolift_cache: None,
             describe_token_budget: DEFAULT_DESCRIBE_TOKEN_BUDGET,
+            unknown_member_mode: UnknownMemberMode::Annotate,
+            unknown_member_caption: None,
         };
         let resp = srv.describe_model(&json!({"model": "test_model"}));
         let hl = resp
@@ -4587,6 +4803,8 @@ mod hierarchy_levels_value_type_tests {
             autolift_base_url: None,
             autolift_cache: None,
             describe_token_budget: DEFAULT_DESCRIBE_TOKEN_BUDGET,
+            unknown_member_mode: UnknownMemberMode::Annotate,
+            unknown_member_caption: None,
         };
         let resp = srv.describe_model(&json!({}));
 
@@ -4735,6 +4953,8 @@ mod autolift_wiring_tests {
             autolift_base_url: None,
             autolift_cache: None,
             describe_token_budget: DEFAULT_DESCRIBE_TOKEN_BUDGET,
+            unknown_member_mode: UnknownMemberMode::Annotate,
+            unknown_member_caption: None,
         }
     }
 

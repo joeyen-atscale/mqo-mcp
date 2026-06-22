@@ -661,6 +661,92 @@ fn bound_role_map(
     map
 }
 
+// ---------------------------------------------------------------------------
+// Blank-member fidelity (PRD-mqo-blank-member-answer-fidelity)
+// ---------------------------------------------------------------------------
+
+/// True when a JSON value represents a blank/unknown dimension member — a NULL
+/// or an empty/whitespace string. Numbers and booleans are never blank members.
+fn is_blank_member_value(v: &Value) -> bool {
+    match v {
+        Value::Null => true,
+        Value::String(s) => s.trim().is_empty(),
+        _ => false,
+    }
+}
+
+/// The row-column keys that are dimensions, per the MQO `bound` (falling back to
+/// the dtype heuristic for any column the bound does not cover — same policy as
+/// [`bound_role_map`]). Returns an empty vec when there are no rows/columns.
+fn dimension_column_keys(rows: &[Value], bound: &Value) -> Vec<String> {
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    // Union of column keys across all rows (stable order: first-seen).
+    let mut col_names: Vec<String> = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for row in rows {
+        if let Some(obj) = row.as_object() {
+            for k in obj.keys() {
+                if seen.insert(k.clone()) {
+                    col_names.push(k.clone());
+                }
+            }
+        }
+    }
+    if col_names.is_empty() {
+        return Vec::new();
+    }
+    let roles = bound_role_map(bound, &col_names, rows);
+    col_names
+        .into_iter()
+        .filter(|c| match roles.get(c) {
+            Some(ColumnRole::Dimension) => true,
+            // Measures and derived/calculated columns are not dimension members; a
+            // null there is a legitimate empty cell, not an unknown-member row.
+            Some(ColumnRole::Measure | ColumnRole::Derived) => false,
+            // Bound carried no usable entries: dtype heuristic (non-numeric = dim).
+            None => matches!(build_column(c, rows).1, ColumnRole::Dimension),
+        })
+        .collect()
+}
+
+/// Count result rows that carry a blank/NULL dimension member (FR1/FR3). A row
+/// counts once if ANY of its dimension columns is blank. Measure-only blanks do
+/// not count (a null measure is a legitimate empty cell, not an unknown member).
+pub(crate) fn count_blank_dimension_member_rows(rows: &[Value], bound: &Value) -> usize {
+    let dim_cols = dimension_column_keys(rows, bound);
+    if dim_cols.is_empty() {
+        return 0;
+    }
+    rows.iter()
+        .filter(|row| {
+            dim_cols
+                .iter()
+                .any(|c| is_blank_member_value(row.get(c.as_str()).unwrap_or(&Value::Null)))
+        })
+        .count()
+}
+
+/// Replace blank dimension cells with `caption` in-place (FR5 caption mode).
+/// Only dimension columns are rewritten; measures are left untouched.
+pub(crate) fn apply_blank_member_caption(rows: &mut [Value], bound: &Value, caption: &str) {
+    let dim_cols = dimension_column_keys(rows, bound);
+    if dim_cols.is_empty() {
+        return;
+    }
+    for row in rows.iter_mut() {
+        if let Some(obj) = row.as_object_mut() {
+            for c in &dim_cols {
+                let blank = obj.get(c).is_some_and(is_blank_member_value);
+                if blank {
+                    obj.insert(c.clone(), Value::String(caption.to_string()));
+                }
+            }
+        }
+    }
+}
+
 /// Decide a column's dtype/role and build its typed `ColumnData` from the rows.
 fn build_column(name: &str, rows: &[Value]) -> (DType, ColumnRole, ColumnData) {
     let mut all_int = true;
@@ -3032,5 +3118,42 @@ mod tests {
         let replaced = replace_string_in_value(v, "old_name", "new_name");
         assert_eq!(replaced["predicate"]["col"].as_str(), Some("new_name"));
         assert_eq!(replaced["keys"][0].as_str(), Some("new_name"));
+    }
+
+    // ── Blank-member counting / captioning (PRD-mqo-blank-member-answer-fidelity) ──
+
+    #[test]
+    fn count_blank_dimension_member_rows_counts_only_dim_blanks() {
+        // String column = dimension; numeric column = measure. A NULL category
+        // counts; a NULL/empty-string category counts; a NULL measure does not.
+        let rows = vec![
+            json!({ "Product Category": "Electronics", "n": 100 }),
+            json!({ "Product Category": serde_json::Value::Null, "n": 43 }),
+            json!({ "Product Category": "   ", "n": 7 }),     // whitespace-only = blank
+            json!({ "Product Category": "Books", "n": serde_json::Value::Null }), // measure null ≠ blank member
+        ];
+        let bound = json!({});
+        assert_eq!(count_blank_dimension_member_rows(&rows, &bound), 2);
+    }
+
+    #[test]
+    fn count_blank_dimension_member_rows_zero_when_all_present() {
+        let rows = vec![
+            json!({ "State": "TX", "sales": 9 }),
+            json!({ "State": "CA", "sales": 8 }),
+        ];
+        assert_eq!(count_blank_dimension_member_rows(&rows, &json!({})), 0);
+    }
+
+    #[test]
+    fn apply_blank_member_caption_rewrites_only_blank_dim_cells() {
+        let mut rows = vec![
+            json!({ "Product Category": "Electronics", "n": 100 }),
+            json!({ "Product Category": serde_json::Value::Null, "n": 43 }),
+        ];
+        apply_blank_member_caption(&mut rows, &json!({}), "(blank)");
+        assert_eq!(rows[0]["Product Category"], json!("Electronics"));
+        assert_eq!(rows[1]["Product Category"], json!("(blank)"));
+        assert_eq!(rows[1]["n"], json!(43), "measure cell untouched");
     }
 }

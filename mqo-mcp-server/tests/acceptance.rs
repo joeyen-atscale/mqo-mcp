@@ -113,6 +113,8 @@ fn server() -> Server {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     }
 }
 
@@ -339,6 +341,8 @@ fn ac4_drillthrough_mqo_routes_to_mdx() {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     };
     let mqo = valid_mqo(
         vec![json!({ "hierarchy": "time.calendar", "level": "Year" })],
@@ -678,6 +682,8 @@ fn new_ac2_live_mode_routes_through_live_executor() {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     };
     let mqo = valid_mqo(
         vec![json!({ "hierarchy": "time.calendar", "level": "Year" })],
@@ -816,6 +822,8 @@ fn new_ac4_engine_error_surfaces_as_structured_engine_error() {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     };
     let mqo = valid_mqo(
         vec![json!({ "hierarchy": "time.calendar", "level": "Year" })],
@@ -1033,6 +1041,8 @@ fn ext5_list_models_with_empty_catalog_returns_empty_array() {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     };
     let result = call_tool(&srv, "list_models", json!({}));
     assert_eq!(result["isError"], json!(false), "{result}");
@@ -1252,6 +1262,8 @@ fn ext13_diff_clusters_missing_cluster_a_returns_error() {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     };
 
     // cluster_a is absent — only cluster_b is provided.
@@ -1319,6 +1331,8 @@ fn ext14_diff_clusters_unknown_cluster_names_returns_error() {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     };
 
     let result = call_tool(
@@ -1401,6 +1415,8 @@ fn ext15_list_clusters_with_registry_returns_cluster_list() {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     };
 
     let result = call_tool(&srv, "list_clusters", json!({}));
@@ -1531,6 +1547,8 @@ fn ext20_backend_override_sql_forces_sql_for_small_query() {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     };
     // Year-level: cardinality 5, normally DAX.
     let mqo = valid_mqo(
@@ -2161,6 +2179,8 @@ fn server_with_cube_map() -> Server {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     }
 }
 
@@ -2221,6 +2241,8 @@ fn qmg_ac1_list_models_flags_cube_vs_dimension() {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     };
     let result_b = call_tool(&srv_b, "list_models", json!({}));
     assert_eq!(result_b["isError"], json!(false));
@@ -2403,6 +2425,8 @@ fn qmg_ac5_queryable_cube_query_is_unchanged() {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     };
     let mqo = valid_mqo(
         vec![json!({ "hierarchy": "time.calendar", "level": "Year" })],
@@ -2570,6 +2594,8 @@ fn coord_ac4_ambiguous_cube_name_returns_ambiguity_error() {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     };
     // Submitting "SALESCUBE" (case-insensitive) matches both keys.
     let result = call_tool(
@@ -2695,6 +2721,8 @@ fn server_with_domains() -> Server {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     }
 }
 
@@ -2778,6 +2806,8 @@ fn member_locate_ac2_value_in_multiple_levels() {
         autolift_base_url: None,
         autolift_cache: None,
         describe_token_budget: mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET,
+        unknown_member_mode: mqo_mcp_server::UnknownMemberMode::Annotate,
+        unknown_member_caption: None,
     };
 
     let result = call_tool(&srv, "search_columns", json!({ "member_value": "SharedValue" }));

@@ -185,7 +185,11 @@ fn binary_tools_list_returns_fourteen_tools() {
         .and_then(Value::as_array)
         .expect("tools array present");
 
-    assert_eq!(tools.len(), 27, "AC9: expected 27 tools (25 prior + describe_grounding + validate_query_ontology), got {}", tools.len());
+    // 28 advertised tools = 16 core_tool_descriptors + 12 handle_op_descriptors.
+    // (The count assert had drifted to 27: `describe_compatibility` was added to
+    // core_tool_descriptors by 690c4f7 — the describe_model token-budget work —
+    // without updating this test. The function name is historical.)
+    assert_eq!(tools.len(), 28, "AC9: expected 28 tools (16 core + 12 handle-op), got {}", tools.len());
 
     let tool_names: Vec<&str> = tools
         .iter()
