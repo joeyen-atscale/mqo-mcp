@@ -372,6 +372,39 @@ struct Args {
     #[arg(long, default_value_t = mqo_mcp_server::DEFAULT_DESCRIBE_TOKEN_BUDGET)]
     describe_token_budget: usize,
 
+    /// Maximum number of server-side retries for transient PGWire engine errors
+    /// (R5, PRD-mqo-transient-engine-error-retry).
+    ///
+    /// When a PGWire query fails with a transient infrastructure-class error
+    /// (connection reset, broken pipe, generic "db error" with no SQLSTATE), the
+    /// server retries up to this many times with exponential backoff before
+    /// surfacing an error to the agent.  Total attempts = 1 + this value.
+    ///
+    /// Set to 0 to disable retry entirely and reproduce pre-PRD behaviour (one
+    /// attempt, bare `engine_error`).  Retries are bounded by the per-query
+    /// deadline (`--query-deadline-secs`).
+    ///
+    /// `model_path` errors (wrong query / rejected by engine) are NEVER retried
+    /// regardless of this setting.
+    #[arg(
+        long,
+        default_value_t = mqo_auth_bridge::DEFAULT_ENGINE_MAX_RETRIES,
+        env = "MQO_ENGINE_MAX_RETRIES"
+    )]
+    engine_max_retries: u32,
+
+    /// Base backoff duration (ms) for the first retry of a transient engine error.
+    /// Subsequent retries use exponential backoff: `base_ms * 2^attempt`.
+    /// (PRD-mqo-transient-engine-error-retry, R5).
+    #[arg(long, default_value_t = mqo_auth_bridge::DEFAULT_ENGINE_RETRY_BASE_MS)]
+    engine_retry_base_ms: u64,
+
+    /// Per-step backoff cap (ms) for transient engine error retries.
+    /// The exponential schedule is clamped to this per step.
+    /// (PRD-mqo-transient-engine-error-retry, R5).
+    #[arg(long, default_value_t = mqo_auth_bridge::DEFAULT_ENGINE_RETRY_MAX_MS)]
+    engine_retry_max_ms: u64,
+
 }
 
 fn main() {
@@ -867,6 +900,16 @@ fn build_engine(args: &Args) -> ServerEngine {
         "mqo-mcp-server: query deadline: {query_deadline_secs}s (max override: {query_deadline_max_secs}s)"
     );
 
+    let retry = mqo_auth_bridge::RetryConfig {
+        max_retries: args.engine_max_retries,
+        base_ms: args.engine_retry_base_ms,
+        max_backoff_ms: args.engine_retry_max_ms,
+    };
+    eprintln!(
+        "mqo-mcp-server: engine retry: max_retries={} base_ms={}ms max_backoff_ms={}ms",
+        retry.max_retries, retry.base_ms, retry.max_backoff_ms
+    );
+
     let config = EndpointConfig {
         pgwire_host,
         pgwire_port,
@@ -877,6 +920,7 @@ fn build_engine(args: &Args) -> ServerEngine {
         max_result_rows,
         query_deadline_secs,
         query_deadline_max_secs,
+        retry,
     };
 
     let executor = LiveExecutor::new(config);

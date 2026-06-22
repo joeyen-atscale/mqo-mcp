@@ -30,6 +30,7 @@ pub mod error;
 pub mod executor;
 pub mod fixture;
 pub mod oidc;
+pub mod retry;
 pub mod xmla;
 
 pub use backend::Backend;
@@ -43,3 +44,7 @@ pub use executor::{
 };
 pub use fixture::FixtureEngine;
 pub use oidc::OidcConfig;
+pub use retry::{
+    RetryConfig, DEFAULT_ENGINE_MAX_RETRIES, DEFAULT_ENGINE_RETRY_BASE_MS,
+    DEFAULT_ENGINE_RETRY_MAX_MS,
+};

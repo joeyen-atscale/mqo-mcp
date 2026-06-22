@@ -266,7 +266,10 @@ fn engine_error_class(e: &mqo_auth_bridge::EngineError) -> &'static str {
         | EngineError::Http(_)
         | EngineError::Postgres(_)
         | EngineError::RowCapTripped { .. }
-        | EngineError::QueryDeadlineExceeded { .. } => INFRASTRUCTURE,
+        | EngineError::QueryDeadlineExceeded { .. }
+        // Retried-and-exhausted is still infrastructure: the query shape was
+        // correct (it was retried for transient errors) but the backend is flaky.
+        | EngineError::EngineErrorRetriedExhausted { .. } => INFRASTRUCTURE,
     }
 }
 

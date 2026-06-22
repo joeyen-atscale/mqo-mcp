@@ -22,6 +22,7 @@ use crate::{
     engine::{Engine, EngineResult},
     error::EngineError,
     oidc::{OidcConfig, TokenCache},
+    retry::{with_retry, RetryConfig},
 };
 
 // ─── Deadline defaults ────────────────────────────────────────────────────────
@@ -95,6 +96,16 @@ pub struct EndpointConfig {
     /// is logged. Sourced from `--query-deadline-max-secs`
     /// (default [`DEFAULT_QUERY_DEADLINE_MAX_SECS`]).
     pub query_deadline_max_secs: u64,
+
+    /// Bounded retry configuration for transient PGWire engine errors (R1–R6).
+    ///
+    /// Only infrastructure-class transient errors (connection reset, broken
+    /// pipe, generic "db error" with no SQLSTATE) are retried.  `model_path`
+    /// errors ([`EngineError::QueryError`]) are NEVER retried.
+    ///
+    /// Sourced from `--engine-max-retries` (R5; default 2 retries = 3 attempts).
+    /// Set `max_retries = 0` to reproduce pre-PRD behaviour (no retry).
+    pub retry: RetryConfig,
 }
 
 // ─── Internal RowSource abstraction ─────────────────────────────────────────
@@ -859,6 +870,13 @@ impl Engine for LiveExecutor {
         // Per-request overrides are handled by execute_with_deadline (FR5).
         let deadline_secs = self.config.query_deadline_secs;
 
+        // Compute the deadline end instant for the retry deadline guard (R2).
+        let deadline_end = if deadline_secs == u64::MAX {
+            None
+        } else {
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(deadline_secs))
+        };
+
         let raw_rows = match backend {
             Backend::Sql => {
                 // PGWire: direct credentials take priority over OIDC token.
@@ -872,14 +890,24 @@ impl Engine for LiveExecutor {
                     pg_user = self.config.pg_user.as_deref().unwrap_or("token");
                     pg_pass_owned.as_str()
                 };
-                self.row_source.pgwire_query(
-                    &self.config.pgwire_host,
-                    self.config.pgwire_port,
-                    pg_user,
-                    pg_pass,
-                    compiled_query,
-                    fetch_limit,
-                    deadline_secs,
+                let host = self.config.pgwire_host.clone();
+                let port = self.config.pgwire_port;
+                let query = compiled_query.to_string();
+                let row_source = self.row_source.clone();
+                with_retry(
+                    |_attempt| {
+                        row_source.pgwire_query(
+                            &host,
+                            port,
+                            pg_user,
+                            pg_pass,
+                            &query,
+                            fetch_limit,
+                            deadline_secs,
+                        )
+                    },
+                    &self.config.retry,
+                    deadline_end,
                 )?
             }
             Backend::Dax | Backend::Mdx => {
@@ -978,6 +1006,13 @@ impl LiveExecutor {
             .map_or(budget, |l| usize::try_from(l).unwrap_or(budget))
             .min(budget);
 
+        // Compute the deadline end instant for the retry deadline guard (R2).
+        let deadline_end = if deadline_secs == u64::MAX {
+            None
+        } else {
+            Some(std::time::Instant::now() + std::time::Duration::from_secs(deadline_secs))
+        };
+
         let raw_rows = match backend {
             Backend::Sql => {
                 let (pg_user, pg_pass_owned);
@@ -990,14 +1025,24 @@ impl LiveExecutor {
                     pg_user = self.config.pg_user.as_deref().unwrap_or("token");
                     pg_pass_owned.as_str()
                 };
-                self.row_source.pgwire_query(
-                    &self.config.pgwire_host,
-                    self.config.pgwire_port,
-                    pg_user,
-                    pg_pass,
-                    compiled_query,
-                    fetch_limit,
-                    deadline_secs,
+                let host = self.config.pgwire_host.clone();
+                let port = self.config.pgwire_port;
+                let query = compiled_query.to_string();
+                let row_source = self.row_source.clone();
+                with_retry(
+                    |_attempt| {
+                        row_source.pgwire_query(
+                            &host,
+                            port,
+                            pg_user,
+                            pg_pass,
+                            &query,
+                            fetch_limit,
+                            deadline_secs,
+                        )
+                    },
+                    &self.config.retry,
+                    deadline_end,
                 )?
             }
             Backend::Dax | Backend::Mdx => {

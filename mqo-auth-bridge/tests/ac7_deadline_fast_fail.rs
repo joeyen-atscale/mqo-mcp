@@ -187,6 +187,7 @@ fn make_config(token_url: String, secret_var: &str, deadline_secs: u64) -> Endpo
         max_result_rows: DEFAULT_MAX_RESULT_ROWS,
         query_deadline_secs: deadline_secs,
         query_deadline_max_secs: DEFAULT_QUERY_DEADLINE_MAX_SECS,
+        retry: Default::default(),
     }
 }
 

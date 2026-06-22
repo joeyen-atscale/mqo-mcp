@@ -652,6 +652,7 @@ fn new_ac2_live_mode_routes_through_live_executor() {
         max_result_rows: mqo_mcp_server::DEFAULT_MAX_RESULT_ROWS,
         query_deadline_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_SECS,
         query_deadline_max_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_MAX_SECS,
+        retry: Default::default(),
     };
     let executor = LiveExecutor::with_row_source(config, Arc::new(FakeRowSource));
     let srv = Server {
@@ -789,6 +790,7 @@ fn new_ac4_engine_error_surfaces_as_structured_engine_error() {
         max_result_rows: mqo_mcp_server::DEFAULT_MAX_RESULT_ROWS,
         query_deadline_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_SECS,
         query_deadline_max_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_MAX_SECS,
+        retry: Default::default(),
     };
     let executor = LiveExecutor::with_row_source(config, Arc::new(AlwaysFailRowSource));
     let srv = Server {
@@ -1943,6 +1945,7 @@ fn live_dax_parity_total_store_sales() {
         max_result_rows: mqo_mcp_server::DEFAULT_MAX_RESULT_ROWS,
         query_deadline_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_SECS,
         query_deadline_max_secs: mqo_auth_bridge::DEFAULT_QUERY_DEADLINE_MAX_SECS,
+        retry: Default::default(),
     };
 
     // Real wire executor (no fake): this is the live path.
