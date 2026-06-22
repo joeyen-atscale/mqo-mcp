@@ -38,7 +38,7 @@ use crate::model_graph::ModelGraphStore;
 use crate::ontology_check::OntologyCheckStore;
 use crate::pipeline::{self, PipelineError, PipelineOutput, ToolPaths};
 use crate::probe::BackendCapabilities;
-use crate::projection_guard::check_projection_cardinality;
+use crate::projection_guard::{check_projection_guard, ProjectionGuardDecision};
 use crate::routing;
 use dh_spec::DatasetHandle;
 use mcp_cluster_health_monitor::report::HealthReport;
@@ -2437,21 +2437,36 @@ impl Server {
         // ── Projection cardinality guard (FR-1 through FR-5) ─────────────────
         // For projection MQOs (no measures), estimate the distinct-row count
         // before execution.  Measure-bearing queries are unaffected (FR-6).
+        //
+        // PRD-mqo-projection-cardinality-respect-limit (R1/R2/R3):
+        //   R1: limit >= 1 AND non-empty order → admit (ordered top-N is bounded
+        //       by the TOPN the compiler already pushes; no full scan).
+        //   R2: no limit → run the full cardinality estimate vs cap.
+        //   R3: limit set but no order → projection_unordered_limit decline.
         if let Ok(mqo_parsed) = serde_json::from_value::<mqo_spec::Mqo>(query.clone()) {
-            if mqo_parsed.measures.is_empty() {
-                // This is a projection MQO — apply the guard.
+            if mqo_parsed.measures.is_empty() && mqo_parsed.projection {
+                // This is a valid projection MQO (projection: true, no measures) —
+                // apply the limit-aware guard.  Non-projection MQOs with empty
+                // measures (projection: false) are structurally invalid and are
+                // caught downstream by mqo_spec::validate → invalid_mqo.
                 let catalog_snap: mqo_catalog_binder::catalog::CatalogSnapshot =
                     serde_json::from_value(self.catalog.clone()).unwrap_or_default();
-                if let Err(too_large) = check_projection_cardinality(
+                match check_projection_guard(
                     &mqo_parsed,
                     &catalog_snap,
                     self.max_projection_cardinality,
                 ) {
-                    return structured_err(&PipelineError::ProjectionTooLarge {
-                        level: too_large.level,
-                        estimate: too_large.estimate,
-                        cap: too_large.cap,
-                    });
+                    ProjectionGuardDecision::Admit => {}
+                    ProjectionGuardDecision::TooLarge(too_large) => {
+                        return structured_err(&PipelineError::ProjectionTooLarge {
+                            level: too_large.level,
+                            estimate: too_large.estimate,
+                            cap: too_large.cap,
+                        });
+                    }
+                    ProjectionGuardDecision::UnorderedLimit => {
+                        return structured_err(&PipelineError::ProjectionUnorderedLimit);
+                    }
                 }
             }
         }
@@ -3096,12 +3111,22 @@ fn structured_err(e: &PipelineError) -> Value {
                 "estimate": estimate,
                 "cap": cap,
                 "detail": format!(
-                    "Projection over level '{level}' has an estimated distinct cardinality \
+                    "Projection over level '{level}' has an estimated distinct level cardinality \
                      of {estimate}, which exceeds the configured cap of {cap}. \
-                     FIX: set `limit: <n>` in the MQO to bound the result to the top-N rows \
-                     (the compiler pushes a TOPN so only N rows are returned — no full scan). \
-                     Do NOT add more filters to work around this; use `limit` instead."
+                     The cap is on the level's total member count, not the result-row count. \
+                     FIX: set both `limit: <n>` AND a non-empty `order` in the MQO to bound \
+                     the result to a deterministic top-N (the compiler pushes a TOPN so only N \
+                     rows are returned — no full scan). Both limit and order are required."
                 )
+            }),
+        ),
+        PipelineError::ProjectionUnorderedLimit => (
+            "projection_unordered_limit",
+            json!({
+                "detail": "Projection has a `limit` but no `order`: the top-N result would be \
+                           non-deterministic. FIX: add a non-empty `order` field to the MQO so \
+                           the top-N is well-defined. Example: add `\"order\": [{\"key\": \
+                           \"<measure_or_level_unique_name>\", \"direction\": \"desc\"}]`."
             }),
         ),
         PipelineError::NonQueryableDimension { model, candidate_cubes } => {
