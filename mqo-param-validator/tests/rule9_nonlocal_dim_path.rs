@@ -255,13 +255,16 @@ fn ac6_no_channel_scope_silent() {
     );
 }
 
-/// Guardrail: RULE 9 and RULE 7 can coexist — if the measure is also wrong,
-/// RULE 7 fires on the measure pick and RULE 9 is silent (RULE 9 requires
-/// a fact-local measure, which the all-channel pick is not).
+/// Guardrail (updated for PRD-mqo-rule7-conformed-dimension-allowance):
+/// RULE 9 and RULE 7 coexistence — conformed dimension + all-channel measure:
+/// BOTH rules must be silent (RULE 7 because the dimension is conformed, RULE 9 because
+/// the measure is all-channel / not fact-local per FR5).
 #[test]
 fn r9_coexists_with_r7_all_channel_measure_both_could_be_wrong() {
-    // All-channel measure grouped by generic brand — RULE 7 fires (ChannelScopeMismatch)
-    // but RULE 9 must stay silent because the measure is all-channel (FR5).
+    // All-channel measure grouped by generic conformed brand dimension.
+    // - RULE 7: dimension is conformed (empty fact_local_facts) → ALLOW (R1/R2 of
+    //   PRD-mqo-rule7-conformed-dimension-allowance); must be SILENT.
+    // - RULE 9: measure is all-channel (not fact-local) → must be SILENT (FR5).
     let catalog = brand_catalog();
     let mqo = BoundMqoInput {
         measures: vec![MqoMeasureRef {
@@ -284,14 +287,55 @@ fn r9_coexists_with_r7_all_channel_measure_both_could_be_wrong() {
         .iter()
         .filter(|r| matches!(&r.reason, RejectReason::NonLocalDimensionPath { .. }))
         .count();
-    // RULE 7 must fire (all-channel measure has a store-local sibling).
+    // RULE 7 must be SILENT: dimension is conformed → canonical all-channel measure allowed.
     assert_eq!(
-        r7_count, 1,
-        "Guardrail: RULE 7 must fire for all-channel pick; got: {rejections:?}"
+        r7_count, 0,
+        "Guardrail: RULE 7 must be silent for all-channel measure + conformed dimension (PRD-mqo-rule7-conformed-dimension-allowance); got: {rejections:?}"
     );
     // RULE 9 must stay silent (FR5: all-channel measure → not fact-local).
     assert_eq!(
         r9_count, 0,
         "Guardrail: RULE 9 must stay silent for all-channel measure (FR5); got: {rejections:?}"
+    );
+}
+
+/// Guardrail: RULE 7 still fires when the all-channel measure is paired with a
+/// channel-specific dimension (strict subset of the measure's channel scope).
+#[test]
+fn r7_fires_when_channel_specific_dimension_present() {
+    // Extend brand_catalog with a store-only dimension.
+    let mut catalog = brand_catalog();
+    catalog.dimensions.push(CatalogDimension {
+        unique_name: "store_dimension".into(),
+        subject_areas: vec![],
+    });
+    catalog.hierarchies.push(CatalogHierarchy {
+        dimension_unique_name: "store_dimension".into(),
+        hierarchy_unique_name: "store_dimension".into(),
+        levels: vec!["Store City".into()],
+        level_meta: vec![],
+        fact_local_facts: vec!["store_sales".into()],  // strict subset of {store,catalog,web}
+    });
+
+    let mqo = BoundMqoInput {
+        measures: vec![MqoMeasureRef {
+            unique_name: "tpcds.total_quantity_sold".into(),
+            aggregation: None,
+        }],
+        dimensions: vec![MqoDimensionRef {
+            unique_name: "store_dimension".into(),
+            level: Some("Store City".into()),
+            ..Default::default()
+        }],
+        filters: vec![],
+    };
+    let rejections = validate(&mqo, &catalog);
+    let r7_count = rejections
+        .iter()
+        .filter(|r| matches!(&r.reason, RejectReason::ChannelScopeMismatch { .. }))
+        .count();
+    assert_eq!(
+        r7_count, 1,
+        "RULE 7 must still fire when channel-specific dimension conflicts with all-channel measure; got: {rejections:?}"
     );
 }
