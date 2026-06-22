@@ -415,6 +415,29 @@ pub enum RejectReason {
         /// The correct MQO slot it should appear in (`"measures"` or `"dimensions"`).
         correct_slot: String,
     },
+    /// RULE 13 (PRD-mqo-redundant-cograin-sibling-level-guard): two co-grain
+    /// *sibling* levels of one hierarchy are bound together in the `dimensions`
+    /// slot — e.g. a state code (`Customer State`) and its descriptive twin
+    /// (`Customer State Name`). Both are valid catalog levels at the *same*
+    /// cardinality, so RULES 8/10/11/12 stay silent; but projecting both adds a
+    /// redundant column that changes the row shape and corrupts the measure
+    /// roll-up (the join fans out across the duplicate grain).
+    ///
+    /// Conservative: only fires when BOTH labels resolve to real levels of the
+    /// SAME catalog hierarchy AND share a co-grain core label (identical after
+    /// stripping a single trailing {name, code, key, id, description, desc}
+    /// qualifier). Genuine drill pairs (Country + State) have different cores and
+    /// never fire. The descriptive (name) level is kept; the sibling is dropped.
+    RedundantCoGrainSiblingLevel {
+        /// The dimension that owns the hierarchy (catalog `dimension_unique_name`).
+        dimension: String,
+        /// The hierarchy both levels belong to (catalog `hierarchy_unique_name`).
+        hierarchy: String,
+        /// The level to keep — the descriptive (name) sibling.
+        level_keep: String,
+        /// The redundant co-grain level to drop.
+        level_drop: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -700,6 +723,15 @@ pub fn validate(mqo: &BoundMqoInput, catalog: &CatalogSnapshot) -> Vec<ParamReje
     // catalog measure used in the dimensions slot, or a catalog level used in
     // the measures slot. Catalog-driven, no graph required, always-on.
     check_role_confusion(mqo, catalog, &mut rejections);
+
+    // RULE 13 (PRD-mqo-redundant-cograin-sibling-level-guard): two co-grain
+    // sibling levels of one hierarchy bound together in the dimensions slot
+    // (e.g. a state code + state name). Both are valid catalog levels, so
+    // RULES 8/10/11/12 stay silent — but projecting both adds a redundant
+    // column that changes the row shape and corrupts the measure roll-up. Keep
+    // the descriptive (name) level, drop the sibling. Catalog-driven,
+    // conservative, off-switchable via MQO_VALIDATOR_DISABLE_RULE13.
+    check_redundant_cograin_sibling(mqo, catalog, &mut rejections);
 
     rejections
 }
@@ -5426,6 +5458,221 @@ pub(crate) fn check_role_confusion(
 }
 
 // ---------------------------------------------------------------------------
+// RULE 13: redundant co-grain sibling level guard
+// (PRD-mqo-redundant-cograin-sibling-level-guard, FR1–FR8)
+// ---------------------------------------------------------------------------
+
+/// Trailing qualifier tokens that distinguish a code/name/key sibling from its
+/// twin at the SAME grain. Stripping one of these from the end of a level label
+/// yields the shared "core" concept (FR2). Generalizes RULE 9's name-only drop
+/// to the full code/name/key/id/description family.
+const COGRAIN_QUALIFIERS: &[&str] = &["name", "code", "key", "id", "description", "desc"];
+
+/// Qualifiers that mark a level as the *descriptive* sibling (keep this one).
+const COGRAIN_DESCRIPTIVE: &[&str] = &["name", "description", "desc"];
+
+/// Qualifiers that mark a level as the *code-like* sibling (drop this one).
+const COGRAIN_CODELIKE: &[&str] = &["code", "key", "id"];
+
+/// Derive the co-grain "core label": normalize, then strip a SINGLE trailing
+/// qualifier token if present, leaving the shared concept. Two levels are
+/// co-grain siblings iff their core labels are equal.
+///
+///   `"Customer State"`       -> `"customer state"`  (no trailing qualifier)
+///   `"Customer State Name"`  -> `"customer state"`  (trailing "name" stripped)
+///   `"Customer Zip Code"`    -> `"customer zip"`    (trailing "code" stripped)
+///   `"Customer Country"`     -> `"customer country"`(different core — won't pair)
+///
+/// Returns `None` when stripping would leave nothing (FR5 conservative guard).
+fn cograin_core_label(label: &str) -> Option<String> {
+    let norm = normalize(label);
+    let toks: Vec<&str> = norm.split_whitespace().collect();
+    if toks.is_empty() {
+        return None;
+    }
+    let core: &[&str] = if toks.len() >= 2 && COGRAIN_QUALIFIERS.contains(toks.last().unwrap()) {
+        &toks[..toks.len() - 1]
+    } else {
+        &toks[..]
+    };
+    if core.is_empty() {
+        return None;
+    }
+    Some(core.join(" "))
+}
+
+/// The trailing qualifier token of a level label, if it is one of
+/// `COGRAIN_QUALIFIERS`; else `None`.
+fn cograin_trailing_qualifier(label: &str) -> Option<String> {
+    let norm = normalize(label);
+    let last = norm.split_whitespace().last()?.to_string();
+    if COGRAIN_QUALIFIERS.contains(&last.as_str()) {
+        Some(last)
+    } else {
+        None
+    }
+}
+
+/// Decide which co-grain sibling to KEEP and which to DROP (FR3). Prefer the
+/// descriptive (name) level; failing that, drop the explicitly code-like level;
+/// failing that, keep the longer (more specific) label.
+///
+/// Returns `(keep_label, drop_label)` using the ORIGINAL (un-normalized) labels.
+fn cograin_choose_keep_drop(a: &str, b: &str) -> (String, String) {
+    let qa = cograin_trailing_qualifier(a);
+    let qb = cograin_trailing_qualifier(b);
+    let a_desc = qa.as_deref().is_some_and(|q| COGRAIN_DESCRIPTIVE.contains(&q));
+    let b_desc = qb.as_deref().is_some_and(|q| COGRAIN_DESCRIPTIVE.contains(&q));
+    if a_desc && !b_desc {
+        return (a.to_string(), b.to_string());
+    }
+    if b_desc && !a_desc {
+        return (b.to_string(), a.to_string());
+    }
+    let a_code = qa.as_deref().is_some_and(|q| COGRAIN_CODELIKE.contains(&q));
+    let b_code = qb.as_deref().is_some_and(|q| COGRAIN_CODELIKE.contains(&q));
+    if a_code && !b_code {
+        return (b.to_string(), a.to_string());
+    }
+    if b_code && !a_code {
+        return (a.to_string(), b.to_string());
+    }
+    // Fallback: keep the longer/more-specific label.
+    if a.len() >= b.len() {
+        (a.to_string(), b.to_string())
+    } else {
+        (b.to_string(), a.to_string())
+    }
+}
+
+/// Pure predicate for the RULE 13 operator off-switch (NFR3): `Some("1")` or
+/// `Some("true")` (any case) disables the rule; anything else leaves it on.
+/// Factored out of the env read so it is unit-testable WITHOUT mutating process
+/// env — this crate is `#![forbid(unsafe_code)]` and edition-2024 `env::set_var`
+/// is `unsafe`, so a set_var-based test cannot compile here.
+pub(crate) fn rule13_disabled_by(env_val: Option<&str>) -> bool {
+    env_val.is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+}
+
+/// RULE 13 — flag two co-grain sibling levels of one hierarchy bound together in
+/// the dimensions slot. Fires when ALL hold (FR1–FR5):
+///   1. Two dimension refs resolve to the SAME hierarchy.
+///   2. Their level labels differ but share a co-grain core label.
+///   3. Both labels are real levels of that catalog hierarchy.
+/// Keeps the descriptive (name) level; recommends dropping the sibling (FR3).
+///
+/// Off-switchable for operators (NFR3) via `MQO_VALIDATOR_DISABLE_RULE13=1`.
+pub(crate) fn check_redundant_cograin_sibling(
+    mqo: &BoundMqoInput,
+    catalog: &CatalogSnapshot,
+    rejections: &mut Vec<ParamRejection>,
+) {
+    // Operator off-switch (NFR3 control plane). Determinism (NFR1) holds for a
+    // fixed deployment: identical (mqo, catalog, env) -> identical output.
+    if rule13_disabled_by(std::env::var("MQO_VALIDATOR_DISABLE_RULE13").ok().as_deref()) {
+        return;
+    }
+
+    // Resolve each dimension ref to (hierarchy-key, level-label). The hierarchy
+    // key prefers the explicit `hierarchy` field, then the unique_name prefix.
+    let entries: Vec<(String, String)> = mqo
+        .dimensions
+        .iter()
+        .filter_map(|dref| {
+            let level = dref.level.clone().or_else(|| {
+                extract_unique_name_bracket(&dref.unique_name).map(|(_, b)| b.to_string())
+            })?;
+            if level.trim().is_empty() {
+                return None;
+            }
+            let hier = dref
+                .hierarchy
+                .clone()
+                .or_else(|| {
+                    extract_unique_name_bracket(&dref.unique_name)
+                        .map(|(p, _)| p.trim_end_matches('.').to_string())
+                })
+                .unwrap_or_else(|| dref.unique_name.clone());
+            let hier_norm = normalize(&hier);
+            if hier_norm.is_empty() {
+                None
+            } else {
+                Some((hier_norm, level))
+            }
+        })
+        .collect();
+
+    for i in 0..entries.len() {
+        for j in (i + 1)..entries.len() {
+            // FR1: same hierarchy only.
+            if entries[i].0 != entries[j].0 {
+                continue;
+            }
+            let (la, lb) = (entries[i].1.as_str(), entries[j].1.as_str());
+            // Identical level bound twice is a different concern; not co-grain.
+            if normalize(la) == normalize(lb) {
+                continue;
+            }
+            // FR2: co-grain iff equal core labels.
+            let (Some(ca), Some(cb)) = (cograin_core_label(la), cograin_core_label(lb)) else {
+                continue;
+            };
+            if ca != cb {
+                continue;
+            }
+            // FR5: both must be real levels of the SAME catalog hierarchy.
+            let Some(cat_h) = catalog
+                .hierarchies
+                .iter()
+                .find(|h| normalize(&h.hierarchy_unique_name) == entries[i].0)
+            else {
+                continue;
+            };
+            let levset: std::collections::HashSet<String> =
+                cat_h.levels.iter().map(|l| normalize(l)).collect();
+            if !levset.contains(&normalize(la)) || !levset.contains(&normalize(lb)) {
+                continue;
+            }
+            let (keep, drop) = cograin_choose_keep_drop(la, lb);
+            // De-dup: at most one rejection per (hierarchy, dropped level).
+            let already = rejections.iter().any(|r| {
+                matches!(
+                    &r.reason,
+                    RejectReason::RedundantCoGrainSiblingLevel { hierarchy, level_drop, .. }
+                        if normalize(hierarchy) == entries[i].0
+                            && normalize(level_drop) == normalize(&drop)
+                )
+            });
+            if already {
+                continue;
+            }
+            rejections.push(ParamRejection::new(
+                drop.clone(),
+                FieldClass::HierarchyLevel,
+                RejectReason::RedundantCoGrainSiblingLevel {
+                    dimension: cat_h.dimension_unique_name.clone(),
+                    hierarchy: cat_h.hierarchy_unique_name.clone(),
+                    level_keep: keep.clone(),
+                    level_drop: drop.clone(),
+                },
+                vec![Suggestion {
+                    name: keep.clone(),
+                    similarity: 1.0,
+                    note: Some(format!(
+                        "[{keep}] and [{drop}] are co-grain sibling levels of the same \
+                         hierarchy ([{}]) — they describe the same grain at the same \
+                         cardinality. Bind only [{keep}] (the descriptive level) and drop \
+                         [{drop}]; projecting both adds a redundant column that changes the \
+                         row shape and corrupts the measure roll-up.",
+                        cat_h.hierarchy_unique_name
+                    )),
+                }],
+            ));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // RULE 12 tests
 // ---------------------------------------------------------------------------
 
@@ -5780,5 +6027,222 @@ mod rule12_tests {
              even when 'Warehouse State Name' (JW ~0.91) is in the same hierarchy; \
              got: {rejections:?}"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RULE 13 tests (PRD-mqo-redundant-cograin-sibling-level-guard)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod rule13_tests {
+    use super::*;
+
+    /// Serializes the env-sensitive tests (AC1/AC2 expect the rule to fire;
+    /// AC7 toggles the process-global off-switch). Without this, AC7 could
+    /// disable the rule while AC1/AC2 run concurrently and spuriously fail.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Catalog mirroring the live `customer_address` hierarchy that motivated the
+    /// PRD: a state *code* level and its descriptive *name* twin, plus a genuinely
+    /// different-grain sibling (Zip) and a parent (Country) for negative cases.
+    fn customer_address_catalog() -> CatalogSnapshot {
+        CatalogSnapshot {
+            measures: vec![CatalogMeasure {
+                unique_name: "Web Sales".into(),
+                label: Some("Web Sales".into()),
+                ..Default::default()
+            }],
+            dimensions: vec![CatalogDimension {
+                unique_name: "customer_address".into(),
+                subject_areas: vec![],
+            }],
+            hierarchies: vec![CatalogHierarchy {
+                dimension_unique_name: "customer_address".into(),
+                hierarchy_unique_name: "customer_address".into(),
+                levels: vec![
+                    "Customer Country".into(),
+                    "Customer State".into(),
+                    "Customer State Name".into(),
+                    "Customer Zip Code".into(),
+                ],
+                level_meta: vec![],
+                fact_local_facts: vec![],
+            }],
+            date_roles: vec![],
+        }
+    }
+
+    fn dim(level: &str) -> MqoDimensionRef {
+        MqoDimensionRef {
+            unique_name: format!("customer_address.[{level}]"),
+            level: Some(level.to_string()),
+            hierarchy: Some("customer_address".into()),
+            ..Default::default()
+        }
+    }
+
+    fn rule13(rejections: &[ParamRejection]) -> Vec<&ParamRejection> {
+        rejections
+            .iter()
+            .filter(|r| matches!(r.reason, RejectReason::RedundantCoGrainSiblingLevel { .. }))
+            .collect()
+    }
+
+    // AC1: the witness case — Customer State (code) + Customer State Name bound
+    // together → RULE 13 fires once, keeps the name, drops the code.
+    #[test]
+    fn ac1_state_code_plus_name_rejected() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let catalog = customer_address_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![MqoMeasureRef { unique_name: "Web Sales".into(), aggregation: None }],
+            dimensions: vec![dim("Customer State"), dim("Customer State Name")],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let r13 = rule13(&rejections);
+        assert_eq!(r13.len(), 1, "AC1: co-grain pair must fire RULE 13 once; got: {rejections:?}");
+        match &r13[0].reason {
+            RejectReason::RedundantCoGrainSiblingLevel {
+                dimension,
+                hierarchy,
+                level_keep,
+                level_drop,
+            } => {
+                assert_eq!(dimension, "customer_address");
+                assert_eq!(hierarchy, "customer_address");
+                assert_eq!(level_keep, "Customer State Name", "keep the descriptive level");
+                assert_eq!(level_drop, "Customer State", "drop the code-grain sibling");
+            }
+            other => panic!("unexpected reason: {other:?}"),
+        }
+        assert_eq!(r13[0].field, "Customer State");
+        assert_eq!(r13[0].suggestions[0].name, "Customer State Name");
+    }
+
+    // AC2: order-insensitive — name first, code second still keeps the name.
+    #[test]
+    fn ac2_order_insensitive() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let catalog = customer_address_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![dim("Customer State Name"), dim("Customer State")],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        let r13 = rule13(&rejections);
+        assert_eq!(r13.len(), 1);
+        match &r13[0].reason {
+            RejectReason::RedundantCoGrainSiblingLevel { level_keep, level_drop, .. } => {
+                assert_eq!(level_keep, "Customer State Name");
+                assert_eq!(level_drop, "Customer State");
+            }
+            other => panic!("unexpected reason: {other:?}"),
+        }
+    }
+
+    // AC3: genuine drill pair (State + Country) → different cores → silent.
+    #[test]
+    fn ac3_genuine_drill_pair_silent() {
+        let catalog = customer_address_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![dim("Customer Country"), dim("Customer State Name")],
+            filters: vec![],
+        };
+        assert!(rule13(&validate(&mqo, &catalog)).is_empty(), "Country+State are different grains");
+    }
+
+    // AC3b: Zip + State (different core) → silent.
+    #[test]
+    fn ac3b_zip_plus_state_silent() {
+        let catalog = customer_address_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![dim("Customer Zip Code"), dim("Customer State")],
+            filters: vec![],
+        };
+        assert!(rule13(&validate(&mqo, &catalog)).is_empty());
+    }
+
+    // AC4: a single level (no sibling) → silent (FR4).
+    #[test]
+    fn ac4_single_level_silent() {
+        let catalog = customer_address_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![dim("Customer State Name")],
+            filters: vec![],
+        };
+        assert!(rule13(&validate(&mqo, &catalog)).is_empty());
+    }
+
+    // AC5: co-grain labels but levels live in DIFFERENT hierarchies → silent (FR1).
+    #[test]
+    fn ac5_cross_hierarchy_silent() {
+        let catalog = customer_address_catalog();
+        let mut a = dim("Customer State");
+        a.hierarchy = Some("ship_customer_address".into());
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![a, dim("Customer State Name")],
+            filters: vec![],
+        };
+        assert!(
+            rule13(&validate(&mqo, &catalog)).is_empty(),
+            "co-grain labels in different hierarchies must not pair"
+        );
+    }
+
+    // AC6: a co-grain label that is NOT a real catalog level → silent (defer to binder).
+    #[test]
+    fn ac6_unresolved_level_silent() {
+        let catalog = customer_address_catalog();
+        let mut bogus = dim("Customer State Identifier"); // not in catalog levels
+        bogus.level = Some("Customer State Identifier".into());
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![dim("Customer State"), bogus],
+            filters: vec![],
+        };
+        assert!(rule13(&validate(&mqo, &catalog)).is_empty());
+    }
+
+    // AC7: operator off-switch (NFR3). The crate forbids unsafe and edition-2024
+    // `env::set_var` is unsafe, so the off-switch is verified via its pure
+    // predicate `rule13_disabled_by` (the only thing the env read feeds), plus an
+    // end-to-end check that with the switch OFF (default) the rule still fires.
+    #[test]
+    fn ac7_env_offswitch_predicate() {
+        assert!(rule13_disabled_by(Some("1")), "\"1\" disables");
+        assert!(rule13_disabled_by(Some("true")), "\"true\" disables");
+        assert!(rule13_disabled_by(Some("TRUE")), "case-insensitive");
+        assert!(!rule13_disabled_by(Some("0")), "\"0\" leaves it on");
+        assert!(!rule13_disabled_by(Some("")), "empty leaves it on");
+        assert!(!rule13_disabled_by(None), "unset leaves it on");
+
+        // Default (switch off): the rule fires end-to-end.
+        let catalog = customer_address_catalog();
+        let mqo = BoundMqoInput {
+            measures: vec![],
+            dimensions: vec![dim("Customer State"), dim("Customer State Name")],
+            filters: vec![],
+        };
+        let rejections = validate(&mqo, &catalog);
+        assert_eq!(rule13(&rejections).len(), 1, "rule fires when off-switch unset");
+    }
+
+    // Core-label helper unit checks (FR2).
+    #[test]
+    fn core_label_strips_one_trailing_qualifier() {
+        assert_eq!(cograin_core_label("Customer State").as_deref(), Some("customer state"));
+        assert_eq!(cograin_core_label("Customer State Name").as_deref(), Some("customer state"));
+        assert_eq!(cograin_core_label("Customer State Code").as_deref(), Some("customer state"));
+        assert_eq!(cograin_core_label("Customer Zip Code").as_deref(), Some("customer zip"));
+        assert_eq!(cograin_core_label("Customer Country").as_deref(), Some("customer country"));
+        // A bare qualifier alone is not strippable to empty.
+        assert_eq!(cograin_core_label("Name").as_deref(), Some("name"));
     }
 }

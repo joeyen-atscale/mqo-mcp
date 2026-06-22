@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.19.0 — 2026-06-22
+
+RULE 13: `RedundantCoGrainSiblingLevel` guard (PRD-mqo-redundant-cograin-sibling-level-guard). Closes the `web-sales-per-customer-state` mqo-eval residual (row_recall 0.0): the agent bound two co-grain sibling levels of one hierarchy — `Customer State` (the code) and `Customer State Name` — in the `dimensions` slot. Both are valid catalog levels at the same cardinality, so RULES 8/10/11/12 stayed silent; but projecting both adds a redundant column that changes the row shape and corrupts the measure roll-up (replay: 2-level Texas 9.31B vs single-level 9.42B).
+
+New `RejectReason::RedundantCoGrainSiblingLevel { dimension, hierarchy, level_keep, level_drop }` variant. `check_redundant_cograin_sibling()` pairs dimension refs that resolve to the SAME hierarchy and share a co-grain *core label* — equal after stripping a single trailing `{name, code, key, id, description, desc}` qualifier (`cograin_core_label`, generalizing RULE 9's name-only drop). Keeps the descriptive (name) level, recommends dropping the sibling (`cograin_choose_keep_drop`). Conservative (FR5): fires only when both labels are real levels of that catalog hierarchy; genuine drill pairs (Country + State) have different cores and never fire. Operator off-switch (NFR3): `MQO_VALIDATOR_DISABLE_RULE13=1`. 10 new unit tests in `rule13_tests` (AC1 witness, AC2 order-insensitive, AC3/AC3b genuine drill silent, AC4 single-level silent, AC5 cross-hierarchy silent, AC6 unresolved-level silent, AC7 off-switch, core-label helper).
+
 ## v0.16.0 — 2026-06-20
 
 SQL validator iter-2: two new SQL-text rules in `sql_validator.rs`. (1) **NonSelectStatement** (`non_select_statement`): rejects DML/DDL that does not begin with SELECT or WITH — catches single-statement UPDATE/DELETE/DROP/INSERT before it reaches the warehouse. (2) **WindowFunctionInSelect** (`window_function_in_select`): rejects SQL containing `OVER (` outside string/comment context — AtScale's MQO compiler never emits window functions; their presence indicates the agent injected a synthetic rank column; message guides to ORDER BY + LIMIT. Window check is suppressed when NonSelectStatement already fired. 37 sql_validator tests pass (23 new). (PRD-mcp-server-validator-migration iter-2)
