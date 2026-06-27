@@ -26,10 +26,21 @@
 //! {
 //!   "conforms": true | false,
 //!   "findings": [
-//!     { "rule_id": "entity_existence", "severity": "error", "entity": "...", "message": "..." }
+//!     {
+//!       "rule_id": "entity_existence",
+//!       "severity": "error",
+//!       "entity": "...",
+//!       "message": "...",
+//!       "span": { "offset": 42, "length": 7 }
+//!     }
 //!   ]
 //! }
 //! ```
+//!
+//! `span` is `{ "offset": u32, "length": u32 }` when the check can localize the
+//! offending token to a byte position in the `sql` input string, or `null` when
+//! position info is unavailable (e.g. entity-existence checks operate on the
+//! structured `measures`/`dimensions` arrays rather than raw SQL text).
 //!
 //! Empty `findings` = ontologically valid.  When no graph is loaded a single
 //! `info` finding is returned and `conforms` is `true` (fail-open).
@@ -129,7 +140,8 @@ impl OntologyCheckStore {
                     "message": "No lifted ontology graph is available for this model. \
                                 The auto-lift tier (OSL #2) has not been deployed. \
                                 Ontology-based query validation is advisory-only; \
-                                the query may proceed."
+                                the query may proceed.",
+                    "span": null
                 }]
             });
         };
@@ -262,6 +274,10 @@ enum EntityRole {
 }
 
 /// Check a single entity name against the index, appending findings as needed.
+///
+/// Entity checks operate on the structured `measures`/`dimensions` arrays rather
+/// than on raw SQL text, so there is no byte position to report.  `span` is
+/// always `null` for these findings.
 fn check_entity(name: &str, role: EntityRole, index: &EntityIndex, findings: &mut Vec<Value>) {
     let key = name.to_lowercase();
     match index.by_label.get(&key) {
@@ -274,7 +290,8 @@ fn check_entity(name: &str, role: EntityRole, index: &EntityIndex, findings: &mu
                     "Entity '{}' was not found in the ontology graph for this model. \
                      Check spelling or use describe_model to list available entities.",
                     name
-                )
+                ),
+                "span": null
             }));
         }
         Some(entry) => {
@@ -303,7 +320,8 @@ fn check_entity(name: &str, role: EntityRole, index: &EntityIndex, findings: &mu
                         "Entity '{}' (IRI: {}) is typed as {} in the ontology but is being \
                          used as a {}.  Use a {} instead.",
                         name, entry.iri, actual, expected, expected
-                    )
+                    ),
+                    "span": null
                 }));
             }
         }
@@ -311,6 +329,10 @@ fn check_entity(name: &str, role: EntityRole, index: &EntityIndex, findings: &mu
 }
 
 /// Detect semi-additive measure names in an SQL `SUM()` expression (heuristic).
+///
+/// When the label is found in the SQL text, `span` points to its byte offset and
+/// length in the original (non-lowercased) SQL string.  When only the `sum(`
+/// keyword matched but the label position cannot be determined, `span` is `null`.
 fn check_semi_additive_sql(sql: &str, index: &EntityIndex, findings: &mut Vec<Value>) {
     let sql_lower = sql.to_lowercase();
     // Heuristic: look for SUM( ... ) — if a semi-additive measure label appears nearby
@@ -322,6 +344,8 @@ fn check_semi_additive_sql(sql: &str, index: &EntityIndex, findings: &mut Vec<Va
         if entry.kind == EntityKind::SemiAdditiveMeasure
             && sql_lower.contains(label_key.as_str())
         {
+            // Best-effort span: find the first byte position of the label in the SQL.
+            let span = locate_token_in_sql(sql, label_key);
             findings.push(json!({
                 "rule_id": "semi_additive_sum_over_time",
                 "severity": "warning",
@@ -333,9 +357,29 @@ fn check_semi_additive_sql(sql: &str, index: &EntityIndex, findings: &mut Vec<Va
                      Use the valid aggregation for this measure (e.g. LASTPERIOD, AVG) \
                      or consult describe_model for the allowed aggregation.",
                     label_key
-                )
+                ),
+                "span": span
             }));
         }
+    }
+}
+
+/// Locate the first occurrence of `token` (case-insensitive) in `sql` and
+/// return a JSON `{ "offset": u32, "length": u32 }` span, or `null` if not found.
+///
+/// Both `offset` and `length` are **byte** positions in the UTF-8 encoded `sql`
+/// string, matching the RFC description in PRD-validate-query-structured-findings
+/// (OQ-A: byte offset/length chosen as the portable, parser-agnostic format).
+fn locate_token_in_sql(sql: &str, token: &str) -> Value {
+    let sql_lower = sql.to_lowercase();
+    let token_lower = token.to_lowercase();
+    if let Some(offset) = sql_lower.find(token_lower.as_str()) {
+        json!({
+            "offset": offset as u32,
+            "length": token.len() as u32
+        })
+    } else {
+        Value::Null
     }
 }
 
@@ -402,7 +446,8 @@ fn check_semi_additive_cross(args: &Value, index: &EntityIndex, findings: &mut V
                      semantically incorrect results. Use the valid aggregation for this measure \
                      (e.g. LASTPERIOD, AVG) or consult describe_model.",
                     measure_name
-                )
+                ),
+                "span": null
             }));
         }
     }
@@ -452,6 +497,28 @@ fn subjects_of_type(graph: &Graph, class_iri: &str) -> Vec<String> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// JSON Schema for the `validate_query_ontology` tool's input.
+///
+/// ## Output shape (for agent reference)
+///
+/// The tool returns:
+/// ```json
+/// {
+///   "conforms": true | false,
+///   "findings": [
+///     {
+///       "rule_id": "entity_existence | type_mismatch | semi_additive_sum_over_time | ...",
+///       "severity": "error | warning | info",
+///       "entity": "<name or null>",
+///       "message": "<human-readable actionable description>",
+///       "span": { "offset": 42, "length": 7 } | null
+///     }
+///   ]
+/// }
+/// ```
+///
+/// `span` is a byte-offset/length pair pointing to the offending token in the
+/// `sql` input string, or `null` when position info is unavailable (e.g. for
+/// entity-existence checks that operate on structured arrays, not SQL text).
 #[must_use]
 pub fn validate_query_ontology_input_schema() -> Value {
     json!({
@@ -486,7 +553,7 @@ pub fn validate_query_ontology_input_schema() -> Value {
             },
             "sql": {
                 "type": "string",
-                "description": "Optional SQL string to scan for semi-additive SUM() patterns."
+                "description": "Optional SQL string to scan for semi-additive SUM() patterns. When provided, span-localizable findings include a byte-offset span pointing to the offending token."
             }
         },
         "additionalProperties": false
@@ -745,5 +812,160 @@ mod tests {
             has_type_mismatch,
             "dimension used as measure must produce type_mismatch error: {findings:?}"
         );
+    }
+
+    // ── span field: entity-check findings always have span key (null) ─────────
+
+    #[test]
+    fn entity_existence_finding_has_span_key_null() {
+        let store = fixture_store();
+        let result = store.check(&json!({
+            "measures": ["NonExistentMeasure"],
+            "dimensions": []
+        }));
+
+        let findings = result
+            .get("findings")
+            .and_then(Value::as_array)
+            .expect("findings array");
+        assert!(!findings.is_empty(), "must have at least one finding");
+
+        let f = &findings[0];
+        // The "span" key must be present (not absent) and its value must be null.
+        assert!(
+            f.as_object().map(|o| o.contains_key("span")).unwrap_or(false),
+            "entity_existence finding must contain a 'span' key: {f}"
+        );
+        assert!(
+            f.get("span").map(Value::is_null).unwrap_or(false),
+            "entity_existence 'span' must be null (no SQL position available): {f}"
+        );
+    }
+
+    #[test]
+    fn type_mismatch_finding_has_span_key_null() {
+        let store = fixture_store();
+        // "Brand" is a Hierarchy (dimension), not a measure
+        let result = store.check(&json!({
+            "measures": ["Brand"],
+            "dimensions": []
+        }));
+
+        let findings = result
+            .get("findings")
+            .and_then(Value::as_array)
+            .expect("findings array");
+
+        let type_mismatch = findings
+            .iter()
+            .find(|f| f.get("rule_id").and_then(Value::as_str) == Some("type_mismatch"))
+            .expect("must have a type_mismatch finding");
+
+        assert!(
+            type_mismatch.as_object().map(|o| o.contains_key("span")).unwrap_or(false),
+            "type_mismatch finding must contain a 'span' key: {type_mismatch}"
+        );
+        assert!(
+            type_mismatch.get("span").map(Value::is_null).unwrap_or(false),
+            "type_mismatch 'span' must be null (no SQL position available): {type_mismatch}"
+        );
+    }
+
+    // ── span field: SQL-localizable finding has non-null span ────────────────
+
+    #[test]
+    fn semi_additive_sql_finding_has_non_null_span() {
+        let store = fixture_store();
+        // SQL that explicitly mentions "inventory level" inside a SUM()
+        let sql = "SELECT SUM(\"inventory level\") FROM fact_sales GROUP BY sold_calendar_month";
+        let result = store.check(&json!({
+            "measures": [],
+            "dimensions": [],
+            "sql": sql
+        }));
+
+        let findings = result
+            .get("findings")
+            .and_then(Value::as_array)
+            .expect("findings array");
+
+        let semi_finding = findings
+            .iter()
+            .find(|f| f.get("rule_id").and_then(Value::as_str) == Some("semi_additive_sum_over_time"))
+            .expect("must have a semi_additive_sum_over_time finding");
+
+        assert!(
+            semi_finding.as_object().map(|o| o.contains_key("span")).unwrap_or(false),
+            "semi_additive_sql finding must contain a 'span' key: {semi_finding}"
+        );
+
+        let span = semi_finding.get("span").expect("span key must exist");
+        assert!(
+            !span.is_null(),
+            "semi_additive_sql 'span' must be non-null when token is in SQL: {semi_finding}"
+        );
+
+        // Verify the offset and length make sense
+        let offset = span.get("offset").and_then(Value::as_u64).expect("span.offset must be u64");
+        let length = span.get("length").and_then(Value::as_u64).expect("span.length must be u64");
+        assert!(length > 0, "span.length must be positive");
+        // The label "inventory level" (15 chars) must appear at some offset
+        assert!(
+            (offset as usize) < sql.len(),
+            "span.offset={offset} must be within SQL length {}", sql.len()
+        );
+        let token_end = (offset as usize) + (length as usize);
+        assert!(
+            token_end <= sql.len(),
+            "span end byte={token_end} must be within SQL length {}", sql.len()
+        );
+    }
+
+    // ── span field: no-graph info finding also has span key ──────────────────
+
+    #[test]
+    fn no_graph_info_finding_has_span_key_null() {
+        let store = OntologyCheckStore::new(); // no graph loaded
+        let result = store.check(&json!({ "measures": ["Revenue"], "dimensions": [] }));
+
+        let findings = result
+            .get("findings")
+            .and_then(Value::as_array)
+            .expect("findings array");
+        assert_eq!(findings.len(), 1);
+
+        let f = &findings[0];
+        assert!(
+            f.as_object().map(|o| o.contains_key("span")).unwrap_or(false),
+            "ontology_graph_not_available finding must contain a 'span' key: {f}"
+        );
+        assert!(
+            f.get("span").map(Value::is_null).unwrap_or(false),
+            "ontology_graph_not_available 'span' must be null: {f}"
+        );
+    }
+
+    // ── locate_token_in_sql helper ───────────────────────────────────────────
+
+    #[test]
+    fn locate_token_finds_correct_offset() {
+        // "inventory level" starts at byte offset 11 in "SELECT SUM(inventory level)"
+        let sql = "SELECT SUM(inventory level) FROM t";
+        let span = locate_token_in_sql(sql, "inventory level");
+        assert!(!span.is_null(), "should find token: {span}");
+        let offset = span.get("offset").and_then(Value::as_u64).unwrap();
+        let length = span.get("length").and_then(Value::as_u64).unwrap();
+        assert_eq!(length, 15, "length of 'inventory level' is 15 bytes");
+        assert_eq!(
+            &sql[offset as usize..(offset as usize) + (length as usize)].to_lowercase(),
+            "inventory level",
+            "extracted token must match"
+        );
+    }
+
+    #[test]
+    fn locate_token_returns_null_when_not_found() {
+        let span = locate_token_in_sql("SELECT Revenue FROM t", "inventory level");
+        assert!(span.is_null(), "should be null when token not in SQL: {span}");
     }
 }
