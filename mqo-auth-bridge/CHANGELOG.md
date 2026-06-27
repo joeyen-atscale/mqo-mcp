@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.6.0 — 2026-06-21
+
+- **Bounded server-side retry on transient PGWire engine errors** (PRD-mqo-transient-engine-error-retry):
+  A transient `infrastructure`-class engine error (connection/db hiccup) is now retried
+  server-side up to a configurable bound with exponential backoff + jitter before the error
+  surfaces to the agent. `model_path` errors (wrong query) are never retried — they fail fast
+  as before. A new `EngineError::RetriedExhausted { attempts, total_backoff_ms, message }`
+  variant surfaces when the last retry still fails, giving the agent a distinct signal that
+  the server already absorbed the retries and shape-change (not repeat) is needed. Retry
+  budget respects the existing per-query deadline: a deadline cut mid-backoff returns
+  `QueryDeadlineExceeded`, not a retry loop. New `RetryConfig { max_retries, base_ms,
+  max_backoff_ms }` operator-only knob (not model-settable). New `retry` module with 9 unit
+  tests covering AC1–AC5 (transient-clears, model_path-never-retried, exhaustion,
+  max-retries-0, deadline-cutoff). Fixes the update `examples/runsql.rs` to include
+  `EndpointConfig` fields added by the deadline PRD.
+
 ## v0.5.0 — 2026-06-19
 
 - **Execution deadline fast-fail** (PRD-mqo-execution-deadline-fast-fail):
