@@ -103,33 +103,50 @@ pub enum ProjectionGuardDecision {
 }
 
 /// Limit-and-order-aware pre-execution guard for projection MQOs
-/// (PRD-mqo-projection-cardinality-respect-limit, R1/R2/R3).
+/// (PRD-mqo-projection-cardinality-respect-limit, R1/R2/R3;
+///  PRD-mqo-projection-limit-bounds-unknown-cardinality, R1/R3/R4).
 ///
 /// This is the PREFERRED entry point over `check_projection_cardinality`.
-/// It adds an early-admit path for ordered, bounded projections:
+/// A within-cap limit (`1 <= n <= cap`) bounds the result regardless of
+/// level cardinality — an explicit limit prevents a full scan even when the
+/// level's true cardinality is unknown.  An over-cap limit (`n > cap`) is
+/// treated as effectively unbounded and falls through to the cardinality
+/// estimate so the unknown-cardinality fail-safe still fires.
 ///
-/// | `limit`       | `order`        | Result                         |
-/// |---------------|----------------|--------------------------------|
-/// | `Some(n>=1)`  | non-empty      | `Admit` (R1 — safe TOPN)       |
-/// | `Some(_)`     | empty/absent   | `UnorderedLimit` (R3)          |
-/// | `None`        | any            | cardinality estimate vs cap    |
+/// | `limit`           | `order`        | Result                         |
+/// |-------------------|----------------|--------------------------------|
+/// | `Some(1..=cap)`   | non-empty      | `Admit` (R1 — safe TOPN)       |
+/// | `Some(1..=cap)`   | empty/absent   | `UnorderedLimit` (R3/R4)       |
+/// | `Some(n > cap)`   | any            | cardinality estimate vs cap    |
+/// | `None`            | any            | cardinality estimate vs cap    |
 ///
-/// When `limit` is `None`, delegates to `check_projection_cardinality` for the
-/// full level-cardinality estimate (R2 — existing behavior preserved).
+/// When the limit is absent or over-cap, delegates to
+/// `check_projection_cardinality` for the full level-cardinality estimate
+/// (R2 — existing behavior preserved).
 pub fn check_projection_guard(
     mqo: &Mqo,
     catalog: &CatalogSnapshot,
     cap: usize,
 ) -> ProjectionGuardDecision {
     match (mqo.limit, &mqo.order) {
-        // R1: ordered + bounded → admit regardless of level cardinality.
-        (Some(n), Some(order)) if n >= 1 && !order.is_empty() => {
+        // R1: within-cap ordered limit → admit regardless of level cardinality.
+        // A TOPN is already pushed by the compiler (pipeline.rs); admitting a
+        // limited projection over an unknown-cardinality level cannot cause a
+        // full scan.  The within-cap guard (`n as usize <= cap`) ensures an
+        // over-cap limit cannot launder a full scan past the guard.
+        (Some(n), Some(order)) if n >= 1 && n as usize <= cap && !order.is_empty() => {
             ProjectionGuardDecision::Admit
         }
-        // R3: limit present but order absent/empty → non-deterministic top-N.
-        (Some(_), _) => ProjectionGuardDecision::UnorderedLimit,
-        // R2: unbounded → fall through to the full cardinality guard.
-        (None, _) => match check_projection_cardinality(mqo, catalog, cap) {
+        // R3/R4: within-cap limit, absent/empty order → non-deterministic top-N.
+        // UnorderedLimit takes precedence over the bare limit-bound admit so a
+        // bounded-but-unordered top-N is still flagged as non-deterministic.
+        (Some(n), _) if n >= 1 && n as usize <= cap => {
+            ProjectionGuardDecision::UnorderedLimit
+        }
+        // No limit or over-cap limit → fall through to the full cardinality guard.
+        // An over-cap limit (n > cap) is treated as effectively unbounded: the
+        // unknown-cardinality fail-safe and the cap check both still apply.
+        _ => match check_projection_cardinality(mqo, catalog, cap) {
             Ok(()) => ProjectionGuardDecision::Admit,
             Err(too_large) => ProjectionGuardDecision::TooLarge(too_large),
         },
@@ -1427,5 +1444,129 @@ mod tests {
             ProjectionGuardDecision::Admit,
             "unbounded projection over a low-cardinality level must be admitted; got: {decision:?}"
         );
+    }
+
+    // ── PRD-mqo-projection-limit-bounds-unknown-cardinality tests ────────────
+    //
+    // These tests use an UNKNOWN-cardinality catalog (no domain, no cardinality
+    // field) to verify the guard short-circuits before the Unknown arm.
+
+    /// Build an unknown-cardinality catalog (no domain, no cardinality stored).
+    fn make_unknown_cardinality_catalog() -> CatalogSnapshot {
+        // Catalog entry exists (so the level resolves) but has no domain and no
+        // cardinality — models `customer_dimension.[Customer ID]` with no ingested
+        // LEVEL_CARDINALITY and no captured domain.
+        let col = mqo_catalog_binder::catalog::ColumnEntry {
+            unique_name: "customer_dimension.[Customer ID]".to_string(),
+            label: "Customer ID".to_string(),
+            kind: "level".to_string(),
+            hierarchy: Some("customer_dimension".to_string()),
+            level: Some("Customer ID".to_string()),
+            cardinality: None,
+            domain: None,
+            ..Default::default()
+        };
+        CatalogSnapshot { columns: vec![col], ..Default::default() }
+    }
+
+    // AC1 (PRD-mqo-projection-limit-bounds-unknown-cardinality):
+    // unknown-cardinality level + limit=20 + non-empty order → Admit.
+    // The predecessor R1 already short-circuits for known-cardinality; this
+    // fixture proves it also works for the unknown-cardinality branch.
+    #[test]
+    fn guard_unknown_cardinality_with_limit_and_order_is_admitted() {
+        let catalog = make_unknown_cardinality_catalog();
+        let decision = check_projection_guard(
+            &make_guard_mqo(Some(20), Some(one_order())),
+            &catalog,
+            50_000,
+        );
+        assert_eq!(
+            decision,
+            ProjectionGuardDecision::Admit,
+            "AC1: unknown-cardinality level with limit=20 + order must be admitted (within-cap limit bounds the result); got: {decision:?}"
+        );
+    }
+
+    // AC2 (PRD-mqo-projection-limit-bounds-unknown-cardinality):
+    // unknown-cardinality level + no limit → TooLarge(cardinality_unknown).
+    // Unbounded unknown-cardinality projections still decline (guardrail).
+    #[test]
+    fn guard_unknown_cardinality_no_limit_returns_too_large() {
+        let catalog = make_unknown_cardinality_catalog();
+        let decision = check_projection_guard(
+            &make_guard_mqo(None, None),
+            &catalog,
+            50_000,
+        );
+        match &decision {
+            ProjectionGuardDecision::TooLarge(err) => {
+                assert_eq!(
+                    err.level, "cardinality_unknown",
+                    "AC2: error level must be cardinality_unknown; got: {}", err.level
+                );
+            }
+            other => panic!(
+                "AC2: unbounded projection over unknown-cardinality level must return TooLarge(cardinality_unknown); got: {other:?}"
+            ),
+        }
+    }
+
+    // AC3 (PRD-mqo-projection-limit-bounds-unknown-cardinality):
+    // unknown-cardinality level + limit=20 + empty order → UnorderedLimit.
+    // R3/R4: the unordered-limit decline takes precedence over the bare
+    // limit-bound admit — a bounded-but-unordered top-N is non-deterministic.
+    #[test]
+    fn guard_unknown_cardinality_with_limit_no_order_returns_unordered_limit() {
+        let catalog = make_unknown_cardinality_catalog();
+        // order: None
+        let decision = check_projection_guard(
+            &make_guard_mqo(Some(20), None),
+            &catalog,
+            50_000,
+        );
+        assert_eq!(
+            decision,
+            ProjectionGuardDecision::UnorderedLimit,
+            "AC3: unknown-cardinality level with limit + no order must return UnorderedLimit (R4 precedence); got: {decision:?}"
+        );
+        // order: Some(empty vec)
+        let decision2 = check_projection_guard(
+            &make_guard_mqo(Some(20), Some(vec![])),
+            &catalog,
+            50_000,
+        );
+        assert_eq!(
+            decision2,
+            ProjectionGuardDecision::UnorderedLimit,
+            "AC3 variant: unknown-cardinality level with limit + empty order vec must return UnorderedLimit; got: {decision2:?}"
+        );
+    }
+
+    // AC4 (PRD-mqo-projection-limit-bounds-unknown-cardinality):
+    // unknown-cardinality level + limit=cap+1 + non-empty order → TooLarge.
+    // An over-cap limit cannot bypass the guard: it is treated as effectively
+    // unbounded and falls through to the cardinality estimate.
+    #[test]
+    fn guard_unknown_cardinality_over_cap_limit_declines() {
+        let catalog = make_unknown_cardinality_catalog();
+        let cap: usize = 50_000;
+        let over_cap_limit = cap as u64 + 1; // 50_001
+        let decision = check_projection_guard(
+            &make_guard_mqo(Some(over_cap_limit), Some(one_order())),
+            &catalog,
+            cap,
+        );
+        match &decision {
+            ProjectionGuardDecision::TooLarge(err) => {
+                assert_eq!(
+                    err.level, "cardinality_unknown",
+                    "AC4: over-cap limit must fall through to cardinality_unknown; got level: {}", err.level
+                );
+            }
+            other => panic!(
+                "AC4: over-cap limit + order over unknown-cardinality level must return TooLarge(cardinality_unknown); got: {other:?}"
+            ),
+        }
     }
 }
