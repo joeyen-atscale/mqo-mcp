@@ -1,5 +1,19 @@
 # Changelog
 
+## [mqo-mcp-server 0.57.0] - 2026-06-26
+
+### Fixed
+- **Projection guard: within-cap limit short-circuits `cardinality_unknown` reject**
+  (`mqo-mcp-server` v0.57.0, PRD-mqo-projection-limit-bounds-unknown-cardinality):
+  `check_projection_guard` now admits a projection carrying `limit: Some(1..=cap)` + non-empty
+  `order` regardless of whether the level's cardinality is known, estimable, or unknown. An
+  over-cap limit (`n > cap`) is treated as effectively unbounded and falls through to the
+  cardinality estimate so the `cardinality_unknown` fail-safe still fires. The
+  `(Some(_), _) => UnorderedLimit` arm is likewise scoped to within-cap limits only.
+  Closes the residual `cardinality_unknown` gap for `customer-vehicle-count-income-band-9`
+  (trace seq 6 storm). Four new acceptance tests cover AC1–AC4 with an unknown-cardinality
+  fixture; all 216 tests pass.
+
 ## [mqo-mcp-server 0.52.1] - 2026-06-19
 
 ### Changed
