@@ -1,5 +1,18 @@
 # Changelog
 
+## [mqo-mcp-server 0.58.0] - 2026-06-27
+
+### Added
+- **`validate_query_ontology` findings now include `span` field** (PRD-validate-query-structured-findings):
+  Every finding in the `validate_query_ontology` tool's response now carries a `span`
+  field (`{ "offset": u32, "length": u32 }` or `null`). SQL-localizable findings
+  (e.g. `semi_additive_sum_over_time` from the SQL text check) report the byte offset
+  and length of the offending token in the supplied SQL string. Findings that cannot
+  be span-localized (entity existence, type mismatch) return `null`. The field is
+  additive — existing callers that read only `rule_id`/`severity`/`message` continue
+  to work unchanged (NFR1). 8 new tests covering span presence, offset correctness, and
+  null cases. 222 tests passing.
+
 ## [mqo-mcp-server 0.57.0] - 2026-06-26
 
 ### Fixed
